@@ -1,0 +1,9 @@
+# Launch GPU resources for development with SkyPilot command:
+#   sky launch gpu_resource.sky.yaml
+workdir: .
+
+resources:
+  accelerators: $ACCELERATOR
+  use_spot: True # The default instance is spot.
+
+setup: |
