@@ -2,9 +2,6 @@
 #   sky launch tpu_resource.sky.yaml
 workdir: ./
 
-file_mounts:
-  ~/.ssh/id_ed25519: ~/.ssh/id_ed25519
-
 resources:
   accelerators: $ACCELERATOR
   accelerator_args:

@@ -53,7 +53,7 @@ sky down $(cat .cluster_name_tpu) -y
 ### GPU
 
 ```bash
-sky exec $(cat .cluster_name_gpu) --workdir . "export CUDA_VISIBLE_DEVICES=0; uv run --group dev --extra gpu python <PATH_TO_SCRIPT> [ARGS]"
+sky exec $(cat .cluster_name_gpu) --workdir . "export CUDA_VISIBLE_DEVICES=0; uv run --extra gpu python <PATH_TO_SCRIPT> [ARGS]"
 ```
 
 - `export CUDA_VISIBLE_DEVICES=0;` ensures deterministic single-GPU execution. Adjust for multi-GPU jobs.
