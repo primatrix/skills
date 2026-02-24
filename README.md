@@ -1,4 +1,4 @@
-# Skills
+# Primatrix Skills Plugin Marketplace
 
 A [Claude Code plugin marketplace](https://code.claude.com/docs/en/plugin-marketplaces) containing reusable Agent Skills. Also compatible with [Codex](https://developers.openai.com/codex/cli) and [Gemini CLI](https://geminicli.com/docs/cli/skills/).
 
