@@ -14,8 +14,11 @@ Identify the target device from the user's request:
 
 | Target | Cluster name file   | Launch script              | UV extra | Env prefix                         |
 |--------|---------------------|----------------------------|----------|------------------------------------|
-| GPU    | `.cluster_name_gpu` | `${CLAUDE_PLUGIN_ROOT}/skills/exec-remote/scripts/launch_gpu.sh`    | `gpu`    | `export CUDA_VISIBLE_DEVICES=0; `  |
-| TPU    | `.cluster_name_tpu` | `${CLAUDE_PLUGIN_ROOT}/skills/exec-remote/scripts/launch_tpu.sh`    | `tpu`    | *(none)*                           |
+| GPU    | `.cluster_name_gpu` | `launch_gpu.sh`            | `gpu`    | `export CUDA_VISIBLE_DEVICES=0; `  |
+| TPU    | `.cluster_name_tpu` | `launch_tpu.sh`            | `tpu`    | *(none)*                           |
+
+**Execution Instructions:**
+Before running the launch script, you must find its absolute path. It is located in the `scripts/` directory alongside this skill definition. Use your file search tools (e.g., `glob` or `find`) to locate `launch_gpu.sh` or `launch_tpu.sh` before executing it.
 
 If the user does not specify a device, ask them which one to use.
 
@@ -29,11 +32,12 @@ If the user does not specify a device, ask them which one to use.
 ### Provisioning
 
 ```bash
+# Note: First locate the scripts as instructed above, then run them.
 # GPU — common accelerator types: H100:1, A100:1, L4:1
-bash ${CLAUDE_PLUGIN_ROOT}/skills/exec-remote/scripts/launch_gpu.sh <accelerator_type> <experiment_name>
+bash <absolute_path_to_launch_gpu.sh> <accelerator_type> <experiment_name>
 
 # TPU — common accelerator types: tpu-v4-8, tpu-v4-16, tpu-v6e-1, tpu-v6e-4
-bash ${CLAUDE_PLUGIN_ROOT}/skills/exec-remote/scripts/launch_tpu.sh <accelerator_type> <experiment_name>
+bash <absolute_path_to_launch_tpu.sh> <accelerator_type> <experiment_name>
 ```
 
 The launch script automatically updates the corresponding `.cluster_name_*` file.
