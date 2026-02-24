@@ -1,0 +1,5 @@
+{
+  "name": "exec-remote",
+  "description": "Execute Python scripts on remote GPU/TPU clusters via SkyPilot",
+  "version": "1.0.0"
+}

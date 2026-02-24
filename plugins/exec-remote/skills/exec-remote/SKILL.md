@@ -14,8 +14,8 @@ Identify the target device from the user's request:
 
 | Target | Cluster name file   | Launch script              | UV extra | Env prefix                         |
 |--------|---------------------|----------------------------|----------|------------------------------------|
-| GPU    | `.cluster_name_gpu` | `skills/exec-remote/scripts/launch_gpu.sh`    | `gpu`    | `export CUDA_VISIBLE_DEVICES=0; `  |
-| TPU    | `.cluster_name_tpu` | `skills/exec-remote/scripts/launch_tpu.sh`    | `tpu`    | *(none)*                           |
+| GPU    | `.cluster_name_gpu` | `${CLAUDE_PLUGIN_ROOT}/skills/exec-remote/scripts/launch_gpu.sh`    | `gpu`    | `export CUDA_VISIBLE_DEVICES=0; `  |
+| TPU    | `.cluster_name_tpu` | `${CLAUDE_PLUGIN_ROOT}/skills/exec-remote/scripts/launch_tpu.sh`    | `tpu`    | *(none)*                           |
 
 If the user does not specify a device, ask them which one to use.
 
@@ -30,10 +30,10 @@ If the user does not specify a device, ask them which one to use.
 
 ```bash
 # GPU — common accelerator types: H100:1, A100:1, L4:1
-bash skills/exec-remote/scripts/launch_gpu.sh <accelerator_type> <experiment_name>
+bash ${CLAUDE_PLUGIN_ROOT}/skills/exec-remote/scripts/launch_gpu.sh <accelerator_type> <experiment_name>
 
 # TPU — common accelerator types: tpu-v4-8, tpu-v4-16, tpu-v6e-1, tpu-v6e-4
-bash skills/exec-remote/scripts/launch_tpu.sh <accelerator_type> <experiment_name>
+bash ${CLAUDE_PLUGIN_ROOT}/skills/exec-remote/scripts/launch_tpu.sh <accelerator_type> <experiment_name>
 ```
 
 The launch script automatically updates the corresponding `.cluster_name_*` file.

@@ -1,0 +1,30 @@
+{
+  "name": "primatrix-skills",
+  "owner": {
+    "name": "Primatrix"
+  },
+  "metadata": {
+    "description": "A collection of reusable Agent Skills for Claude Code",
+    "pluginRoot": "./plugins"
+  },
+  "plugins": [
+    {
+      "name": "exec-remote",
+      "source": "exec-remote",
+      "description": "Execute Python scripts on remote GPU/TPU clusters via SkyPilot",
+      "version": "1.0.0",
+      "license": "Apache-2.0",
+      "keywords": ["gpu", "tpu", "remote", "skypilot", "cloud"],
+      "category": "infrastructure"
+    },
+    {
+      "name": "linear",
+      "source": "linear",
+      "description": "Manage issues, projects & team workflows in Linear",
+      "version": "1.0.0",
+      "license": "Apache-2.0",
+      "keywords": ["linear", "issues", "project-management", "workflow"],
+      "category": "productivity"
+    }
+  ]
+}
