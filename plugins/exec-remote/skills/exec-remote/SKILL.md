@@ -1,7 +1,7 @@
 ---
 name: exec-remote
 description: Executes Python scripts, tests, or benchmarks on a provisioned remote cluster (GPU or TPU) using SkyPilot. Use this skill when the user asks to run code on GPU, TPU, or any "remote" cluster.
-argument-hint: [gpu|tpu] [script-path] [args...]
+argument-hint: "[gpu|tpu] [script-path] [args...]"
 ---
 
 # Remote Execution Skill
