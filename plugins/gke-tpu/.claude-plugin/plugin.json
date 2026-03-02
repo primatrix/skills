@@ -1,0 +1,5 @@
+{
+  "name": "gke-tpu",
+  "description": "Manage GKE clusters and run TPU workloads on Google Kubernetes Engine",
+  "version": "1.0.0"
+}

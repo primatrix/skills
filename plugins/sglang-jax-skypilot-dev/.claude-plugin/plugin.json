@@ -1,0 +1,5 @@
+{
+  "name": "sglang-jax-skypilot-dev",
+  "description": "Run tests and debug sessions for the sgl-jax project on remote TPU clusters via SkyPilot and SSH/tmux",
+  "version": "1.0.0"
+}

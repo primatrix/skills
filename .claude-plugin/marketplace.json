@@ -24,6 +24,24 @@
       "license": "Apache-2.0",
       "keywords": ["linear", "issues", "project-management", "workflow"],
       "category": "productivity"
+    },
+    {
+      "name": "gke-tpu",
+      "source": "./plugins/gke-tpu",
+      "description": "Manage GKE clusters and run TPU workloads on Google Kubernetes Engine",
+      "version": "1.0.0",
+      "license": "Apache-2.0",
+      "keywords": ["gke", "tpu", "kubernetes", "gcp", "kubectl"],
+      "category": "infrastructure"
+    },
+    {
+      "name": "sglang-jax-skypilot-dev",
+      "source": "./plugins/sglang-jax-skypilot-dev",
+      "description": "Run tests and debug sessions for the sgl-jax project on remote TPU clusters via SkyPilot and SSH/tmux",
+      "version": "1.0.0",
+      "license": "Apache-2.0",
+      "keywords": ["sglang", "jax", "tpu", "skypilot", "testing", "debug"],
+      "category": "infrastructure"
     }
   ]
 }

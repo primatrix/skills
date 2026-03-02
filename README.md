@@ -12,6 +12,7 @@ A Skill is a set of structured instructions (defined in a `SKILL.md` file) that 
 |-------|-------------|
 | [exec-remote](#exec-remote) | Execute Python scripts on remote GPU/TPU clusters via SkyPilot |
 | [linear](#linear) | Manage issues, projects & team workflows in Linear |
+| [gke-tpu](#gke-tpu) | Manage GKE clusters and run TPU workloads on Google Kubernetes Engine |
 
 ---
 
@@ -52,6 +53,27 @@ Manage issues, projects & team workflows in [Linear](https://linear.app/) throug
 
 ---
 
+### gke-tpu
+
+Manage GKE clusters and run TPU workloads on [Google Kubernetes Engine](https://cloud.google.com/kubernetes-engine).
+
+**Use when:** the user wants to create GKE clusters, node pools, workload policies, or run TPU jobs on GKE.
+
+**Capabilities:**
+- Create GKE clusters for TPU workloads
+- Create workload policies for multi-host TPU setups
+- Create TPU node pools (single-host ≤4 chips, multi-host >4 chips)
+- Create and submit Kubernetes Jobs on TPU nodes
+- Interact with running pods via kubectl (exec, logs, port-forward)
+- Run services, benchmarks, or tests on GKE TPU pods
+
+**Prerequisites:**
+- `gcloud` CLI installed and authenticated (`gcloud auth login`)
+- `kubectl` installed
+- GCP project with GKE API enabled
+
+---
+
 ## Installation
 
 ### Claude Code
@@ -65,9 +87,11 @@ Install plugins via the [plugin marketplace](https://code.claude.com/docs/en/plu
 # install plugins from the marketplace
 /plugin install exec-remote@primatrix-skills
 /plugin install linear@primatrix-skills
+/plugin install gke-tpu@primatrix-skills
 
 # project scope (default is user scope)
 /plugin install exec-remote@primatrix-skills --scope project
+/plugin install gke-tpu@primatrix-skills --scope project
 ```
 
 ### Codex

@@ -1,0 +1,64 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  # TODO: Set unique job name
+  name: tpu7x-single-host-job
+spec:
+  backoffLimit: 0
+  template:
+    metadata:
+      annotations:
+        gke-gcsfuse/volumes: "true"
+    spec:
+      restartPolicy: Never
+      nodeSelector:
+        cloud.google.com/gke-tpu-accelerator: tpu7x
+        # TODO: Set topology. Options: 2x2x1 (4 chips)
+        cloud.google.com/gke-tpu-topology: 2x2x1
+      containers:
+      - name: tpu-job
+        # TODO: Set your container image
+        image: python:3.12
+        ports:
+        - containerPort: 8431
+        securityContext:
+          privileged: false
+        command:
+        - bash
+        - -c
+        - |
+          set -ex
+
+          # TODO: Replace with your workload commands
+          pip install -U --pre jax jaxlib libtpu requests \
+            -i https://us-python.pkg.dev/ml-oss-artifacts-published/jax/simple/ \
+            -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
+
+          pip list
+          python -c 'import jax; print("Total TPU devices (cores):", jax.device_count())'
+          sleep infinity
+        resources:
+          requests:
+            # TODO: Set chip count (max 4 for single-host)
+            google.com/tpu: 4
+          limits:
+            google.com/tpu: 4
+        volumeMounts:
+        - name: gcs-fuse-csi-ephemeral
+          mountPath: /models
+          readOnly: true
+      serviceAccountName: gcs-account
+      volumes:
+      - name: gke-gcsfuse-cache
+        emptyDir:
+          medium: Memory
+      - name: gcs-fuse-csi-ephemeral
+        csi:
+          driver: gcsfuse.csi.storage.gke.io
+          readOnly: true
+          volumeAttributes:
+            skipCSIBucketAccessCheck: "true"
+            gcsfuseMetadataPrefetchOnMount: "true"
+            # TODO: Set your GCS bucket name
+            bucketName: inference-model-storage-sgl
+            mountOptions: "implicit-dirs,file-cache:max-parallel-downloads:256,file-cache:enable-parallel-downloads:true,file-cache:download-chunk-size-mb:128,file-cache:max-size-mb:81920,file-cache:parallel-downloads-per-file:512,metadata-cache:ttl-secs:-1,metadata-cache:stat-cache-max-size-mb:-1,metadata-cache:type-cache-max-size-mb:-1,file-cache:cache-file-for-range-read:true,file-system:kernel-list-cache-ttl-secs:-1,read_ahead_kb=1024"
