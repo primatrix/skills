@@ -1,5 +1,22 @@
 {
   "name": "exec-remote",
   "description": "Execute Python scripts on remote GPU/TPU clusters via SkyPilot",
-  "version": "1.0.0"
+  "version": "1.0.0",
+  "skills": [
+    {
+      "name": "exec-remote",
+      "path": "./skills/exec-remote",
+      "description": "Executes Python scripts, tests, or benchmarks on a provisioned remote cluster (GPU or TPU) using SkyPilot. Entry point skill — delegates to deploy-cluster and apply-resource as needed."
+    },
+    {
+      "name": "deploy-cluster",
+      "path": "./skills/deploy-cluster",
+      "description": "Deploys a SkyPilot-managed TPU cluster on GKE. Depends on apply-resource to ensure the GKE cluster exists first."
+    },
+    {
+      "name": "apply-resource",
+      "path": "./skills/apply-resource",
+      "description": "Manages GKE TPU clusters using xpk. Creates, deletes, and lists TPU Nodepool resources on Google Kubernetes Engine."
+    }
+  ]
 }
