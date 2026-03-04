@@ -12,7 +12,7 @@ A Skill is a set of structured instructions (defined in a `SKILL.md` file) that 
 |-------|-------------|
 | [exec-remote](#exec-remote) | Execute Python scripts on remote GPU/TPU clusters via SkyPilot |
 | [linear](#linear) | Manage issues, projects & team workflows in Linear |
-
+| [session-recorder](#session-recorder) | Records the complete session content to a daily work directory |
 ---
 
 ### exec-remote
@@ -154,3 +154,21 @@ To add a new plugin:
 ## License
 
 [Apache License 2.0](LICENSE)
+
+---
+
+### session-recorder
+
+Records the complete session's content and logs it to a daily work directory with a dynamic filename.
+
+**Use when:** the user wants to record their full progress for documentation purposes.
+
+**Capabilities:**
+- Record complete, unedited session history (questions and answers)
+- Automatically exclude cancelled operations
+- Generate dynamic log files named `{$cli-name}-session.md`
+- Organize logs by date in a `YYYY-MM-DD` directory structure
+
+**Prerequisites:**
+- Python 3.x installed
+- Base directory for logs set to `/Users/leos/python/daily_work`
