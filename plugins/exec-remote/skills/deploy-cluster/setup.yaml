@@ -1,0 +1,4 @@
+num_nodes: <NUM_NODES>
+
+resources:
+  cloud: kubernetes
