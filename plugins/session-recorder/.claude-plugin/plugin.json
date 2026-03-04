@@ -1,0 +1,5 @@
+{
+  "name": "session-recorder",
+  "version": "1.0.0",
+  "description": "Records the complete session content and logs it to a daily work directory with a dynamic filename based on the active CLI agent."
+}

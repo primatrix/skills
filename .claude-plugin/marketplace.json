@@ -24,6 +24,15 @@
       "license": "Apache-2.0",
       "keywords": ["linear", "issues", "project-management", "workflow"],
       "category": "productivity"
+    },
+    {
+      "name": "session-recorder",
+      "source": "./plugins/session-recorder",
+      "description": "Records the complete session content and logs it to a daily work directory with a dynamic filename based on the active CLI agent. Use this for automated progress tracking and documentation.",
+      "version": "1.0.0",
+      "license": "Apache-2.0",
+      "keywords": ["session-recorder", "progress", "documentation"],
+      "category": "productivity"
     }
   ]
 }
