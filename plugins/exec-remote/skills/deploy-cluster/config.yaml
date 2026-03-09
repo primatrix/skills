@@ -37,10 +37,16 @@ kubernetes:
                     export TPU_TOPOLOGY_ALT="${TPU_TOPOLOGY_ALT}"
                     export TPU_TOPOLOGY_WRAP="${TPU_TOPOLOGY_WRAP}"
                     export TPU_TOPOLOGY="${TPU_TOPOLOGY}"
-                    export TPU_WORKER_HOSTNAMES="${TPU_WORKER_HOSTNAMES}"
-                    export TPU_WORKER_ID="${TPU_WORKER_ID}"
                     export VBAR_CONTROL_SERVICE_URL="${VBAR_CONTROL_SERVICE_URL}"
                     export JAX_COMPILATION_CACHE_DIR="${JAX_COMPILATION_CACHE_DIR:-/tmp/jit_cache}"
+
+                    # Dynamic TPU worker resolution for non-JobSet SkyPilot pods.
+                    # GKE only injects TPU_WORKER_HOSTNAMES/TPU_WORKER_ID for JobSet-managed pods.
+                    # For standalone SkyPilot pods, derive them from sky exec env vars at runtime.
+                    if [ -z "\$TPU_WORKER_HOSTNAMES" ] && [ -n "\$SKYPILOT_NODE_RANK" ]; then
+                      export TPU_WORKER_ID="\$SKYPILOT_NODE_RANK"
+                      export TPU_WORKER_HOSTNAMES=\$(echo "\$SKYPILOT_NODE_IPS" | tr '\n' ',' | sed 's/,$//')
+                    fi
                     TPUEOF
 
                     # Auto-load TPU environment for all login shells

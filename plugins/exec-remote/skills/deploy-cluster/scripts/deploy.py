@@ -16,10 +16,12 @@ from pathlib import Path
 
 SCRIPTS_DIR = Path(__file__).parent
 SKILL_DIR = SCRIPTS_DIR.parent
+PLUGIN_ROOT = SKILL_DIR.parent.parent  # .../plugins/exec-remote/
 CONFIG_TEMPLATE = SKILL_DIR / "config.yaml"
 SETUP_TEMPLATE = SKILL_DIR / "setup.yaml"
 SKY_CONFIG_DIR = Path.home() / ".sky"
 SKY_CONFIG_PATH = SKY_CONFIG_DIR / "config.yaml"
+CLUSTER_NAME_FILE = PLUGIN_ROOT / ".cluster_name_tpu"
 
 sys.path.insert(0, str(SCRIPTS_DIR))
 from tpu_config import get_tpu_config, list_supported_types
@@ -212,6 +214,10 @@ def deploy(cluster_name: str, tpu_type: str, zone: str):
         # Clean up temp file
         if os.path.exists(setup_path):
             os.unlink(setup_path)
+
+    # Save cluster name for exec-remote skill
+    CLUSTER_NAME_FILE.write_text(cluster_name)
+    print(f"\nSaved cluster name to {CLUSTER_NAME_FILE}")
 
     print(f"\n{'=' * 60}")
     print(f"  Deployment Complete!")

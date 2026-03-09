@@ -29,12 +29,14 @@ Before using this skill, ensure the following tools are installed:
 
 ## User-Provided Parameters
 
-When creating a cluster, the following parameters are collected interactively:
+When creating a cluster, the following parameters are required:
 
 - **CLUSTER_NAME**: Name of the GKE cluster
 - **TPU_TYPE**: TPU accelerator type (e.g., `v6e-16`, `v6e-4`, `v4-8`)
 - **NUM_SLICES**: Number of TPU slices to provision
 - **ZONE**: GCP zone (e.g., `asia-northeast1-b`, `us-east5-a`)
+
+If these parameters are already known from an upstream caller (e.g., `exec-remote` or `deploy-cluster`), use them directly — do NOT re-ask the user. Only prompt interactively when this skill is invoked standalone and the parameters are not yet known.
 
 ## Operations
 
@@ -49,7 +51,8 @@ xpk cluster create-pathways \
   --num-slices=$NUM_SLICES \
   --tpu-type=$TPU_TYPE \
   --zone=$ZONE \
-  --spot
+  --spot \
+  --project=tpu-service-473302
 ```
 
 **Interactive Flow:**
@@ -69,7 +72,8 @@ Deletes an existing GKE cluster.
 ```bash
 xpk cluster delete \
   --cluster $CLUSTER_NAME \
-  --zone=$ZONE
+  --zone=$ZONE \
+  --project=tpu-service-473302
 ```
 
 **Interactive Flow:**
@@ -123,28 +127,12 @@ This skill is designed for multi-user environments:
 4. **Location Validation**: Automatically uses actual cluster location if different from user input
 5. **Concurrent Operation Safe**: Multiple users can operate simultaneously without conflicts
 
-## Usage Examples
+## Parameter Passing
 
-**Create a cluster:**
-```
-User: /apply-resource create
-Assistant: [Prompts for CLUSTER_NAME, TPU_TYPE, NUM_SLICES, ZONE]
-Assistant: [Validates and creates cluster]
-```
+This skill can be invoked in two ways:
 
-**Delete a cluster:**
-```
-User: /apply-resource delete
-Assistant: [Shows list of clusters]
-Assistant: [Prompts for selection and confirms]
-Assistant: [Deletes cluster]
-```
-
-**List clusters:**
-```
-User: /apply-resource list
-Assistant: [Shows all managed clusters]
-```
+1. **Standalone** (`/apply-resource create`): Prompt user for all required parameters interactively.
+2. **From pipeline** (called by `deploy-cluster` or `exec-remote`): Parameters (CLUSTER_NAME, TPU_TYPE, NUM_SLICES, ZONE) are already known — use them directly without prompting.
 
 ## Error Handling
 
