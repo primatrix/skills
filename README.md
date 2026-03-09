@@ -17,19 +17,37 @@ A Skill is a set of structured instructions (defined in a `SKILL.md` file) that 
 
 ### exec-remote
 
-Executes Python scripts, tests, or benchmarks on a provisioned remote cluster (GPU or TPU) using [SkyPilot](https://skypilot.readthedocs.io/).
+Execute Python scripts on remote GPU/TPU clusters via [SkyPilot](https://skypilot.readthedocs.io/).
 
 **Use when:** the user asks to run code on GPU, TPU, or any remote cluster.
 
+This plugin contains three skills with a parent-child relationship:
+
+```
+exec-remote          ← Entry point: run scripts on a provisioned cluster
+├── deploy-cluster   ← Deploy a SkyPilot-managed TPU cluster on GKE
+└── apply-resource   ← Provision/manage the underlying GKE TPU cluster via xpk
+```
+
+`exec-remote` is the top-level skill. When a cluster doesn't exist yet, it delegates to `deploy-cluster`, which in turn delegates to `apply-resource` to create the GKE infrastructure.
+
+| Skill | Description |
+|-------|-------------|
+| **exec-remote** | Executes Python scripts, tests, or benchmarks on a provisioned remote cluster (GPU or TPU). Entry point — delegates to the sub-skills as needed. |
+| **deploy-cluster** | Deploys a SkyPilot-managed TPU cluster on GKE. Generates `~/.sky/config.yaml`, fetches GKE credentials, and runs `sky launch`. |
+| **apply-resource** | Manages GKE TPU clusters using xpk. Creates, deletes, and lists TPU Nodepool resources. Multi-user safe — always queries GKE in real-time. |
+
 **Capabilities:**
-- Provision GPU clusters (H100, A100, L4, etc.) or TPU clusters (v4, v6e, etc.) on GCP via SkyPilot
+- Provision GPU clusters (H100, A100, L4, etc.) or TPU clusters (v4, v6e, etc.) on GCP
 - Execute Python scripts and pytest tests on remote instances
 - Automatically sync local working directory to the remote cluster
-- Manage cluster lifecycle (launch, execute, teardown)
+- Manage full cluster lifecycle (create GKE cluster → deploy SkyPilot → execute → teardown)
 
 **Prerequisites:**
 - [SkyPilot](https://skypilot.readthedocs.io/) installed and configured
-- GCP credentials set up
+- [xpk](https://github.com/AI-Hypercomputer/xpk) installed (for GKE TPU cluster management)
+- [Google Cloud SDK](https://cloud.google.com/sdk/docs/install) with `gcloud auth login` completed
+- [kubectl](https://cloud.google.com/kubernetes-engine/docs/how-to/cluster-access-for-kubectl) with `gke-gcloud-auth-plugin`
 - [uv](https://github.com/astral-sh/uv) for dependency management
 
 ---
@@ -139,6 +157,55 @@ plugins/
 The `SKILL.md` file contains:
 - **YAML frontmatter** — `name`, `description`, and optional metadata
 - **Markdown body** — detailed instructions the agent follows when the skill is activated
+
+## Local Development
+
+When developing or modifying skills locally, you need a way to test changes **before** pushing to GitHub. The plugin marketplace installs from the remote repository, so local edits won't take effect by default.
+
+The solution is to symlink the plugin cache to your local working directory:
+
+### Setup
+
+```bash
+# 1. Clone the repository
+git clone https://github.com/primatrix/skills.git
+cd skills
+
+# 2. Install the plugin from the marketplace first (this sets up the registry)
+#    In a Claude Code session:
+/plugin marketplace add primatrix/skills
+/plugin install exec-remote@primatrix-skills
+
+# 3. Replace the cache with a symlink to your local directory
+rm -rf ~/.claude/plugins/cache/primatrix-skills/exec-remote/1.0.0
+ln -s /path/to/skills/plugins/exec-remote \
+      ~/.claude/plugins/cache/primatrix-skills/exec-remote/1.0.0
+
+# 4. Restart Claude Code session, then verify
+/plugin
+```
+
+Repeat step 3 for each plugin you want to develop locally:
+
+```bash
+rm -rf ~/.claude/plugins/cache/primatrix-skills/<plugin-name>/1.0.0
+ln -s /path/to/skills/plugins/<plugin-name> \
+      ~/.claude/plugins/cache/primatrix-skills/<plugin-name>/1.0.0
+```
+
+### Workflow
+
+Once the symlink is in place, local edits are reflected immediately (after restarting the session):
+
+```
+Local edit → Restart Claude Code → /exec-remote → Verify
+```
+
+### Caveats
+
+- **Do not run `/plugin install` again** — it will overwrite the symlink with a fresh copy from GitHub.
+- **Restart the session** after making changes — plugins are loaded at session startup.
+- `plugin.json` only needs `name`, `description`, and `version`. Do **not** add a `skills` field — Claude Code auto-discovers skills from the `skills/` subdirectory.
 
 ## Contributing
 
