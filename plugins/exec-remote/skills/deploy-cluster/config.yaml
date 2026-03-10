@@ -8,6 +8,18 @@ kubernetes:
       nodeSelector:
         cloud.google.com/gke-tpu-accelerator: <ACCELERATOR_TYPE>
         cloud.google.com/gke-tpu-topology: <TPU_TOPOLOGY>
+      # Force all pods in the same SkyPilot cluster onto the same GKE node pool.
+      # Each node pool maps to one physical TPU slice (ICI-connected hosts).
+      # Without this, Kubernetes may scatter pods across different slices,
+      # causing libtpu to fail with chip index mismatches on multi-host topologies.
+      affinity:
+        podAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchExpressions:
+                  - key: skypilot-cluster
+                    operator: Exists
+              topologyKey: cloud.google.com/gke-nodepool
       containers:
         - name: ray-node
           image: us-docker.pkg.dev/cloud-tpu-images/jax-ai-image/tpu@sha256:33fd74d1ac4a45de18855cfec6c41644bf59d5b4e76a343d32f52b6553f0e804
