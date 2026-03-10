@@ -135,6 +135,7 @@ Ask the user for the following (provide examples to guide their choice):
 
 | Parameter      | Example values                        | Notes                           |
 |----------------|---------------------------------------|---------------------------------|
+| PROJECT_ID     | `tpu-service-473302`                  | GCP project ID                  |
 | CLUSTER_NAME   | `my-tpu-cluster`                      | Must be unique in the project   |
 | TPU_TYPE       | `v6e-4`, `v6e-8`, `v6e-16`           | See supported types in Section 3 |
 | NUM_SLICES     | `1`                                   | Default to 1 if user doesn't specify |
@@ -153,7 +154,7 @@ xpk cluster create-pathways \
   --tpu-type=$TPU_TYPE \
   --zone=$ZONE \
   --spot \
-  --project=tpu-service-473302
+  --project=$PROJECT_ID
 ```
 
 ### 7.3 Wait for GKE Cluster Ready
@@ -161,7 +162,7 @@ xpk cluster create-pathways \
 Poll until the cluster status becomes `RUNNING`. Do NOT proceed to deploy SkyPilot while status is `PROVISIONING` or `RECONCILING` — it will fail with SSL errors.
 
 ```bash
-gcloud container clusters list --project=tpu-service-473302 \
+gcloud container clusters list --project=$PROJECT_ID \
   --filter="name=$CLUSTER_NAME" --format="table(name,location,status)"
 ```
 
@@ -221,5 +222,5 @@ sky down $(cat .cluster_name_tpu) -y
 xpk cluster delete \
   --cluster $CLUSTER_NAME \
   --zone=$ZONE \
-  --project=tpu-service-473302
+  --project=$PROJECT_ID
 ```

@@ -16,13 +16,16 @@ This skill deploys a SkyPilot-managed TPU cluster on an existing GKE cluster. It
   - Run `gcloud auth login` to authenticate
 - **Kubectl**: [Install guide](https://cloud.google.com/kubernetes-engine/docs/how-to/cluster-access-for-kubectl)
 
-## Fixed Parameters
+## Required Parameters
 
-- **PROJECT_ID**: `tpu-service-473302`
+- **PROJECT_ID**: GCP project ID (must be provided by the caller or user)
+- **TPU_TYPE**: TPU accelerator type (e.g., `v6e-8`, `v6e-16`)
+- **ZONE**: GCP zone (e.g., `asia-northeast1-b`, `us-east5-a`)
+- **CLUSTER_NAME**: Inherited from the GKE cluster created by `apply-resource` — do NOT ask the user again
+
+If all parameters are already known from an upstream caller (e.g., `exec-remote`), use them directly — do NOT re-ask. Only prompt interactively when this skill is invoked standalone and the parameters are not yet known.
 
 ## Supported TPU Types
-
-Each GKE v6e node exposes exactly **4 TPU chips** (`google.com/tpu: 4`) regardless of the slice size.
 Therefore: `num_nodes = total_chips / 4`, and every pod always requests 4 chips.
 Exception: `v6e-1` is a sub-slice that exposes 1 chip on a single node.
 
@@ -38,16 +41,6 @@ Exception: `v6e-1` is a sub-slice that exposes 1 chip on a single node.
 | v6e-256 | 16x16 | 4 | 64 |
 
 > **Zone vs Region**: xpk always creates GKE clusters at the **region** level (e.g., `asia-northeast1`), even when given a zone like `asia-northeast1-b`. The deploy script handles this automatically — you may pass either a zone or a region.
-
-## User-Provided Parameters
-
-This skill requires the following parameters:
-
-- **TPU_TYPE**: TPU accelerator type (e.g., `v6e-8`, `v6e-16`)
-- **ZONE**: GCP zone (e.g., `asia-northeast1-b`, `us-east5-a`)
-- **CLUSTER_NAME**: Inherited from the GKE cluster created by `apply-resource` — do NOT ask the user again
-
-If all parameters are already known from an upstream caller (e.g., `exec-remote`), use them directly — do NOT re-ask. Only prompt interactively when this skill is invoked standalone and the parameters are not yet known.
 
 ## Deployment Workflow
 
@@ -66,7 +59,7 @@ Carry forward the resulting **CLUSTER_NAME**, **TPU_TYPE**, and **ZONE** for Ste
 Before deploying SkyPilot, ensure the GKE cluster status is `RUNNING`:
 
 ```bash
-gcloud container clusters list --project=tpu-service-473302 \
+gcloud container clusters list --project=$PROJECT_ID \
   --filter="name=<CLUSTER_NAME>" --format="table(name,location,status)"
 ```
 

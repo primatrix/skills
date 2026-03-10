@@ -16,12 +16,11 @@ from pathlib import Path
 
 SCRIPTS_DIR = Path(__file__).parent
 SKILL_DIR = SCRIPTS_DIR.parent
-PLUGIN_ROOT = SKILL_DIR.parent.parent  # .../plugins/exec-remote/
 CONFIG_TEMPLATE = SKILL_DIR / "config.yaml"
 SETUP_TEMPLATE = SKILL_DIR / "setup.yaml"
 SKY_CONFIG_DIR = Path.home() / ".sky"
 SKY_CONFIG_PATH = SKY_CONFIG_DIR / "config.yaml"
-CLUSTER_NAME_FILE = PLUGIN_ROOT / ".cluster_name_tpu"
+CLUSTER_NAME_FILE = Path(".cluster_name_tpu")
 
 sys.path.insert(0, str(SCRIPTS_DIR))
 from tpu_config import get_tpu_config, list_supported_types

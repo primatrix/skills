@@ -52,9 +52,10 @@ kubernetes:
                     export VBAR_CONTROL_SERVICE_URL="${VBAR_CONTROL_SERVICE_URL}"
                     export JAX_COMPILATION_CACHE_DIR="${JAX_COMPILATION_CACHE_DIR:-/tmp/jit_cache}"
 
-                    # Dynamic TPU worker resolution for non-JobSet SkyPilot pods.
-                    # GKE only injects TPU_WORKER_HOSTNAMES/TPU_WORKER_ID for JobSet-managed pods.
-                    # For standalone SkyPilot pods, derive them from sky exec env vars at runtime.
+                    # Persist worker variables if already set (e.g. GKE JobSet),
+                    # otherwise derive them from SkyPilot env vars at runtime.
+                    export TPU_WORKER_HOSTNAMES="${TPU_WORKER_HOSTNAMES}"
+                    export TPU_WORKER_ID="${TPU_WORKER_ID}"
                     if [ -z "\$TPU_WORKER_HOSTNAMES" ] && [ -n "\$SKYPILOT_NODE_RANK" ]; then
                       export TPU_WORKER_ID="\$SKYPILOT_NODE_RANK"
                       export TPU_WORKER_HOSTNAMES=\$(echo "\$SKYPILOT_NODE_IPS" | tr '\n' ',' | sed 's/,$//')

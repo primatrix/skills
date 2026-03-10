@@ -23,14 +23,11 @@ Before using this skill, ensure the following tools are installed:
 - **Xpk**: [Install guide](https://github.com/AI-Hypercomputer/xpk/blob/main/docs/installation.md)
   - Check: `xpk --help`
 
-## Fixed Parameters
-
-- **PROJECT_ID**: `tpu-service-473302` (always fixed)
-
-## User-Provided Parameters
+## Required Parameters
 
 When creating a cluster, the following parameters are required:
 
+- **PROJECT_ID**: GCP project ID (must be provided by the caller or user)
 - **CLUSTER_NAME**: Name of the GKE cluster
 - **TPU_TYPE**: TPU accelerator type (e.g., `v6e-16`, `v6e-4`, `v4-8`)
 - **NUM_SLICES**: Number of TPU slices to provision
@@ -52,7 +49,7 @@ xpk cluster create-pathways \
   --tpu-type=$TPU_TYPE \
   --zone=$ZONE \
   --spot \
-  --project=tpu-service-473302
+  --project=$PROJECT_ID
 ```
 
 **Interactive Flow:**
@@ -73,7 +70,7 @@ Deletes an existing GKE cluster.
 xpk cluster delete \
   --cluster $CLUSTER_NAME \
   --zone=$ZONE \
-  --project=tpu-service-473302
+  --project=$PROJECT_ID
 ```
 
 **Interactive Flow:**
