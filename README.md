@@ -50,6 +50,50 @@ exec-remote          ← Entry point: run scripts on a provisioned cluster
 - [kubectl](https://cloud.google.com/kubernetes-engine/docs/how-to/cluster-access-for-kubectl) with `gke-gcloud-auth-plugin`
 - [uv](https://github.com/astral-sh/uv) for dependency management
 
+#### GKE TPU Getting Started
+
+For running code on TPU via GKE (the full `apply-resource → deploy-cluster → exec-remote` pipeline), additional tools are required:
+
+| Tool | Install | Verify |
+|------|---------|--------|
+| [xpk](https://github.com/AI-Hypercomputer/xpk) | [Install guide](https://github.com/AI-Hypercomputer/xpk/blob/main/docs/installation.md) | `xpk --help` |
+| [kubectl](https://cloud.google.com/kubernetes-engine/docs/how-to/cluster-access-for-kubectl) | `gcloud components install kubectl` | `kubectl version --client` |
+
+After installing the plugin (see [Installation](#installation)), open your AI agent in your project directory and paste the prompt below.
+
+Replace **`YOUR_REPO_PATH/sglang-jax/benchmark/moe/bench_ep_moe.py`** with your actual script path.
+
+##### COPY THIS PROMPT
+
+> **[Context]**
+> I'm working on a JAX-based ML project with `pyproject.toml` that has a `tpu` extra dependency group. No remote cluster exists yet — `.cluster_name_tpu` is absent. The `exec-remote` plugin provides a three-stage pipeline: `apply-resource` (creates GKE cluster via `xpk cluster create-pathways --spot`) → `deploy-cluster` (deploys SkyPilot on GKE via its `scripts/deploy.py`) → `exec-remote` (runs code via `sky exec`). The GCP project is `tpu-service-473302`. The deploy script writes `.cluster_name_tpu` as the integration point between stages.
+>
+> **[Objective]**
+> Run **Full CI Tests parallel** on a TPU cluster by provisioning the full GKE infrastructure from scratch, following the complete `apply-resource → deploy-cluster → exec-remote` pipeline.
+>
+> **[Style]**
+> Step-by-step automated execution. Collect all cluster parameters from me once upfront (cluster name, TPU type, number of slices, GCP zone), then carry them through every subsequent step — never re-ask. Auto-calculate `--num-nodes` from TPU type (total_chips / 4, e.g. v6e-8 = 2 nodes, v6e-4 = 1 node). After `xpk` creates the GKE cluster, poll `gcloud container clusters list` until status is `RUNNING` — do NOT proceed while `RECONCILING` or `PROVISIONING` (deploying SkyPilot in these states causes SSL errors).
+>
+> **[Tone]**
+> Proactive — execute each pipeline step automatically and report progress. Only pause to collect user input during initial parameter gathering.
+>
+> **[Audience]**
+> ML engineer who wants to run training code on cloud TPU without manually managing infrastructure.
+>
+> **[Response]**
+> After each stage (GKE creation, SkyPilot deployment, code execution), briefly report the result and verify success before proceeding. Use `sky exec` with `--extra tpu` for dependencies and `--workdir .` to sync the local directory. If any step fails, diagnose the error and suggest a fix before continuing.
+
+The agent will ask you for cluster parameters (cluster name, TPU type, number of slices, GCP zone) once, then execute the full pipeline automatically:
+
+```
+apply-resource   →  Creates GKE cluster with TPU nodepool via xpk
+                     Polls until cluster status is RUNNING
+deploy-cluster   →  Configures and launches SkyPilot on GKE
+                     Writes .cluster_name_tpu
+exec-remote      →  Syncs local directory, runs your script
+                     with correct --num-nodes and --extra tpu
+```
+
 ---
 
 ### linear

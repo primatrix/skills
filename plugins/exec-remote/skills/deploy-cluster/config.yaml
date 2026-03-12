@@ -8,17 +8,29 @@ kubernetes:
       nodeSelector:
         cloud.google.com/gke-tpu-accelerator: <ACCELERATOR_TYPE>
         cloud.google.com/gke-tpu-topology: <TPU_TOPOLOGY>
+      # Force all pods in the same SkyPilot cluster onto the same GKE node pool.
+      # Each node pool maps to one physical TPU slice (ICI-connected hosts).
+      # Without this, Kubernetes may scatter pods across different slices,
+      # causing libtpu to fail with chip index mismatches on multi-host topologies.
+      affinity:
+        podAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchExpressions:
+                  - key: skypilot-cluster
+                    operator: Exists
+              topologyKey: cloud.google.com/gke-nodepool
       containers:
         - name: ray-node
           image: us-docker.pkg.dev/cloud-tpu-images/jax-ai-image/tpu@sha256:33fd74d1ac4a45de18855cfec6c41644bf59d5b4e76a343d32f52b6553f0e804
           resources:
             requests:
-              cpu: "36"
-              memory: "500Gi"
+              cpu: "<CPU_REQUEST>"
+              memory: "<MEMORY_REQUEST>"
               google.com/tpu: <CHIPS_PER_HOST>
             limits:
-              cpu: "36"
-              memory: "500Gi"
+              cpu: "<CPU_REQUEST>"
+              memory: "<MEMORY_REQUEST>"
               google.com/tpu: <CHIPS_PER_HOST>
           lifecycle:
             postStart:
@@ -37,10 +49,17 @@ kubernetes:
                     export TPU_TOPOLOGY_ALT="${TPU_TOPOLOGY_ALT}"
                     export TPU_TOPOLOGY_WRAP="${TPU_TOPOLOGY_WRAP}"
                     export TPU_TOPOLOGY="${TPU_TOPOLOGY}"
-                    export TPU_WORKER_HOSTNAMES="${TPU_WORKER_HOSTNAMES}"
-                    export TPU_WORKER_ID="${TPU_WORKER_ID}"
                     export VBAR_CONTROL_SERVICE_URL="${VBAR_CONTROL_SERVICE_URL}"
                     export JAX_COMPILATION_CACHE_DIR="${JAX_COMPILATION_CACHE_DIR:-/tmp/jit_cache}"
+
+                    # Persist worker variables if already set (e.g. GKE JobSet),
+                    # otherwise derive them from SkyPilot env vars at runtime.
+                    export TPU_WORKER_HOSTNAMES="${TPU_WORKER_HOSTNAMES}"
+                    export TPU_WORKER_ID="${TPU_WORKER_ID}"
+                    if [ -z "\$TPU_WORKER_HOSTNAMES" ] && [ -n "\$SKYPILOT_NODE_RANK" ]; then
+                      export TPU_WORKER_ID="\$SKYPILOT_NODE_RANK"
+                      export TPU_WORKER_HOSTNAMES=\$(echo "\$SKYPILOT_NODE_IPS" | tr '\n' ',' | sed 's/,$//')
+                    fi
                     TPUEOF
 
                     # Auto-load TPU environment for all login shells
