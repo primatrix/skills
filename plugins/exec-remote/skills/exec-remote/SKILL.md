@@ -8,6 +8,19 @@ argument-hint: "[gpu|tpu] [script-path] [args...]"
 
 This skill handles running code on remote GPU or TPU clusters via SkyPilot.
 
+## Defaults
+
+The following defaults apply unless the user explicitly overrides them:
+
+| Parameter      | Default                    |
+|----------------|----------------------------|
+| PROJECT_ID     | `tpu-service-473302`       |
+| CLUSTER_NAME   | `sglang-jax-agent-tests`   |
+| ZONE           | `asia-northeast1-b`        |
+| NUM_SLICES     | `1`                        |
+
+Use these values directly — do NOT ask the user to confirm or re-enter them unless they specify otherwise.
+
 ## 1. Determine Target Device
 
 Identify the target device from the user's request:
@@ -45,12 +58,13 @@ There are two provisioning paths for TPU:
 
 This path provisions TPU on GKE using the full pipeline: `apply-resource` -> `deploy-cluster` -> `exec-remote`.
 
+Each TPU type gets its own SkyPilot cluster named `<cluster>-<username>-<tpu_type>`, allowing multiple topologies to run in parallel.
+
 1. Use the `deploy-cluster` skill which will:
-   - Interactively ask user for TPU_TYPE and ZONE (if not already known)
-   - Auto-derive cluster name from the GKE cluster
+   - Use default cluster/project/zone unless user overrides
    - Ensure the GKE cluster exists (via `apply-resource`)
    - Configure SkyPilot for GKE
-   - Launch the SkyPilot cluster
+   - Launch a per-TPU-type SkyPilot cluster
    - Save the cluster name to `.cluster_name_tpu`
 
 ```
@@ -76,8 +90,9 @@ The launch script automatically updates `.cluster_name_tpu`.
 # GPU
 sky down $(cat .cluster_name_gpu) -y
 
-# TPU
-sky down $(cat .cluster_name_tpu) -y
+# TPU (tear down all per-TPU-type clusters)
+sky down <CLUSTER_NAME>-<USERNAME>-v6e-1 -y
+sky down <CLUSTER_NAME>-<USERNAME>-v6e-4 -y
 ```
 
 For GKE-based TPU, also remove the GKE cluster via `/apply-resource delete` if no longer needed.
@@ -96,10 +111,11 @@ sky exec $(cat .cluster_name_gpu) --workdir . "export CUDA_VISIBLE_DEVICES=0; uv
 ### TPU
 
 ```bash
-sky exec $(cat .cluster_name_tpu) --workdir . "uv run --extra tpu python <PATH_TO_SCRIPT> [ARGS]"
+sky exec <CLUSTER_NAME>-<USERNAME>-<TPU_TYPE> --workdir . "uv run --extra tpu python <PATH_TO_SCRIPT> [ARGS]"
 ```
 
 - `--extra tpu` activates TPU optional dependencies (e.g. `jax[tpu]`).
+- Use the per-TPU-type cluster name (e.g. `sglang-jax-agent-tests-hongmao-v6e-1`).
 
 ### Common flags
 
@@ -113,9 +129,21 @@ sky exec $(cat .cluster_name_tpu) --workdir . "uv run --extra tpu python <PATH_T
 sky exec $(cat .cluster_name_gpu) --workdir . "export CUDA_VISIBLE_DEVICES=0; uv run --extra gpu python src/lynx/perf/benchmark_train.py"
 ```
 
-**Run tests on TPU:**
+**Run tests on TPU (single type):**
 ```bash
-sky exec $(cat .cluster_name_tpu) --workdir . "uv run --extra tpu python -m pytest src/lynx/test/"
+sky exec sglang-jax-agent-tests-hongmao-v6e-4 --workdir . "uv run --extra tpu python -m pytest src/lynx/test/"
+```
+
+**Run CI tests on multiple TPU types in parallel:**
+```bash
+# Deploy both types (sequential — config.yaml is global)
+python <deploy-cluster>/scripts/deploy.py sglang-jax-agent-tests v6e-1 asia-northeast1-b
+python <deploy-cluster>/scripts/deploy.py sglang-jax-agent-tests v6e-4 asia-northeast1-b
+
+# Execute in parallel
+sky exec sglang-jax-agent-tests-hongmao-v6e-1 --workdir . "python test/srt/run_suite.py --suite unit-test-tpu-v6e-1" &
+sky exec sglang-jax-agent-tests-hongmao-v6e-4 --workdir . "python test/srt/run_suite.py --suite e2e-test-tpu-v6e-4" &
+wait
 ```
 
 ## 6. Operational Notes
@@ -125,21 +153,21 @@ sky exec $(cat .cluster_name_tpu) --workdir . "uv run --extra tpu python -m pyte
 
 ## 7. GKE TPU Full Pipeline Procedure (Path A)
 
-When the user requests to run code on TPU and no `.cluster_name_tpu` exists (or the user explicitly wants a new cluster), follow this procedure to orchestrate the full pipeline: `apply-resource` → `deploy-cluster` → `exec-remote`.
+When the user requests to run code on TPU and no `.cluster_name_tpu` exists (or the user explicitly wants a new cluster), follow this procedure to orchestrate the full pipeline: `apply-resource` -> `deploy-cluster` -> `exec-remote`.
 
-All parameters are collected once at the beginning and carried forward — do NOT re-ask the user at any subsequent step.
+All parameters use defaults unless the user explicitly overrides them — do NOT ask for confirmation.
 
 ### 7.1 Collect Parameters
 
-Ask the user for the following (provide examples to guide their choice):
+Only ask the user for parameters they haven't specified. Use defaults for everything else:
 
-| Parameter      | Example values                        | Notes                           |
-|----------------|---------------------------------------|---------------------------------|
-| PROJECT_ID     | `tpu-service-473302`                  | GCP project ID                  |
-| CLUSTER_NAME   | `my-tpu-cluster`                      | Must be unique in the project   |
-| TPU_TYPE       | `v6e-4`, `v6e-8`, `v6e-16`           | See supported types in Section 3 |
-| NUM_SLICES     | `1`                                   | Default to 1 if user doesn't specify |
-| ZONE           | `asia-northeast1-b`, `us-east5-a`    | Must support the chosen TPU type |
+| Parameter      | Default                           | Notes                           |
+|----------------|-----------------------------------|---------------------------------|
+| PROJECT_ID     | `tpu-service-473302`              | GCP project ID                  |
+| CLUSTER_NAME   | `sglang-jax-agent-tests`          | GKE cluster name                |
+| TPU_TYPE       | *(must specify)*                  | e.g. `v6e-4`, `v6e-1`          |
+| NUM_SLICES     | `1`                               | Default to 1                    |
+| ZONE           | `asia-northeast1-b`               | Must support the chosen TPU type |
 
 ### 7.2 Create GKE Cluster (apply-resource)
 
@@ -168,19 +196,23 @@ gcloud container clusters list --project=$PROJECT_ID \
 
 ### 7.4 Deploy SkyPilot on GKE (deploy-cluster)
 
-Run the deploy script. It auto-configures TPU topology, num_nodes, and `~/.sky/config.yaml` based on TPU_TYPE.
+Run the deploy script for each required TPU type. Each call creates a separate SkyPilot cluster.
 
 ```bash
-python <path-to-deploy-cluster>/scripts/deploy.py $CLUSTER_NAME $TPU_TYPE $ZONE
+# Deploy each TPU type (must be sequential — config.yaml is global)
+# Only tpu_type is required; cluster_name and zone use defaults
+python <path-to-deploy-cluster>/scripts/deploy.py v6e-1
+python <path-to-deploy-cluster>/scripts/deploy.py v6e-4
 ```
 
-`<path-to-deploy-cluster>` is the `scripts/` directory under the `deploy-cluster` skill. The script saves the cluster name to `.cluster_name_tpu` automatically.
+This creates:
+- `$CLUSTER_NAME-$USERNAME-v6e-1` — SkyPilot cluster for v6e-1 tests
+- `$CLUSTER_NAME-$USERNAME-v6e-4` — SkyPilot cluster for v6e-4 tests
 
 After completion, verify:
 
 ```bash
-sky status                  # Cluster should show as UP
-cat .cluster_name_tpu       # Should contain $CLUSTER_NAME
+sky status                  # Both clusters should show as UP
 ```
 
 ### 7.5 Execute User Code (exec-remote)
@@ -201,13 +233,18 @@ Determine `num_nodes` from the TPU type (v6e-N where total_chips = N, num_nodes 
 For single-node types (v6e-1, v6e-4), omit `--num-nodes`. For multi-node types, add `--num-nodes <N>`.
 
 ```bash
-# Single-node (v6e-1, v6e-4)
-sky exec $(cat .cluster_name_tpu) --workdir . \
+# Single-node (v6e-1, v6e-4) — use per-TPU-type cluster name
+sky exec $CLUSTER_NAME-$USERNAME-v6e-1 --workdir . \
   "uv run --extra tpu python <PATH_TO_SCRIPT> [ARGS]"
 
 # Multi-node (v6e-8+)
-sky exec $(cat .cluster_name_tpu) --num-nodes <N> --workdir . \
+sky exec $CLUSTER_NAME-$USERNAME-v6e-8 --num-nodes 2 --workdir . \
   "uv run --extra tpu python <PATH_TO_SCRIPT> [ARGS]"
+
+# Parallel execution across multiple TPU types
+sky exec $CLUSTER_NAME-$USERNAME-v6e-1 --workdir . "..." &
+sky exec $CLUSTER_NAME-$USERNAME-v6e-4 --workdir . "..." &
+wait
 ```
 
 ### 7.6 Cleanup
@@ -215,8 +252,9 @@ sky exec $(cat .cluster_name_tpu) --num-nodes <N> --workdir . \
 When the user requests teardown, remove both layers:
 
 ```bash
-# 1. Remove SkyPilot cluster
-sky down $(cat .cluster_name_tpu) -y
+# 1. Remove SkyPilot clusters (one per TPU type)
+sky down $CLUSTER_NAME-$USERNAME-v6e-1 -y
+sky down $CLUSTER_NAME-$USERNAME-v6e-4 -y
 
 # 2. Remove GKE cluster (only for Path A / GKE-based)
 xpk cluster delete \

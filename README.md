@@ -51,7 +51,7 @@ Replace **`YOUR_REPO_PATH/sglang-jax/benchmark/moe/bench_ep_moe.py`** with your 
 > I'm working on a JAX-based ML project with `pyproject.toml` that has a `tpu` extra dependency group. No remote cluster exists yet — `.cluster_name_tpu` is absent. The `exec-remote` plugin provides a three-stage pipeline: `apply-resource` (creates GKE cluster via `xpk cluster create-pathways --spot`) → `deploy-cluster` (deploys SkyPilot on GKE via its `scripts/deploy.py`) → `exec-remote` (runs code via `sky exec`). The GCP project is `tpu-service-473302`. The deploy script writes `.cluster_name_tpu` as the integration point between stages.
 >
 > **[Objective]**
-> Run `YOUR_REPO_PATH/sglang-jax/benchmark/moe/bench_ep_moe.py` on a TPU cluster by provisioning the full GKE infrastructure from scratch, following the complete `apply-resource → deploy-cluster → exec-remote` pipeline.
+> Run **Full CI Tests parallel** on a TPU cluster by provisioning the full GKE infrastructure from scratch, following the complete `apply-resource → deploy-cluster → exec-remote` pipeline.
 >
 > **[Style]**
 > Step-by-step automated execution. Collect all cluster parameters from me once upfront (cluster name, TPU type, number of slices, GCP zone), then carry them through every subsequent step — never re-ask. Auto-calculate `--num-nodes` from TPU type (total_chips / 4, e.g. v6e-8 = 2 nodes, v6e-4 = 1 node). After `xpk` creates the GKE cluster, poll `gcloud container clusters list` until status is `RUNNING` — do NOT proceed while `RECONCILING` or `PROVISIONING` (deploying SkyPilot in these states causes SSL errors).

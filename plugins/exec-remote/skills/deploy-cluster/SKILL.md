@@ -1,6 +1,6 @@
 ---
 name: deploy-cluster
-description: Deploys a SkyPilot-managed TPU cluster on GKE. Automatically ensures the required node pool exists for the requested TPU type, creating one if necessary. Supports switching between TPU types on the same GKE cluster.
+description: Deploys a SkyPilot-managed TPU cluster on GKE. Automatically ensures the required node pool exists for the requested TPU type, creating one if necessary. Supports running multiple TPU types in parallel on the same GKE cluster.
 argument-hint: "[cluster-name] [tpu-type] [zone]"
 ---
 
@@ -8,7 +8,7 @@ argument-hint: "[cluster-name] [tpu-type] [zone]"
 
 This skill deploys a SkyPilot-managed TPU cluster on an existing GKE cluster. It builds on the `apply-resource` skill which handles GKE cluster creation via xpk.
 
-**Key Feature**: Automatically manages GKE node pools per TPU type. When switching between TPU configurations (e.g., v6e-1 for unit tests, v6e-4 for e2e tests), the script adds the required node pool to the existing cluster instead of creating a new cluster. This saves time and cost.
+**Key Feature**: Each TPU type gets its own SkyPilot cluster (named `<cluster>-<username>-<tpu_type>`), allowing multiple topologies to run in parallel on the same GKE cluster. Node pools are automatically managed per TPU type.
 
 ## Prerequisites
 
@@ -18,14 +18,26 @@ This skill deploys a SkyPilot-managed TPU cluster on an existing GKE cluster. It
   - Run `gcloud auth login` to authenticate
 - **Kubectl**: [Install guide](https://cloud.google.com/kubernetes-engine/docs/how-to/cluster-access-for-kubectl)
 
+## Defaults
+
+The following defaults apply unless the user explicitly overrides them:
+
+| Parameter      | Default                    |
+|----------------|----------------------------|
+| PROJECT_ID     | `tpu-service-473302`       |
+| CLUSTER_NAME   | `sglang-jax-agent-tests`   |
+| ZONE           | `asia-northeast1-b`        |
+
+Use these values directly — do NOT ask the user to confirm or re-enter them unless they specify otherwise.
+
 ## Required Parameters
 
-- **PROJECT_ID**: GCP project ID (must be provided by the caller or user)
-- **TPU_TYPE**: TPU accelerator type (e.g., `v6e-1`, `v6e-4`, `v6e-16`)
-- **ZONE**: GCP zone (e.g., `asia-northeast1-b`, `us-east5-a`)
-- **CLUSTER_NAME**: Inherited from the GKE cluster created by `apply-resource` -- do NOT ask the user again
+- **PROJECT_ID**: GCP project ID (default: `tpu-service-473302`)
+- **TPU_TYPE**: TPU accelerator type (e.g., `v6e-1`, `v6e-4`, `v6e-16`) — must be specified
+- **ZONE**: GCP zone (default: `asia-northeast1-b`)
+- **CLUSTER_NAME**: GKE cluster name (default: `sglang-jax-agent-tests`)
 
-If all parameters are already known from an upstream caller (e.g., `exec-remote`), use them directly -- do NOT re-ask. Only prompt interactively when this skill is invoked standalone and the parameters are not yet known.
+If all parameters are already known from an upstream caller (e.g., `exec-remote`), use them directly -- do NOT re-ask. Only prompt interactively when this skill is invoked standalone and the user wants to override defaults.
 
 ## Supported TPU Types
 
@@ -73,18 +85,19 @@ If status is `RECONCILING` or `PROVISIONING`, wait until it becomes `RUNNING`.
 Run the deploy script (located in the `scripts/` directory alongside this skill definition):
 
 ```bash
-python scripts/deploy.py <CLUSTER_NAME> <TPU_TYPE> <ZONE>
+python scripts/deploy.py <TPU_TYPE> [CLUSTER_NAME] [ZONE]
 ```
+
+Only `TPU_TYPE` is required. `CLUSTER_NAME` defaults to `sglang-jax-agent-tests`, `ZONE` defaults to `asia-northeast1-b`.
 
 This script will:
 1. Fetch GKE cluster credentials via `gcloud`
 2. **Check if a node pool for the TPU type already exists** (by matching machine type and topology)
 3. **Create a new node pool if none matches** (named `tpu-<TPU_TYPE>`, e.g., `tpu-v6e-1`)
-4. **Handle topology changes**: If switching TPU types, automatically `sky down` the old cluster
-5. Generate `~/.sky/config.yaml` from the template with correct TPU parameters
-6. Generate a temporary `setup.yaml` with the correct `num_nodes`
-7. Execute `sky launch -c <CLUSTER_NAME> -r <setup.yaml>`
-8. Save the cluster name to `.cluster_name_tpu` in the plugin root (for `exec-remote` integration)
+4. Generate `~/.sky/config.yaml` from the template with correct TPU parameters
+5. Generate a temporary `setup.yaml` with the correct `num_nodes`
+6. Execute `sky launch -c <CLUSTER_NAME>-<USERNAME>-<TPU_TYPE> -r <setup.yaml>`
+7. Save the cluster name to `.cluster_name_tpu` in the plugin root (for `exec-remote` integration)
 
 ### Step 4: Verify
 
@@ -102,21 +115,27 @@ The deploy script intelligently manages GKE node pools:
 - **Coexistence**: Multiple node pools for different TPU types can coexist on the same cluster. SkyPilot's `nodeSelector` ensures pods land on the correct pool.
 - **Spot instances**: Node pools are created with `--spot` and autoscaling (`--min-nodes=0`).
 
-### Example: Running tests on different TPU types
+### Example: Running tests on different TPU types in parallel
 
 ```bash
-# First time: create cluster with v6e-4 via apply-resource
-/apply-resource create   # cluster=my-cluster, tpu=v6e-4, zone=asia-northeast1-b
+# First time: create cluster via apply-resource (uses defaults)
+/apply-resource create
 
-# Deploy SkyPilot for v6e-4 tests
-python scripts/deploy.py my-cluster v6e-4 asia-northeast1-b
-sky exec my-cluster 'python test/srt/run_suite.py --suite e2e-test-tpu-v6e-4'
+# Deploy both TPU types (sequentially — config.yaml is global)
+python scripts/deploy.py v6e-1
+# Creates SkyPilot cluster: sglang-jax-agent-tests-hongmao-v6e-1
+python scripts/deploy.py v6e-4
+# Creates SkyPilot cluster: sglang-jax-agent-tests-hongmao-v6e-4
 
-# Switch to v6e-1 for unit tests (same cluster, new node pool)
-python scripts/deploy.py my-cluster v6e-1 asia-northeast1-b
-# Script auto-detects topology change, runs sky down, adds tpu-v6e-1 pool, relaunches
-sky exec my-cluster 'python test/srt/run_suite.py --suite unit-test-tpu-v6e-1'
+# Run tests in parallel on both clusters
+sky exec sglang-jax-agent-tests-hongmao-v6e-1 'python test/srt/run_suite.py --suite unit-test-tpu-v6e-1' &
+sky exec sglang-jax-agent-tests-hongmao-v6e-4 'python test/srt/run_suite.py --suite e2e-test-tpu-v6e-4' &
+wait
 ```
+
+> **Note**: `deploy.py` calls must be sequential because `~/.sky/config.yaml` is a global file
+> shared by all SkyPilot operations. However, once both clusters are launched, `sky exec`
+> commands can run fully in parallel since pods already have the correct node affinity baked in.
 
 ## What the Script Does
 
@@ -125,10 +144,9 @@ The deploy script (`scripts/deploy.py`) automates:
 1. **GKE auth**: Runs `gcloud container clusters get-credentials`
 2. **Node pool check**: Lists existing pools, matches by machine type + topology
 3. **Node pool creation** (if needed): Runs `gcloud beta container node-pools create` with correct TPU params
-4. **Topology change handling**: Detects if `~/.sky/config.yaml` has a different topology, runs `sky down` if so
-5. **Config generation**: Reads `config.yaml` template -> replaces placeholders -> writes to `~/.sky/config.yaml`
-6. **Setup generation**: Reads `setup.yaml` template -> replaces `<NUM_NODES>` -> writes to temp file
-7. **SkyPilot launch**: Runs `sky launch -c <name> -r <setup.yaml>`
+4. **Config generation**: Reads `config.yaml` template -> replaces placeholders -> writes to `~/.sky/config.yaml`
+5. **Setup generation**: Reads `setup.yaml` template -> replaces `<NUM_NODES>` -> writes to temp file
+6. **SkyPilot launch**: Runs `sky launch -c <cluster>-<user>-<tpu_type> -r <setup.yaml>`
 
 ## Error Handling
 
@@ -138,13 +156,13 @@ The deploy script (`scripts/deploy.py`) automates:
 - **GKE auth failure**: Reports error and stops before launching
 - **Node pool creation failure**: Reports error with the failed command
 - **sky launch failure**: Reports error with the failed command
-- **Topology mismatch**: Automatically tears down and relaunches
 
 ## Cleanup
 
-To tear down the SkyPilot cluster:
+To tear down SkyPilot clusters:
 ```bash
-sky down <CLUSTER_NAME>
+sky down <CLUSTER_NAME>-<USERNAME>-v6e-1
+sky down <CLUSTER_NAME>-<USERNAME>-v6e-4
 ```
 
 To also remove the GKE cluster:

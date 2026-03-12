@@ -12,8 +12,10 @@ v6e-1 for unit tests, v6e-4 for e2e tests) without recreating
 the entire cluster.
 """
 
+import getpass
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -30,6 +32,25 @@ SKY_CONFIG_PATH = SKY_CONFIG_DIR / "config.yaml"
 CLUSTER_NAME_FILE = Path(".cluster_name_tpu")
 
 DEFAULT_PROJECT = "tpu-service-473302"
+DEFAULT_CLUSTER = "sglang-jax-agent-tests"
+DEFAULT_ZONE = "asia-northeast1-b"
+MAX_USERS_PER_POOL = 3
+
+
+def get_sky_cluster_name(gke_cluster_name: str, tpu_type: str) -> str:
+    """Derive a user- and TPU-specific SkyPilot cluster name.
+
+    Includes both the OS username and TPU type so that multiple TPU
+    topologies can run in parallel on the same GKE cluster.
+    E.g. ``my-cluster-hongmao-v6e-1`` and ``my-cluster-hongmao-v6e-4``.
+    """
+    username = getpass.getuser()
+    # Kubernetes names: lowercase alphanumeric and hyphens only
+    sanitized = re.sub(r"[^a-z0-9-]", "-", username.lower()).strip("-")
+    if not sanitized:
+        sanitized = "default"
+    return f"{gke_cluster_name}-{sanitized}-{tpu_type}"
+
 
 sys.path.insert(0, str(SCRIPTS_DIR))
 from tpu_config import get_tpu_config, list_supported_types
@@ -119,6 +140,7 @@ def create_node_pool(
     the topology is implicit in the machine type. For multi-host TPUs (v6e-8+),
     --tpu-topology is required.
     """
+    max_nodes = config["num_nodes"] * MAX_USERS_PER_POOL
     cmd = [
         "gcloud", "beta", "container", "node-pools", "create", pool_name,
         f"--cluster={cluster_name}",
@@ -129,7 +151,7 @@ def create_node_pool(
         "--spot",
         "--enable-autoscaling",
         "--min-nodes=0",
-        f"--max-nodes={config['num_nodes']}",
+        f"--max-nodes={max_nodes}",
     ]
 
     # Only add --tpu-topology for multi-host configurations
@@ -155,6 +177,9 @@ def ensure_node_pool(
     This detects both pools created by this script (named tpu-<type>)
     and pools created by xpk (arbitrary names). Only creates a new
     pool if no match is found.
+
+    If creation fails (e.g. another user created the same pool
+    concurrently), re-checks existing pools before giving up.
     """
     config = get_tpu_config(tpu_type)
     region = extract_region(zone)
@@ -170,37 +195,23 @@ def ensure_node_pool(
     # No matching pool found, create one
     pool_name = f"tpu-{tpu_type}"
     print(f"  No matching node pool found. Creating '{pool_name}'...")
-    return create_node_pool(cluster_name, pool_name, config, region, project)
+    if create_node_pool(cluster_name, pool_name, config, region, project):
+        return True
+
+    # Creation failed — re-check in case another user created it concurrently
+    print(f"  Re-checking node pools (may have been created by another user)...")
+    pools = list_node_pools(cluster_name, region, project)
+    for pool in pools:
+        if pool_matches_tpu_config(pool, config):
+            print(f"  Found matching node pool: '{pool['name']}'")
+            return True
+
+    return False
 
 
 # ---------------------------------------------------------------------------
 # SkyPilot config generation
 # ---------------------------------------------------------------------------
-
-def handle_topology_change(cluster_name: str, new_topology: str):
-    """Tear down SkyPilot cluster if topology has changed.
-
-    SkyPilot pods use nodeSelector labels that are topology-specific.
-    When switching TPU types, the old cluster must be torn down first
-    so that new pods are scheduled on the correct node pool.
-    """
-    if not SKY_CONFIG_PATH.exists():
-        return
-
-    current_topology = None
-    content = SKY_CONFIG_PATH.read_text()
-    for line in content.split("\n"):
-        if "gke-tpu-topology" in line:
-            current_topology = line.split(":")[-1].strip()
-            break
-
-    if current_topology is None or current_topology == new_topology:
-        return
-
-    print(f"\nTopology change detected: {current_topology} -> {new_topology}")
-    print(f"Tearing down existing SkyPilot cluster '{cluster_name}'...")
-    subprocess.run(["sky", "down", cluster_name, "-y"])
-
 
 def generate_sky_config(tpu_type: str) -> bool:
     """Generate ~/.sky/config.yaml from template with TPU-specific values."""
@@ -302,28 +313,34 @@ def deploy(cluster_name: str, tpu_type: str, zone: str):
     1. Check prerequisites
     2. Fetch GKE credentials
     3. Ensure node pool exists for the TPU type (create if missing)
-    4. Handle topology change (sky down if switching TPU types)
-    5. Generate SkyPilot config
-    6. Launch SkyPilot cluster
+    4. Generate SkyPilot config
+    5. Launch SkyPilot cluster
+
+    ``cluster_name`` is the GKE cluster name (shared infrastructure).
+    SkyPilot operations use a per-user, per-TPU name
+    (<cluster>-<username>-<tpu_type>) so that multiple topologies
+    can run in parallel on the same GKE cluster.
     """
     config = get_tpu_config(tpu_type)
+    sky_name = get_sky_cluster_name(cluster_name, tpu_type)
 
     print(f"\n{'=' * 60}")
     print(f"  Deploy SkyPilot Cluster")
     print(f"{'=' * 60}")
-    print(f"\n  Cluster: {cluster_name}")
-    print(f"  TPU:     {tpu_type}")
-    print(f"  Zone:    {zone}\n")
+    print(f"\n  GKE Cluster:    {cluster_name}")
+    print(f"  SkyPilot Name:  {sky_name}")
+    print(f"  TPU:            {tpu_type}")
+    print(f"  Zone:           {zone}\n")
 
     # Step 1: Check prerequisites
     if not check_prerequisites():
         sys.exit(1)
 
-    # Step 2: Get GKE credentials
+    # Step 2: Get GKE credentials (GKE cluster name)
     if not get_gke_credentials(cluster_name, zone):
         sys.exit(1)
 
-    # Step 3: Ensure node pool exists for the TPU type
+    # Step 3: Ensure node pool exists for the TPU type (GKE cluster name)
     try:
         if not ensure_node_pool(cluster_name, tpu_type, zone):
             sys.exit(1)
@@ -331,10 +348,7 @@ def deploy(cluster_name: str, tpu_type: str, zone: str):
         print(f"Error: {e}")
         sys.exit(1)
 
-    # Step 4: Handle topology change (sky down if switching TPU types)
-    handle_topology_change(cluster_name, config["topology"])
-
-    # Step 5: Generate ~/.sky/config.yaml
+    # Step 4: Generate ~/.sky/config.yaml
     try:
         if not generate_sky_config(tpu_type):
             sys.exit(1)
@@ -342,24 +356,24 @@ def deploy(cluster_name: str, tpu_type: str, zone: str):
         print(f"Error: {e}")
         sys.exit(1)
 
-    # Step 6: Generate setup.yaml
+    # Step 5: Generate setup.yaml
     try:
         setup_path = generate_setup_yaml(tpu_type)
     except ValueError as e:
         print(f"Error: {e}")
         sys.exit(1)
 
-    # Step 7: Launch SkyPilot cluster
+    # Step 6: Launch SkyPilot cluster (SkyPilot name)
     try:
-        if not launch_sky_cluster(cluster_name, setup_path):
+        if not launch_sky_cluster(sky_name, setup_path):
             sys.exit(1)
     finally:
         # Clean up temp file
         if os.path.exists(setup_path):
             os.unlink(setup_path)
 
-    # Save cluster name for exec-remote skill
-    CLUSTER_NAME_FILE.write_text(cluster_name)
+    # Save SkyPilot cluster name for exec-remote skill
+    CLUSTER_NAME_FILE.write_text(sky_name)
     print(f"\nSaved cluster name to {CLUSTER_NAME_FILE}")
 
     print(f"\n{'=' * 60}")
@@ -367,33 +381,33 @@ def deploy(cluster_name: str, tpu_type: str, zone: str):
     print(f"{'=' * 60}")
     print(f"\nNext steps:")
     print(f"  sky status          # Check cluster status")
-    print(f"  sky exec {cluster_name} 'command'  # Run commands on cluster")
-    print(f"  sky down {cluster_name}            # Tear down cluster")
+    print(f"  sky exec {sky_name} 'command'  # Run commands on cluster")
+    print(f"  sky down {sky_name}            # Tear down cluster")
 
 
 def main():
-    if len(sys.argv) < 2:
-        print("Usage: deploy.py <cluster_name> <tpu_type> <zone>")
-        print(f"\nSupported TPU types: {', '.join(list_supported_types())}")
-        print("\nExample:")
-        print("  python deploy.py my-cluster v6e-16 asia-northeast1-b")
-        sys.exit(1)
-
-    if sys.argv[1] == "--help":
+    if len(sys.argv) >= 2 and sys.argv[1] == "--help":
         print("Deploy a SkyPilot-managed TPU cluster on GKE.\n")
-        print("Usage: deploy.py <cluster_name> <tpu_type> <zone>\n")
+        print("Usage: deploy.py <tpu_type> [cluster_name] [zone]\n")
         print("Arguments:")
-        print("  cluster_name  Name of the GKE cluster (must already exist)")
-        print("  tpu_type      TPU type (e.g., v6e-16)")
-        print("  zone          GCP zone (e.g., asia-northeast1-b)\n")
+        print(f"  tpu_type      TPU type (e.g., v6e-16) — REQUIRED")
+        print(f"  cluster_name  GKE cluster name (default: {DEFAULT_CLUSTER})")
+        print(f"  zone          GCP zone (default: {DEFAULT_ZONE})\n")
         print(f"Supported TPU types: {', '.join(list_supported_types())}")
         sys.exit(0)
 
-    if len(sys.argv) != 4:
-        print("Error: Expected 3 arguments: <cluster_name> <tpu_type> <zone>")
+    if len(sys.argv) < 2:
+        print("Usage: deploy.py <tpu_type> [cluster_name] [zone]")
+        print(f"\nDefaults: cluster={DEFAULT_CLUSTER}, zone={DEFAULT_ZONE}")
+        print(f"Supported TPU types: {', '.join(list_supported_types())}")
+        print("\nExamples:")
+        print(f"  python deploy.py v6e-4")
+        print(f"  python deploy.py v6e-16 my-cluster us-east5-a")
         sys.exit(1)
 
-    cluster_name, tpu_type, zone = sys.argv[1], sys.argv[2], sys.argv[3]
+    tpu_type = sys.argv[1]
+    cluster_name = sys.argv[2] if len(sys.argv) > 2 else DEFAULT_CLUSTER
+    zone = sys.argv[3] if len(sys.argv) > 3 else DEFAULT_ZONE
     deploy(cluster_name, tpu_type, zone)
 
 

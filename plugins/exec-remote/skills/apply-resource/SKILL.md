@@ -23,17 +23,30 @@ Before using this skill, ensure the following tools are installed:
 - **Xpk**: [Install guide](https://github.com/AI-Hypercomputer/xpk/blob/main/docs/installation.md)
   - Check: `xpk --help`
 
+## Defaults
+
+The following defaults apply unless the user explicitly overrides them:
+
+| Parameter      | Default                    |
+|----------------|----------------------------|
+| PROJECT_ID     | `tpu-service-473302`       |
+| CLUSTER_NAME   | `sglang-jax-agent-tests`   |
+| ZONE           | `asia-northeast1-b`        |
+| NUM_SLICES     | `1`                        |
+
+Use these values directly — do NOT ask the user to confirm or re-enter them unless they specify otherwise.
+
 ## Required Parameters
 
 When creating a cluster, the following parameters are required:
 
-- **PROJECT_ID**: GCP project ID (must be provided by the caller or user)
-- **CLUSTER_NAME**: Name of the GKE cluster
-- **TPU_TYPE**: TPU accelerator type (e.g., `v6e-16`, `v6e-4`, `v4-8`)
-- **NUM_SLICES**: Number of TPU slices to provision
-- **ZONE**: GCP zone (e.g., `asia-northeast1-b`, `us-east5-a`)
+- **PROJECT_ID**: GCP project ID (default: `tpu-service-473302`)
+- **CLUSTER_NAME**: Name of the GKE cluster (default: `sglang-jax-agent-tests`)
+- **TPU_TYPE**: TPU accelerator type (e.g., `v6e-16`, `v6e-4`, `v4-8`) — must be specified
+- **NUM_SLICES**: Number of TPU slices to provision (default: `1`)
+- **ZONE**: GCP zone (default: `asia-northeast1-b`)
 
-If these parameters are already known from an upstream caller (e.g., `exec-remote` or `deploy-cluster`), use them directly — do NOT re-ask the user. Only prompt interactively when this skill is invoked standalone and the parameters are not yet known.
+If these parameters are already known from an upstream caller (e.g., `exec-remote` or `deploy-cluster`), use them directly — do NOT re-ask the user. Only prompt interactively when this skill is invoked standalone and the user wants to override defaults.
 
 ## Operations
 

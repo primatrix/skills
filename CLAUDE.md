@@ -28,9 +28,11 @@ apply-resource  →  deploy-cluster  →  exec-remote
 (xpk/GKE)         (SkyPilot on GKE)   (sky exec)
 ```
 
+**Defaults** (used unless user overrides): project=`tpu-service-473302`, cluster=`sglang-jax-agent-tests`, zone=`asia-northeast1-b`.
+
 - **apply-resource**: Creates/deletes/lists GKE clusters with TPU nodepools via `xpk`. Scripts in `plugins/exec-remote/skills/apply-resource/scripts/` (Python: `main.py`, `cluster_manager.py`, `tpu_availability.py`).
-- **deploy-cluster**: Deploys SkyPilot on top of the GKE cluster. Uses `scripts/deploy.py` to generate `~/.sky/config.yaml`, fetch GKE credentials, and run `sky launch`. References `config.yaml` and `setup.yaml` as templates. Writes `.cluster_name_tpu` as integration point.
-- **exec-remote**: Entry point skill. Reads `.cluster_name_gpu` or `.cluster_name_tpu` to find provisioned clusters, runs code via `sky exec`. Delegates to deploy-cluster/apply-resource when no cluster exists. Also supports standalone GPU/TPU provisioning via `launch_gpu.sh` and `launch_tpu.sh`.
+- **deploy-cluster**: Deploys SkyPilot on top of the GKE cluster. Uses `scripts/deploy.py` to generate `~/.sky/config.yaml`, fetch GKE credentials, and run `sky launch`. Each TPU type gets its own SkyPilot cluster named `<cluster>-<username>-<tpu_type>`, allowing parallel execution across topologies. References `config.yaml` and `setup.yaml` as templates. Writes `.cluster_name_tpu` as integration point.
+- **exec-remote**: Entry point skill. Uses per-TPU-type cluster names (e.g. `sglang-jax-agent-tests-hongmao-v6e-1`) or reads `.cluster_name_gpu`/`.cluster_name_tpu` for provisioned clusters. Runs code via `sky exec`. Delegates to deploy-cluster/apply-resource when no cluster exists. Also supports standalone GPU/TPU provisioning via `launch_gpu.sh` and `launch_tpu.sh`.
 
 Key integration file: `.cluster_name_tpu` (or `_gpu`) in the plugin root — written by provisioning, read by exec-remote.
 
