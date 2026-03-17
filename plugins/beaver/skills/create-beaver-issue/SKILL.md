@@ -82,10 +82,11 @@ keywords:
 **Create issue:**
 ```bash
 gh api repos/{org}/{issueRepo}/issues --method POST \
+  -H "X-GitHub-Api-Version: 2026-03-10" \
   -f title="{title}" --raw-field body="$(cat "$BODY_FILE")" \
   -f type="{level}" -f "labels[]=Control-By-Beaver"
 ```
-Add `-f milestone={number}` if a milestone was selected. If issue type API fails, retry without `-f type`.
+Add `-f milestone={number}` if a milestone was selected. The `X-GitHub-Api-Version: 2026-03-10` header is required for the `type` field to be recognized. If issue type API fails (e.g., org plan does not support issue types), retry without `-f type` and warn the user that the issue type was not set.
 
 **Add to project and set fields:**
 ```bash
