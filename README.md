@@ -12,6 +12,7 @@ A Skill is a set of structured instructions (defined in a `SKILL.md` file) that 
 |-------|-------------|
 | [exec-remote](#exec-remote) | Execute Python scripts on remote GPU/TPU clusters via SkyPilot |
 | [linear](#linear) | Manage issues, projects & team workflows in Linear |
+| [beaver](#beaver) | Beaver issue tracker: project setup, issue creation, and PR workflows for GitHub Projects V2 |
 | [session-recorder](#session-recorder) | Records the complete session content to a daily work directory |
 ---
 
@@ -114,6 +115,41 @@ Manage issues, projects & team workflows in [Linear](https://linear.app/) throug
 
 ---
 
+### beaver
+
+Beaver issue tracker for [GitHub Projects V2](https://docs.github.com/en/issues/planning-and-tracking-with-projects) — project setup, issue creation, and PR workflows.
+
+**Use when:** the user wants to create a GitHub Project V2 with structured issue tracking, create Beaver-tracked issues (Goal/Task/SubTask), or open PRs linked to Beaver issues.
+
+This plugin contains one command and two skills:
+
+```
+create-beaver-project  ← Command: set up a new GitHub Project V2 with Beaver config
+beaver-pr              ← Skill: commit, push, and open a PR linked to a Beaver issue
+create-beaver-issue    ← Skill: create a Beaver-tracked GitHub Issue with Project V2 fields
+```
+
+| Skill / Command | Description |
+|-----------------|-------------|
+| **create-beaver-project** | Creates a GitHub Project V2 with custom fields (Level, Status, Progress), a `beaver-config` README block, and initializes the issue repo with issue types, labels, and milestones. |
+| **create-beaver-issue** | Creates a Beaver-tracked GitHub Issue (Goal/Task/SubTask) with automatic Project V2 field setup, tracking rules, and parent issue linking. |
+| **beaver-pr** | Commits changes, pushes the branch, and opens a GitHub PR with optional Beaver issue association. |
+
+**Capabilities:**
+- Create GitHub Project V2 with standardized custom fields (Level, Status, Progress)
+- Create structured issues with three hierarchy levels: Goal, Task, SubTask
+- Automatic Project V2 field setup and tracking rule configuration
+- PR workflow with optional Beaver issue linking
+- Issue body templates with Chinese (中文) convention for 目标/验收标准 sections
+- Milestone management with weekly milestone auto-generation
+
+**Prerequisites:**
+- [GitHub CLI](https://cli.github.com/) (`gh`) installed and authenticated
+- Token scopes: `project` and `admin:org` (for issue types)
+- Organization-level GitHub Projects V2 access
+
+---
+
 ## Installation
 
 ### Claude Code
@@ -127,9 +163,11 @@ Install plugins via the [plugin marketplace](https://code.claude.com/docs/en/plu
 # install plugins from the marketplace
 /plugin install exec-remote@primatrix-skills
 /plugin install linear@primatrix-skills
+/plugin install beaver@primatrix-skills
 
 # project scope (default is user scope)
 /plugin install exec-remote@primatrix-skills --scope project
+/plugin install beaver@primatrix-skills --scope project
 ```
 
 ### Codex
@@ -139,6 +177,7 @@ Install skills via [skills.sh](https://skills.sh):
 ```bash
 npx skills add primatrix/skills@exec-remote -a codex
 npx skills add primatrix/skills@linear -a codex
+npx skills add primatrix/skills@beaver -a codex
 ```
 
 ### Gemini CLI
@@ -149,9 +188,12 @@ Install skills via the built-in [skill commands](https://geminicli.com/docs/cli/
 # install from GitHub (user scope by default: ~/.gemini/skills)
 gemini skills install https://github.com/primatrix/skills.git --path plugins/exec-remote/skills/exec-remote
 gemini skills install https://github.com/primatrix/skills.git --path plugins/linear/skills/linear
+gemini skills install https://github.com/primatrix/skills.git --path plugins/beaver/skills/beaver-pr
+gemini skills install https://github.com/primatrix/skills.git --path plugins/beaver/skills/create-beaver-issue
 
 # project/workspace scope (.gemini/skills in current project)
 gemini skills install https://github.com/primatrix/skills.git --path plugins/exec-remote/skills/exec-remote --scope workspace
+gemini skills install https://github.com/primatrix/skills.git --path plugins/beaver/skills/beaver-pr --scope workspace
 ```
 
 ### Cross-platform (skills.sh)
@@ -161,6 +203,7 @@ gemini skills install https://github.com/primatrix/skills.git --path plugins/exe
 ```bash
 npx skills add primatrix/skills@exec-remote
 npx skills add primatrix/skills@linear
+npx skills add primatrix/skills@beaver
 
 # install to a specific agent
 npx skills add primatrix/skills -a claude-code
@@ -173,6 +216,8 @@ npx skills add primatrix/skills -a codex
 # Claude Code — start a session and run:
 /exec-remote
 /linear
+/beaver-pr
+/create-beaver-issue
 
 # Codex — start a session and run:
 /skills
