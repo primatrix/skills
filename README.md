@@ -14,6 +14,8 @@ A Skill is a set of structured instructions (defined in a `SKILL.md` file) that 
 | [linear](#linear) | Manage issues, projects & team workflows in Linear |
 | [beaver](#beaver) | Beaver issue tracker: project setup, issue creation, and PR workflows for GitHub Projects V2 |
 | [session-recorder](#session-recorder) | Records the complete session content to a daily work directory |
+| [lint-fix](#lint-fix) | Check and fix lint issues for changed Python files |
+
 ---
 
 ### exec-remote
@@ -150,6 +152,31 @@ create-beaver-issue    ← Skill: create a Beaver-tracked GitHub Issue with Proj
 
 ---
 
+### lint-fix
+
+Check and fix lint issues for changed Python files. Supports single commit, commit range, and unstaged/staged working tree changes.
+
+**Use when:** the user wants to verify or fix lint compliance for specific changes.
+
+**Capabilities:**
+- Lint files changed in a single commit or a range of commits
+- Lint unstaged or staged working tree changes
+- Auto-fix issues using isort, ruff, black, and codespell
+- Manually fix remaining issues that cannot be auto-resolved
+- Stage fixes for user review before committing
+
+**Supported Linters:**
+- [isort](https://pycqa.github.io/isort/) — import sorting
+- [ruff](https://docs.astral.sh/ruff/) — fast Python linter
+- [black](https://black.readthedocs.io/) — code formatting
+- [codespell](https://github.com/codespell-project/codespell) — spelling checks
+
+**Prerequisites:**
+- A git repository with Python files
+- Linter tools installed (isort, ruff, black, codespell)
+
+---
+
 ## Installation
 
 ### Claude Code
@@ -164,6 +191,7 @@ Install plugins via the [plugin marketplace](https://code.claude.com/docs/en/plu
 /plugin install exec-remote@primatrix-skills
 /plugin install linear@primatrix-skills
 /plugin install beaver@primatrix-skills
+/plugin install lint-fix@primatrix-skills
 
 # project scope (default is user scope)
 /plugin install exec-remote@primatrix-skills --scope project
@@ -178,6 +206,7 @@ Install skills via [skills.sh](https://skills.sh):
 npx skills add primatrix/skills@exec-remote -a codex
 npx skills add primatrix/skills@linear -a codex
 npx skills add primatrix/skills@beaver -a codex
+npx skills add primatrix/skills@lint-fix -a codex
 ```
 
 ### Gemini CLI
@@ -190,6 +219,7 @@ gemini skills install https://github.com/primatrix/skills.git --path plugins/exe
 gemini skills install https://github.com/primatrix/skills.git --path plugins/linear/skills/linear
 gemini skills install https://github.com/primatrix/skills.git --path plugins/beaver/skills/beaver-pr
 gemini skills install https://github.com/primatrix/skills.git --path plugins/beaver/skills/create-beaver-issue
+gemini skills install https://github.com/primatrix/skills.git --path plugins/lint-fix/skills/lint-fix
 
 # project/workspace scope (.gemini/skills in current project)
 gemini skills install https://github.com/primatrix/skills.git --path plugins/exec-remote/skills/exec-remote --scope workspace
@@ -204,6 +234,7 @@ gemini skills install https://github.com/primatrix/skills.git --path plugins/bea
 npx skills add primatrix/skills@exec-remote
 npx skills add primatrix/skills@linear
 npx skills add primatrix/skills@beaver
+npx skills add primatrix/skills@lint-fix
 
 # install to a specific agent
 npx skills add primatrix/skills -a claude-code
@@ -218,6 +249,7 @@ npx skills add primatrix/skills -a codex
 /linear
 /beaver-pr
 /create-beaver-issue
+/lint-fix
 
 # Codex — start a session and run:
 /skills

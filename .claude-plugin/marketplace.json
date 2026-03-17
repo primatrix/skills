@@ -42,6 +42,15 @@
       "license": "Apache-2.0",
       "keywords": ["beaver", "github", "issues", "project-management", "pr"],
       "category": "productivity"
+    },
+    {
+      "name": "lint-fix",
+      "source": "./plugins/lint-fix",
+      "description": "Check and fix lint issues for changed Python files by commit, range, or working tree",
+      "version": "1.0.0",
+      "license": "Apache-2.0",
+      "keywords": ["lint", "format", "isort", "ruff", "black", "codespell", "pre-commit"],
+      "category": "code-quality"
     }
   ]
 }

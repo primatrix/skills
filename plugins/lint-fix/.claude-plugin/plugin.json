@@ -1,0 +1,5 @@
+{
+  "name": "lint-fix",
+  "description": "Check and fix lint issues for changed Python files by commit, range, or working tree",
+  "version": "1.0.0"
+}
