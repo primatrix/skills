@@ -42,6 +42,15 @@
       "license": "Apache-2.0",
       "keywords": ["lint", "format", "isort", "ruff", "black", "codespell", "pre-commit"],
       "category": "code-quality"
+    },
+    {
+      "name": "superpowers",
+      "source": "./plugins/superpowers",
+      "description": "Core skills library: TDD, debugging, brainstorming, collaboration patterns, and proven techniques",
+      "category": "workflow",
+      "version": "1.0.0",
+      "license": "Apache-2.0",
+      "keywords": ["skills", "tdd", "debugging", "brainstorming", "collaboration", "workflows"]
     }
   ]
 }
