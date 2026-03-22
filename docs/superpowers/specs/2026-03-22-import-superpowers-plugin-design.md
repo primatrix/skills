@@ -9,7 +9,7 @@ Copy the superpowers plugin (v5.0.2) into this repository as a locally maintaine
 
 ## Scope
 
-Copy the complete superpowers plugin directory structure into `plugins/superpowers/`, excluding upstream development artifacts (`docs/` and `tests/`). Modify `plugin.json` to match the repository's minimal format. Register in `marketplace.json`.
+Copy the superpowers plugin directory structure into `plugins/superpowers/`, including only the runtime-relevant directories (skills/, agents/, commands/, hooks/, multi-platform integration files). Exclude upstream development artifacts. Modify `plugin.json` to match the repository's minimal format. Register in `marketplace.json`.
 
 ## Directory Structure
 
@@ -45,6 +45,8 @@ plugins/superpowers/
 ├── .cursor-plugin/plugin.json          # Cursor editor integration
 ├── .codex/INSTALL.md                   # Codex integration
 ├── .opencode/                          # OpenCode integration
+│   ├── INSTALL.md
+│   └── plugins/superpowers.js
 ├── gemini-extension.json               # Gemini CLI integration
 └── GEMINI.md                           # Gemini CLI instructions
 ```
@@ -74,7 +76,8 @@ Add entry:
   "description": "Core skills library: TDD, debugging, brainstorming, collaboration patterns, and proven techniques",
   "category": "workflow",
   "version": "1.0.0",
-  "license": "Apache-2.0"
+  "license": "Apache-2.0",
+  "keywords": ["skills", "tdd", "debugging", "brainstorming", "collaboration", "workflows"]
 }
 ```
 
@@ -90,6 +93,12 @@ All supporting files (agents/, commands/, hooks/, multi-platform integration fil
 
 - `docs/` — upstream development documentation
 - `tests/` — upstream test suites
+- `README.md` — upstream project README
+- `RELEASE-NOTES.md` — upstream release notes
+- `LICENSE` — upstream MIT license file (this repo uses Apache-2.0)
+- `.github/` — upstream GitHub config (FUNDING.yml)
+- `.gitignore`, `.gitattributes` — upstream git config
+- `.claude-plugin/marketplace.json` — upstream's own marketplace registry (only `plugin.json` is kept and rewritten)
 
 ## Skills Included (14 total)
 
