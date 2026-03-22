@@ -11,7 +11,7 @@ A Skill is a set of structured instructions (defined in a `SKILL.md` file) that 
 | Skill | Description |
 |-------|-------------|
 | [exec-remote](#exec-remote) | Execute Python scripts on remote GPU/TPU clusters via SkyPilot |
-|[beaver](#beaver) | Beaver issue tracker: project setup, issue creation, and PR workflows for GitHub Projects V2 |
+| [beaver](#beaver) | Beaver issue tracker: project setup, issue creation, and PR workflows for GitHub Projects V2 |
 | [session-recorder](#session-recorder) | Records the complete session content to a daily work directory |
 | [lint-fix](#lint-fix) | Check and fix lint issues for changed Python files |
 
