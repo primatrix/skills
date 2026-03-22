@@ -11,7 +11,6 @@ A Skill is a set of structured instructions (defined in a `SKILL.md` file) that 
 | Skill | Description |
 |-------|-------------|
 | [exec-remote](#exec-remote) | Execute Python scripts on remote GPU/TPU clusters via SkyPilot |
-| [linear](#linear) | Manage issues, projects & team workflows in Linear |
 | [beaver](#beaver) | Beaver issue tracker: project setup, issue creation, and PR workflows for GitHub Projects V2 |
 | [session-recorder](#session-recorder) | Records the complete session content to a daily work directory |
 | [lint-fix](#lint-fix) | Check and fix lint issues for changed Python files |
@@ -99,24 +98,6 @@ exec-remote      →  Syncs local directory, runs your script
 
 ---
 
-### linear
-
-Manage issues, projects & team workflows in [Linear](https://linear.app/) through the Linear MCP server.
-
-**Use when:** the user wants to read, create, or update tickets in Linear.
-
-**Capabilities:**
-- Issue management: create, update, list, search, triage
-- Project & team operations: create projects, manage teams, view users
-- Documentation & collaboration: manage documents, comments, cycles
-- Workflow automation: sprint planning, bug triage, release planning, workload balancing, smart labeling
-
-**Prerequisites:**
-- Linear MCP server connected and accessible via OAuth
-- Access to the relevant Linear workspace, teams, and projects
-
----
-
 ### beaver
 
 Beaver issue tracker for [GitHub Projects V2](https://docs.github.com/en/issues/planning-and-tracking-with-projects) — project setup, issue creation, and PR workflows.
@@ -189,7 +170,6 @@ Install plugins via the [plugin marketplace](https://code.claude.com/docs/en/plu
 
 # install plugins from the marketplace
 /plugin install exec-remote@primatrix-skills
-/plugin install linear@primatrix-skills
 /plugin install beaver@primatrix-skills
 /plugin install lint-fix@primatrix-skills
 
@@ -204,7 +184,6 @@ Install skills via [skills.sh](https://skills.sh):
 
 ```bash
 npx skills add primatrix/skills@exec-remote -a codex
-npx skills add primatrix/skills@linear -a codex
 npx skills add primatrix/skills@beaver -a codex
 npx skills add primatrix/skills@lint-fix -a codex
 ```
@@ -216,7 +195,6 @@ Install skills via the built-in [skill commands](https://geminicli.com/docs/cli/
 ```bash
 # install from GitHub (user scope by default: ~/.gemini/skills)
 gemini skills install https://github.com/primatrix/skills.git --path plugins/exec-remote/skills/exec-remote
-gemini skills install https://github.com/primatrix/skills.git --path plugins/linear/skills/linear
 gemini skills install https://github.com/primatrix/skills.git --path plugins/beaver/skills/beaver-pr
 gemini skills install https://github.com/primatrix/skills.git --path plugins/beaver/skills/create-beaver-issue
 gemini skills install https://github.com/primatrix/skills.git --path plugins/lint-fix/skills/lint-fix
@@ -232,7 +210,6 @@ gemini skills install https://github.com/primatrix/skills.git --path plugins/bea
 
 ```bash
 npx skills add primatrix/skills@exec-remote
-npx skills add primatrix/skills@linear
 npx skills add primatrix/skills@beaver
 npx skills add primatrix/skills@lint-fix
 
@@ -246,7 +223,6 @@ npx skills add primatrix/skills -a codex
 ```bash
 # Claude Code — start a session and run:
 /exec-remote
-/linear
 /beaver-pr
 /create-beaver-issue
 /lint-fix
