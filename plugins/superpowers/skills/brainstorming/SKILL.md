@@ -113,7 +113,7 @@ digraph brainstorming {
 
 1. **Determine next RFC number:**
    ```bash
-   gh api repos/primatrix/wiki/contents/docs/rfc --jq '[.[].name | select(test("^[0-9]{4}-"))] | sort | last | split("-") | .[0] | tonumber + 1'
+   gh api repos/primatrix/wiki/contents/docs/rfc --jq '[.[].name | select(test("^[0-9]{4}-")) | split("-")[0] | tonumber] | max // 0 + 1'
    ```
    Format as zero-padded 4-digit number (e.g., `0002`).
 
@@ -129,7 +129,7 @@ digraph brainstorming {
 4. **Create RFC file** (`docs/rfc/NNNN-<topic>.md`):
    Use the design spec content as-is (current brainstorming output format). Encode as base64 and push:
    ```bash
-   CONTENT=$(echo "$SPEC_CONTENT" | base64)
+   CONTENT=$(printf "%s" "$SPEC_CONTENT" | base64 -w 0)
    gh api repos/primatrix/wiki/contents/docs/rfc/NNNN-<topic>.md \
      -X PUT -f message="docs: add RFC NNNN <topic>" \
      -f content="$CONTENT" -f branch="rfc/NNNN-<topic>"
@@ -161,8 +161,8 @@ After publishing the RFC:
 1. Dispatch spec-document-reviewer subagent (see spec-document-reviewer-prompt.md)
    - Provide the RFC content by fetching from GitHub:
      ```bash
-     gh api repos/primatrix/wiki/contents/docs/rfc/NNNN-<topic>.md \
-       -H "Accept: application/vnd.github.raw" --header "ref: rfc/NNNN-<topic>"
+     gh api "repos/primatrix/wiki/contents/docs/rfc/NNNN-<topic>.md?ref=rfc/NNNN-<topic>" \
+       -H "Accept: application/vnd.github.raw"
      ```
 2. If Issues Found: fix, push update to the RFC file on the branch, re-dispatch
 3. If loop exceeds 5 iterations, surface to human for guidance

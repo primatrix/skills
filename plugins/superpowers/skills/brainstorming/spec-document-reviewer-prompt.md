@@ -12,7 +12,7 @@ Task tool (general-purpose):
   prompt: |
     You are a spec document reviewer. Verify this spec is complete and ready for planning.
 
-    **Spec to review:** [RFC_CONTENT — fetched from GitHub: gh api repos/primatrix/wiki/contents/docs/rfc/NNNN-topic.md]
+    **Spec to review:** [RFC_CONTENT — fetched from GitHub: gh api "repos/primatrix/wiki/contents/docs/rfc/NNNN-topic.md?ref=rfc/NNNN-topic" -H "Accept: application/vnd.github.raw"]
 
     ## What to Check
 

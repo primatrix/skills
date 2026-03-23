@@ -128,7 +128,7 @@ Implementer subagents report one of four statuses. Handle each appropriately:
 ```
 You: I'm using Subagent-Driven Development to execute this plan.
 
-[Fetch plan from RFC: gh api repos/primatrix/wiki/contents/docs/rfc/NNNN-feature.md]
+[Fetch plan from RFC: gh api "repos/primatrix/wiki/contents/docs/rfc/NNNN-feature.md?ref=rfc/NNNN-feature" -H "Accept: application/vnd.github.raw"]
 [Extract all 5 tasks with full text and context]
 [Create TodoWrite with all tasks]
 
