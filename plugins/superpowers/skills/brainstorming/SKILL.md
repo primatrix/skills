@@ -26,7 +26,7 @@ You MUST create a task for each of these items and complete them in order:
 3. **Ask clarifying questions** — one at a time, understand purpose/constraints/success criteria
 4. **Propose 2-3 approaches** — with trade-offs and your recommendation
 5. **Present design** — in sections scaled to their complexity, get user approval after each section
-6. **Write design doc** — save to `docs/superpowers/specs/YYYY-MM-DD-<topic>-design.md` and commit
+6. **Publish RFC to wiki** — create RFC in `primatrix/wiki` via GitHub API: determine next RFC number, ask user to select GitHub Project, create branch + RFC file + PR, associate with Project
 7. **Spec review loop** — dispatch spec-document-reviewer subagent with precisely crafted review context (never your session history); fix issues and re-dispatch until approved (max 5 iterations, then surface to human)
 8. **User reviews written spec** — ask user to review the spec file before proceeding
 9. **Transition to implementation** — invoke writing-plans skill to create implementation plan
@@ -42,7 +42,7 @@ digraph brainstorming {
     "Propose 2-3 approaches" [shape=box];
     "Present design sections" [shape=box];
     "User approves design?" [shape=diamond];
-    "Write design doc" [shape=box];
+    "Publish RFC to wiki" [shape=box];
     "Spec review loop" [shape=box];
     "Spec review passed?" [shape=diamond];
     "User reviews spec?" [shape=diamond];
@@ -56,12 +56,12 @@ digraph brainstorming {
     "Propose 2-3 approaches" -> "Present design sections";
     "Present design sections" -> "User approves design?";
     "User approves design?" -> "Present design sections" [label="no, revise"];
-    "User approves design?" -> "Write design doc" [label="yes"];
-    "Write design doc" -> "Spec review loop";
+    "User approves design?" -> "Publish RFC to wiki" [label="yes"];
+    "Publish RFC to wiki" -> "Spec review loop";
     "Spec review loop" -> "Spec review passed?";
     "Spec review passed?" -> "Spec review loop" [label="issues found,\nfix and re-dispatch"];
     "Spec review passed?" -> "User reviews spec?" [label="approved"];
-    "User reviews spec?" -> "Write design doc" [label="changes requested"];
+    "User reviews spec?" -> "Publish RFC to wiki" [label="changes requested"];
     "User reviews spec?" -> "Invoke writing-plans skill" [label="approved"];
 }
 ```
