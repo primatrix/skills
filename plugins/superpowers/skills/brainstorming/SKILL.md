@@ -109,26 +109,70 @@ digraph brainstorming {
 
 ## After the Design
 
-**Documentation:**
+**Publish RFC to wiki:**
 
-- Write the validated design (spec) to `docs/superpowers/specs/YYYY-MM-DD-<topic>-design.md`
-  - (User preferences for spec location override this default)
-- Use elements-of-style:writing-clearly-and-concisely skill if available
-- Commit the design document to git
+1. **Determine next RFC number:**
+   ```bash
+   gh api repos/primatrix/wiki/contents/docs/rfc --jq '[.[].name | select(test("^[0-9]{4}-"))] | sort | last | split("-") | .[0] | tonumber + 1'
+   ```
+   Format as zero-padded 4-digit number (e.g., `0002`).
+
+2. **Select GitHub Project:**
+   Run `gh project list --owner primatrix` and present interactive choice to user via AskUserQuestion. Store the selected project number.
+
+3. **Create branch:**
+   ```bash
+   MAIN_SHA=$(gh api repos/primatrix/wiki/git/ref/heads/main --jq '.object.sha')
+   gh api repos/primatrix/wiki/git/refs -f ref="refs/heads/rfc/NNNN-<topic>" -f sha="$MAIN_SHA"
+   ```
+
+4. **Create RFC file** (`docs/rfc/NNNN-<topic>.md`):
+   Use the design spec content as-is (current brainstorming output format). Encode as base64 and push:
+   ```bash
+   CONTENT=$(echo "$SPEC_CONTENT" | base64)
+   gh api repos/primatrix/wiki/contents/docs/rfc/NNNN-<topic>.md \
+     -X PUT -f message="docs: add RFC NNNN <topic>" \
+     -f content="$CONTENT" -f branch="rfc/NNNN-<topic>"
+   ```
+
+5. **Update `docs/rfc/index.md`:**
+   Fetch current content, add a new row to the RFC table, push update to the same branch.
+
+6. **Update `docs/.vitepress/config.ts`:**
+   Fetch current content, add new sidebar entry to the RFC items array, push update to the same branch.
+
+7. **Create PR:**
+   ```bash
+   gh pr create --repo primatrix/wiki --head "rfc/NNNN-<topic>" \
+     --title "RFC NNNN: <topic>" --body "<spec summary>"
+   ```
+
+8. **Associate with Project:**
+   ```bash
+   gh project item-add <project-number> --owner primatrix --url <pr-url>
+   ```
+
+- Use elements-of-style:writing-clearly-and-concisely skill if available for the RFC content
+- Store RFC metadata (branch name, RFC number, RFC file path, PR URL) in session context for writing-plans to use
 
 **Spec Review Loop:**
-After writing the spec document:
+After publishing the RFC:
 
 1. Dispatch spec-document-reviewer subagent (see spec-document-reviewer-prompt.md)
-2. If Issues Found: fix, re-dispatch, repeat until Approved
+   - Provide the RFC content by fetching from GitHub:
+     ```bash
+     gh api repos/primatrix/wiki/contents/docs/rfc/NNNN-<topic>.md \
+       -H "Accept: application/vnd.github.raw" --header "ref: rfc/NNNN-<topic>"
+     ```
+2. If Issues Found: fix, push update to the RFC file on the branch, re-dispatch
 3. If loop exceeds 5 iterations, surface to human for guidance
 
 **User Review Gate:**
-After the spec review loop passes, ask the user to review the written spec before proceeding:
+After the spec review loop passes, ask the user to review the RFC before proceeding:
 
-> "Spec written and committed to `<path>`. Please review it and let me know if you want to make any changes before we start writing out the implementation plan."
+> "RFC published as PR: `<PR_URL>`. Please review the RFC and let me know if you want to make any changes before we start writing out the implementation plan."
 
-Wait for the user's response. If they request changes, make them and re-run the spec review loop. Only proceed once the user approves.
+Wait for the user's response. If they request changes, make them (push updates to the RFC branch) and re-run the spec review loop. Only proceed once the user approves.
 
 **Implementation:**
 
