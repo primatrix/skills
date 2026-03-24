@@ -5,7 +5,7 @@ description: Create a Beaver-tracked GitHub Issue (Goal/Task/SubTask) with Proje
 
 # Create Beaver Issue
 
-Create a single Beaver-tracked GitHub Issue (Goal / Task / SubTask) with automatic Project V2 field setup and tracking rule configuration. The wizard collects issue details, builds a structured body with a `beaver-tracking` comment block, creates the issue via `gh api`, adds it to the Project V2, sets Level/Status/Progress fields, and updates the parent issue if applicable.
+Create a single Beaver-tracked GitHub Issue (Goal / Task / SubTask) with automatic Project V2 field setup and tracking rule configuration. The wizard collects issue details, builds a structured body with a `beaver-tracking` comment block, creates the issue via `gh api`, adds it to the Project V2, sets Level/Status/Progress fields, and links to the parent issue via GitHub's native sub-issues if applicable.
 
 ## Prerequisites
 
@@ -48,10 +48,6 @@ milestoneTitle: "Week 1 (Mar 17 - Mar 23)"
 ## 验收标准
 
 {acceptance criteria}
-
-## 子任务
-
-(子任务将在创建后自动添加)
 ```
 
 ### Task / SubTask (with tracking rule)
@@ -101,7 +97,16 @@ gh project item-edit --id {item_id} --project-id {project_id} \
   --field-id {progress_field_id} --number 0
 ```
 
-**Update parent** (Task/SubTask only): Append `- [ ] #{new_issue_number}` to the parent's 子任务 section via `gh issue edit --body-file`.
+**Link to parent** (Task/SubTask only): Use GitHub's native sub-issues API to establish the parent-child relationship.
+```bash
+# Get the internal issue ID of the newly created child issue
+CHILD_ID=$(gh api repos/{org}/{issueRepo}/issues/{new_issue_number} --jq '.id')
+
+# Add as sub-issue of the parent
+gh api repos/{org}/{issueRepo}/issues/{parent_number}/sub_issues \
+  --method POST -H "X-GitHub-Api-Version: 2026-03-10" \
+  -f sub_issue_id="$CHILD_ID"
+```
 
 ## After Creation
 
@@ -114,4 +119,4 @@ gh project item-edit --id {item_id} --project-id {project_id} \
 - **Always confirm before creating** -- never create without user preview and approval
 - **Use Chinese (中文) for issue body content** -- matching existing project convention
 - **Do not modify the Project README** -- config is read-only
-- **Do not close or modify existing issues** (except appending to parent's task list)
+- **Do not close or modify existing issues** -- parent linking uses GitHub's native sub-issues API, not body edits
