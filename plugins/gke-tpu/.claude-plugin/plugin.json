@@ -1,0 +1,5 @@
+{
+  "name": "gke-tpu",
+  "description": "GKE TPU execution and profiling: provision TPU workloads via xpk, run multi-process benchmarks, and profile Pallas kernels with xprof LLO utilization",
+  "version": "2.0.0"
+}
