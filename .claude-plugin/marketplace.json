@@ -51,6 +51,15 @@
       "version": "1.0.0",
       "license": "Apache-2.0",
       "keywords": ["skills", "tdd", "debugging", "brainstorming", "collaboration", "workflows"]
+    },
+    {
+      "name": "xprof-profiling-analysis",
+      "source": "./plugins/xprof-profiling-analysis",
+      "description": "Analyze TPU/XLA profiling data: trace parsing, HLO op classification, MFU calculation, communication bottleneck identification, and XLA flags diagnostics",
+      "version": "1.0.0",
+      "license": "Apache-2.0",
+      "keywords": ["tpu", "xla", "profiling", "xprof", "xplane", "mfu", "performance"],
+      "category": "performance"
     }
   ]
 }
