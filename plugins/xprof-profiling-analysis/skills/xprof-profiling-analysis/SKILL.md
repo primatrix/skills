@@ -149,7 +149,7 @@ XLA 编译后的算子名不保留 JAX 语义，需按 `hlo_category` + 算子�
 
 MoE 层的 forward 用 `gmm()`（grouped matrix multiply），backward 通过 `jax.custom_vjp` 拆分为：
 
-```
+```text
 Forward:  Y = gmm(X, W)       # 分组矩阵乘
 
 Backward:
@@ -164,7 +164,7 @@ Backward:
 
 从 GMM/TGMM 算子数量可直接推断 MoE 层数：
 
-```
+```text
 每个 MoE 层有 2 个 expert matmul（如 gate_proj/up_proj + down_proj），
 Forward: 2 GMMs/layer, Backward dlhs: 2 GMMs/layer, Backward drhs: 2 TGMMs/layer
 
@@ -206,7 +206,7 @@ XLA HLO 名称不含 "backward"/"gradient" 等语义标签。判别方法（按�
 
 ### 公式
 
-```
+```text
 MFU = F_useful / (Peak_cluster × T_step)
 
 F_useful = GBS × seq_len × FLOPs_per_token(fwd+bwd)
@@ -232,7 +232,7 @@ total_flops = sum(int(e['args'].get('model_flops', 0)) for e in step_ops)
 
 MoE 的 per-token 有效 FLOPs 远低于同规模 dense 模型（因为每 token 只激活 top-k experts）：
 
-```
+```text
 例：256 experts top-8, 17.43B params
   → per-token FLOPs(fwd) ≈ 3.25 GFLOPs
   → per-token FLOPs(fwd+bwd) ≈ 9.75 GFLOPs
@@ -354,9 +354,13 @@ for comm_type in ['all-reduce', 'all-gather', 'reduce-scatter']:
 
 ### Roofline（单设备上限）
 
-```
+```text
 Ridge Point = Peak_FLOPS / HBM_BW (FLOPs/byte)
-  TPU v7x: 2307T / 7380 GB/s ≈ 313 FLOPs/byte
+  TPU v7x: 2307 TFLOPS (bf16, per chip = 2 TensorCores) / 7380 GB/s ≈ 313 FLOPs/byte
+
+注意：xplane.pb 中 peak_teraflops_per_second 报告的是单 TensorCore 的 peak（如 1028.75T），
+而每个 TPU v7x chip 有 2 个 TensorCore，per-chip peak = 1028.75 × 2 ≈ 2057T（bf16 dense），
+厂商 spec 为 2307T（含额外优化）。计算 MFU 时应使用厂商 spec 或 xplane 值 × 2。
 
 算子 AI > Ridge Point → compute-bound (MFU≈100%)
 算子 AI < Ridge Point → memory-bound (MFU 由带宽决定)
