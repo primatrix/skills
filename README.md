@@ -14,6 +14,7 @@ A Skill is a set of structured instructions (defined in a `SKILL.md` file) that 
 | [beaver](#beaver) | Beaver issue tracker: project setup, issue creation, and PR workflows for GitHub Projects V2 |
 | [session-recorder](#session-recorder) | Records the complete session content to a daily work directory |
 | [lint-fix](#lint-fix) | Check and fix lint issues for changed Python files |
+| [xprof-profiling-analysis](#xprof-profiling-analysis) | Analyze TPU/XLA profiling data (xprof, xplane, trace) for performance optimization |
 
 ---
 
@@ -158,6 +159,38 @@ Check and fix lint issues for changed Python files. Supports single commit, comm
 
 ---
 
+### xprof-profiling-analysis
+
+Comprehensive methodology for analyzing TPU/XLA profiling data: from trace parsing to performance bottleneck identification and optimization.
+
+**Use when:** analyzing TPU/XLA profiling data (xprof, trace.json.gz, op_stats, xplane), understanding HLO op performance, backward pass structure (gmm/tgmm), MFU calculation for MoE models, communication bottleneck identification, or comparing GPU vs TPU training performance.
+
+**Capabilities:**
+- Parse and analyze `trace.json.gz` and `xplane.pb` profiling data
+- Classify HLO ops (matmul, attention, communication, custom kernels, etc.)
+- Identify forward/backward pass structure using `tf_op` fields
+- Calculate MFU for dense and MoE models
+- Analyze communication patterns (AllGather, ReduceScatter, AllReduce, AllToAll)
+- Diagnose communication overlap issues via async-done stall analysis
+- Map XLA flags to performance symptoms
+- Detect truncated traces (1M event limit) and fall back to xplane.pb
+
+**Covers:**
+- Trace event structure and TPU device identification
+- HLO operator classification rules
+- GMM/TGMM backward pass structure for MoE models
+- MFU formula and MoE-specific considerations
+- Communication primitive to parallelism strategy mapping
+- XLA flags reference (Continuation Fusion, SparseCore offload, DP overlap)
+- Roofline and system bound analysis
+- Common pitfalls and anti-patterns
+
+**Prerequisites:**
+- TPU profiling data (`trace.json.gz`, `xplane.pb`, or `op_stats_v2.pb`)
+- Python with TensorFlow/JAX for xplane.pb parsing
+
+---
+
 ## Installation
 
 ### Claude Code
@@ -172,6 +205,7 @@ Install plugins via the [plugin marketplace](https://code.claude.com/docs/en/plu
 /plugin install exec-remote@primatrix-skills
 /plugin install beaver@primatrix-skills
 /plugin install lint-fix@primatrix-skills
+/plugin install xprof-profiling-analysis@primatrix-skills
 
 # project scope (default is user scope)
 /plugin install exec-remote@primatrix-skills --scope project
@@ -186,6 +220,7 @@ Install skills via [skills.sh](https://skills.sh):
 npx skills add primatrix/skills@exec-remote -a codex
 npx skills add primatrix/skills@beaver -a codex
 npx skills add primatrix/skills@lint-fix -a codex
+npx skills add primatrix/skills@xprof-profiling-analysis -a codex
 ```
 
 ### Gemini CLI
@@ -198,6 +233,7 @@ gemini skills install https://github.com/primatrix/skills.git --path plugins/exe
 gemini skills install https://github.com/primatrix/skills.git --path plugins/beaver/skills/beaver-pr
 gemini skills install https://github.com/primatrix/skills.git --path plugins/beaver/skills/create-beaver-issue
 gemini skills install https://github.com/primatrix/skills.git --path plugins/lint-fix/skills/lint-fix
+gemini skills install https://github.com/primatrix/skills.git --path plugins/xprof-profiling-analysis/skills/xprof-profiling-analysis
 
 # project/workspace scope (.gemini/skills in current project)
 gemini skills install https://github.com/primatrix/skills.git --path plugins/exec-remote/skills/exec-remote --scope workspace
@@ -212,6 +248,7 @@ gemini skills install https://github.com/primatrix/skills.git --path plugins/bea
 npx skills add primatrix/skills@exec-remote
 npx skills add primatrix/skills@beaver
 npx skills add primatrix/skills@lint-fix
+npx skills add primatrix/skills@xprof-profiling-analysis
 
 # install to a specific agent
 npx skills add primatrix/skills -a claude-code
