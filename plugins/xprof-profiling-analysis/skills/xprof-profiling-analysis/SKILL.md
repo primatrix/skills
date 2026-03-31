@@ -1,11 +1,67 @@
 ---
 name: xprof-profiling-analysis
-description: Use when analyzing TPU/XLA profiling data (xprof, trace.json.gz, op_stats, xplane), understanding HLO op performance, backward pass structure (gmm/tgmm), MFU calculation for MoE models, communication bottleneck identification, or comparing GPU vs TPU training performance
+description: Use when analyzing TPU/XLA profiling data (xprof, trace.json.gz, op_stats, xplane), understanding HLO op performance, backward pass structure (gmm/tgmm), MFU calculation for MoE models, communication bottleneck identification, HBM memory analysis (peak composition, buffer categorization, optimization targets), or comparing GPU vs TPU training performance
 ---
 
 # TPU/XLA Profiling 分析
 
 TPU 训练性能分析的完整方法论：从 trace 数据解析到性能瓶颈定位和优化路径推导。
+
+## 统一分析工具 `xprof`
+
+`tpu-profiling/scripts/xprof.py` 是统一的分析 CLI，覆盖所有 profiling 需求：
+
+```bash
+# 查看 run 目录下有哪些数据文件
+xprof discover --run-dir ci-prof-run115
+
+# ── 显存分析 ──
+xprof memory peak           --run-dir ci-prof-run115    # 峰值 HBM 组成
+xprof memory diagnose        --run-dir ci-prof-run115    # 异常诊断（尖刺/长生命周期/overlap）
+xprof memory runtime         --run-dir ci-prof-run115    # 运行时 HBM（xplane BFC）
+xprof memory theory                                      # 理论显存估算（bottom-up）
+xprof memory compare-theory  --run-dir ci-prof-run115    # 理论 vs 实际对比
+
+# ── 计算分析 ──
+xprof compute breakdown      --run-dir ci-prof-run115    # 算子耗时分类
+xprof compute mfu            --run-dir ci-prof-run115 --gbs 5120 --num-chips 128  # MFU
+xprof compute phases         --run-dir ci-prof-run115    # fwd/bwd/optimizer 阶段分解
+xprof compute layers         --run-dir ci-prof-run115    # 逐层耗时（含 fwd/bwd 拆分）
+xprof compute operators      --xplane *.xplane.pb         # 算子级 roofline 分析（优化目标识别）
+
+# ── 通信分析 ──
+xprof comm overlap           --run-dir ci-prof-run115    # 通信 stall 分析
+xprof comm primitives        --run-dir ci-prof-run115    # 通信原语分解（AG/RS/AR/A2A）
+xprof comm balance           --run-dir ci-prof-run115    # 跨 device 负载均衡
+
+# ── 跨 run 对比 ──
+xprof compare --runs 115,183                             # A/B 性能对比
+
+# ── 配置审计 ──
+xprof audit flags --flags-file launch.sh                 # XLA flags 优化检查
+```
+
+所有命令支持 `--json` 输出结构化数据，`--output` 指定报告路径，`--run-dir` 自动发现数据文件。
+
+### xprof 命令与数据源对应
+
+| 命令 | 输入数据 | 输出 |
+|------|---------|------|
+| `memory peak` | memory_viewer.json | 峰值 buffer 分类、top buffers、vocab-sized 优化目标 |
+| `memory diagnose` | memory_viewer.json | 尖刺检测、buffer overlap、lifetime 异常、phase 曲线、优化建议 |
+| `memory runtime` | xplane.pb | BFC allocator 真实 HBM（reserved - available） |
+| `memory theory` | 模型配置（硬编码） | 单设备理论显存（无并行/无 remat） |
+| `memory compare-theory` | memory_viewer.json + 模型配置 | 理论 vs 实际差异分析 |
+| `compute breakdown` | xplane.pb | 算子类别耗时（matmul/gmm/attention/stall/...） |
+| `compute mfu` | xplane.pb | MFU、tokens/sec、TFLOPS/chip |
+| `compute phases` | xplane.pb (tf_op) | forward/backward/optimizer 阶段耗时 |
+| `compute layers` | xplane.pb (tf_op) | 逐层 fwd+bwd 耗时（可定位慢层） |
+| `compute operators` | xplane.pb | 算子级 roofline 分析：per-category 利用率、top-N 算子、优化目标排序 |
+| `comm overlap` | xplane.pb | async-done stall 分析（exposed communication cost） |
+| `comm primitives` | xplane.pb | AllGather/ReduceScatter/AllReduce/AllToAll 分解 |
+| `comm balance` | 多个 xplane.pb | 跨 device step time 方差 |
+| `compare` | 多个 xplane.pb | 跨 run 性能对比表 |
+| `audit flags` | launch script / flags 文件 | XLA flags 缺失/冲突检查 |
 
 ## 数据源
 
@@ -16,7 +72,8 @@ xprof profiling 数据位于 `tensorboard/plugins/profile/<timestamp>/` 下：
 | `*.trace.json.gz` | Timeline 事件（算子耗时、通信、HLO 分类） |
 | `*.op_stats_v2.pb` | 算子级统计（protobuf） |
 | `*.xplane.pb` | 完整算子数据（protobuf，含硬件 peak、model_flops、tf_op） |
-| `*.memory_viewer.json` | 显存分配时间线 |
+| `*.memory_viewer.json` | 显存峰值组成分析（从 HLO heap simulator 生成） |
+| `*.hlo_proto.pb` | HLO 编译产物（含 buffer_assignment、heap_simulator_trace） |
 
 **⚠️ trace.json.gz 有 1,000,000 event 硬上限**——大模型训练（GA>1、MoE）单 device 可产生 800K+ events，trace 会被严重截断（`dropped_traces` 字段标记丢弃数）。**必须先检查 trace 是否完整**：若 `Complete (X) events == 1,000,000`，则数据被截断，必须改用 xplane.pb。
 
@@ -376,6 +433,282 @@ Roofline MFU 是混合算子的加权 MFU 上限（无通信、无并行开销�
 - **大 GBS 摊薄通信**：GBS↑ → micro_batch 更大 → 同样通信下计算更多
 - **Remat 影响 micro_batch 大小**：save_all 占显存多 → micro_batch 小 → GA 轮次多
 
+## HBM 显存分析
+
+### 数据源与优先级
+
+显存分析有三层数据源，从轻到重：
+
+| 数据源 | 适用场景 | 优势 | 限制 |
+|--------|---------|------|------|
+| `memory_viewer.json` | **首选**：峰值组成、优化目标识别 | JSON 格式易解析，含完整 buffer 分类 | 静态分析，不含运行时 aliasing 效果 |
+| xplane.pb `/host:CPU` | 运行时真实 HBM 用量 | 反映 XLA 运行时 buffer reuse | 仅有 BFC allocator 汇总数据 |
+| `*.hlo_proto.pb` | 最详细的 buffer 级分析 | 完整 heap simulator replay + op_name 元数据 | 文件大（几百 MB），解析慢 |
+
+**工具**：使用统一 CLI `xprof`（见上方命令表）。
+
+```bash
+# 峰值组成
+xprof memory peak --run-dir ci-prof-run115
+
+# 异常诊断（尖刺、长生命周期 buffer、overlap）
+xprof memory diagnose --run-dir ci-prof-run115
+
+# 运行时 BFC allocator
+xprof memory runtime --run-dir ci-prof-run115
+
+# 理论 vs 实际
+xprof memory compare-theory --run-dir ci-prof-run115
+```
+
+### memory_viewer.json 解析
+
+TensorBoard memory_viewer 插件从 HLO buffer_assignment 生成，是峰值分析的首选数据源。
+
+**数据结构**：
+
+```python
+{
+  "heapSizes": [float, ...],           # 每条 HLO 指令处的堆大小（MiB），timeline 数据
+  "unpaddedHeapSizes": [float, ...],   # 不含 XLA padding 的堆大小
+  "maxHeap": [                          # 峰值时刻所有存活 buffer（按 timeline 顺序）
+    {
+      "logicalBufferSizeMib": 32.0,    # buffer 大小
+      "shapeString": "f32[8,2048,512]{2,1,0:T(8,128)}",  # 含 layout
+      "tfOpName": "state.params['params']['decoder']...",  # JAX op 路径（分类关键）
+      "instructionName": "param.21790", # HLO 指令名
+      "groupName": "Parameter",         # "Parameter" | "Temporary" | ""
+      "opCode": "parameter",            # HLO opcode
+    }, ...
+  ],
+  "maxHeapBySize": [...],              # 同 maxHeap 但按大小排序
+  "logicalBufferSpans": {              # buffer 生命周期 {id: {start, limit}}
+    "505278": {"start": 54184, "limit": 57711}, ...
+  },
+  "peakHeapMib": 90167.9,             # 峰值堆大小（MiB）
+  "peakUnpaddedHeapMib": 89890.3,     # 不含 padding 的峰值
+  "entryComputationParametersMib": 6239.4,  # 入口参数（params + optimizer）
+  "peakHeapSizePosition": 9335,        # 峰值在 heapSizes 中的位置
+  "indefiniteLifetimes": [...],        # 无限生命周期 buffer（通常是参数）
+}
+```
+
+**关键分析方法**：
+
+```python
+import json
+
+with open('memory_viewer.json') as f:
+    data = json.load(f)
+
+peak_gib = data['peakHeapMib'] / 1024
+params_gib = data['entryComputationParametersMib'] / 1024
+padding_mib = data['peakHeapMib'] - data['peakUnpaddedHeapMib']
+
+# 峰值 buffer 分类（按 tfOpName 路径判断）
+for buf in data['maxHeap']:
+    op = buf.get('tfOpName', '')
+    group = buf.get('groupName', '')  # "Parameter" vs "Temporary"
+    size = buf['logicalBufferSizeMib']
+    # 用 op path 判断：params、optimizer、logits、attention、moe 等
+
+# 峰值位置分析：peak 发生在 schedule 的哪个阶段
+peak_pos = data['peakHeapSizePosition']
+total = len(data['heapSizes'])
+print(f"Peak at {peak_pos}/{total} = {peak_pos/total*100:.1f}% through schedule")
+```
+
+**Buffer 分类规则**（按 `tfOpName` / `groupName`）：
+
+| 分类 | 判断规则 | 典型形状 |
+|------|---------|---------|
+| Parameters | `groupName=="Parameter"` 且 `state.params` | 各种权重 shape |
+| Optimizer (mu/nu) | `groupName=="Parameter"` 且 `opt_state` | 同权重 shape，f32 |
+| Logits/CE | `logits_dense` / `cross_entropy` / `softmax` | `[B,T,vocab]` |
+| MoE experts | `moe` / `expert` / `gmm` / `router` | `[num_experts,dim,dim]` |
+| Attention/MLA | `attention` / `mla` / `wq_` / `wkv_` | `[B,T,H,D]` 等 |
+| MTP | `mtp` / `multi_token` | 含 vocab-sized logits |
+| Gradient (bwd) | `transpose(jvp(...)` | 同 fwd 激活 shape |
+| Forward act. | `jvp(...)` 无 `transpose` | 各种激活 shape |
+
+### XPlane 运行时显存
+
+xplane.pb 的 `/host:CPU` plane 记录 XLA BFC allocator 事件。**关键陷阱**：
+
+```
+bytes_reserved  = 82.51 GiB   ← 总 HBM 池大小
+bytes_allocated = 6.97 GiB    ← 仅动态 I/O buffer（参数 + optimizer 入口）
+bytes_available = 5.26 GiB    ← 池中空闲空间
+
+⚠️ bytes_allocated ≠ 实际 HBM 用量！
+实际 HBM = bytes_reserved - bytes_available = 77.25 GiB
+```
+
+`bytes_allocated` 只跟踪传入编译程序的**动态 I/O buffer**（参数和优化器状态的入口 buffer），**不包含**编译程序的内部工作空间（~70 GiB）——该工作空间由 XLA buffer assignment 静态分配，作为单个大 allocation 在池内管理。
+
+```python
+from tensorflow.tsl.profiler.protobuf import xplane_pb2
+
+xspace = xplane_pb2.XSpace()
+with open('*.xplane.pb', 'rb') as f:
+    xspace.ParseFromString(f.read())
+
+# 找 /host:CPU plane
+host_plane = [p for p in xspace.planes if '/host:CPU' in p.name][0]
+stat_names = {sid: sm.name for sid, sm in host_plane.stat_metadata.items()}
+
+# 提取 BFC allocator 事件
+peak_reserved = 0
+min_available = float('inf')
+for line in host_plane.lines:
+    for event in line.events:
+        for stat in event.stats:
+            name = stat_names.get(stat.metadata_id, '')
+            if name == 'bytes_reserved':
+                peak_reserved = max(peak_reserved, stat.int64_value)
+            elif name == 'bytes_available':
+                min_available = min(min_available, stat.int64_value)
+
+actual_hbm = peak_reserved - min_available  # 这才是真实 HBM 用量
+```
+
+### HLO Proto Heap Simulator Replay
+
+最详细的分析方法，从 HLO buffer assignment 完整重放堆模拟器：
+
+```python
+from tensorflow.compiler.xla.service import hlo_pb2
+
+hlo_proto = hlo_pb2.HloProto()
+with open('*.hlo_proto.pb', 'rb') as f:
+    hlo_proto.ParseFromString(f.read())
+
+ba = hlo_proto.buffer_assignment
+mod = hlo_proto.hlo_module
+
+# 1. 参数分配（固定内存）
+for alloc in ba.buffer_allocations:
+    if alloc.is_entry_computation_parameter and not alloc.is_tuple:
+        # alloc.size = 参数大小（已含 FSDP sharding）
+        # 通过 assigned logical buffer → instruction → metadata.op_name 获取 JAX 路径
+
+# 2. Heap simulator replay
+main_trace = None
+for trace in ba.heap_simulator_traces:
+    if trace.whole_module_simulation:
+        main_trace = trace  # 找最大的 whole-module trace
+
+# 重放 ALLOC(0)/FREE(1)/SHARE_WITH(2) 事件
+current_size = 0
+peak_size = 0
+for ev in main_trace.events:
+    if ev.kind == 0:    # ALLOC
+        buf_size = lb_by_id[ev.buffer_id].size
+        current_size += buf_size
+        if current_size > peak_size:
+            peak_size = current_size
+            # 记录峰值快照
+    elif ev.kind == 1:  # FREE
+        current_size -= alloc_buffers[ev.buffer_id]
+    elif ev.kind == 2:  # SHARE_WITH
+        pass  # 不增加 current_size
+```
+
+**Heap sim vs 运行时差异**：HLO heap sim 是**静态上限**，实际 XLA 运行时通过 buffer aliasing（input/output aliasing for AllGather）、pipeline scheduling（expert 权重顺序 fetch）和 remat 进一步降低内存。差异通常在 5-15%。
+
+### 显存优化目标识别
+
+**1. Vocab-sized buffers（Chunked CE 目标）**：
+
+```python
+# 在 maxHeap 中搜索含 vocab_size 维度的 buffer
+# 例：bf16[10, 4096, 157184] = 11.99 GiB 的 logits tensor
+# Chunked CE 可将其减少到 bf16[10, chunk_size, 157184]
+# chunk_size=1024 → 2.99 GiB，节省 9 GiB/GA step
+
+for buf in data['maxHeap']:
+    dims = parse_shape_dims(buf['shapeString'])
+    if any(d >= 100000 for d in dims):  # vocab-sized
+        print(f"Optimization target: {buf['logicalBufferSizeMib']:.0f} MiB — {buf['tfOpName']}")
+```
+
+**2. 关键指标**：
+
+| 指标 | 计算方法 | 优化含义 |
+|------|---------|---------|
+| Parameter vs Temporary 比例 | `groupName` 分组 | Temporary 大 → activation 优化空间大 |
+| Padding overhead | `peakHeapMib - peakUnpaddedHeapMib` | > 500 MiB 说明 XLA tiling 浪费大 |
+| 峰值位置 | `peakHeapSizePosition / len(heapSizes)` | < 50% → forward 峰值; > 70% → backward 峰值 |
+| HBM 利用率 | `actual_hbm / hbm_capacity` | > 90% 需要优化; < 50% 有余量加大 batch |
+
+**3. 常见优化路径**：
+
+| 优化 | 预期节省 | 影响 |
+|------|---------|------|
+| Chunked cross-entropy | ~18 GiB（3× vocab logits） | 无精度影响，需 custom_vjp |
+| save_out_proj remat | 大量激活不保存 | 增加约 33% 重计算 |
+| FSDP 增大 → 减小 per-chip 参数 | 线性减少 | 增加通信 |
+| Gradient accumulation 减少 | 减少 GA loop 中同时存活的激活 | 改变 GBS |
+| bf16 optimizer states (mu_dtype) | ~2 GiB（mu 从 f32 → bf16） | 可能影响训练稳定性 |
+
+### 多源交叉验证
+
+当同时有多个数据源时，应交叉验证：
+
+```
+                 memory_viewer.json    xplane runtime    HLO proto replay
+Peak HBM:       88.05 GiB (static)    77.25 GiB (actual) 79.23 GiB (upper bound)
+Params:         6.09 GiB              6.97 GiB (dynamic) 6.09 GiB
+```
+
+- **memory_viewer 和 HLO proto** 给出静态上限（无运行时 aliasing）
+- **xplane** 给出运行时实际值（含 buffer reuse，更低）
+- 三者一致性说明分析可靠；差异大需要调查原因
+
+### 显存异常诊断（`xprof memory diagnose`）
+
+`memory diagnose` 从 `memory_viewer.json` 的 `heapSizes` 时间线和 `logicalBufferSpans` 生命周期数据提供四种异常检测：
+
+**1. 尖刺检测**：找 heapSizes 中最大的 delta 跳变。例：
+
+```
+[9330]  77888 MiB  (Δ +12280)  fusion.60899
+[9335]  90168 MiB  (Δ +12280)  select_reduce_fusion.112  ◀ PEAK
+[9337]  77888 MiB  (Δ -12280)  fusion.60904
+```
+
+尖刺原因：多个大 buffer 短暂重叠。上例中 3 个 `[10,4096,157184]` vocab-sized buffer 在 7 条指令窗口内同时存活。
+
+**2. Buffer Overlap 分析**：按 shape 分组统计峰值时刻同时存活的 buffer，量化各组贡献：
+
+| Shape 分组 | 数量 | 总量 | 含义 |
+|-----------|------|------|------|
+| `bf16[10,4096,157184]` | 3 | 36 GiB | Logits/CE/MTP — chunked CE 目标 |
+| `bf16[256,2048,512]` | 40 | 20 GiB | MoE expert AllGather — XLA 运行时会 pipeline |
+| `f32[10,64,16,128,128]` | 1 | 640 MiB | GLA backward remat checkpoint |
+
+**3. Lifetime 异常**：从 `logicalBufferSpans` 检测生命周期异常长的 Temporary buffer：
+
+```python
+for bid, span in logicalBufferSpans.items():
+    start = span.get('start', 0)
+    limit = span.get('limit', total_instr)
+    lifetime_pct = (limit - start) / total_instr * 100
+    # > 80% 生命周期 + > 100 MiB → critical
+    # > 50% → warning
+    # > 30% → info
+```
+
+注意：MoE expert AllGather buffer 在 heap sim 中表现为 >90% 生命周期（所有层的权重同时 "逻辑存活"），但 XLA 运行时实际 pipeline 加载，每次只有 1-2 层物理驻留。这是静态分析的已知 false positive。
+
+**4. Phase 曲线**：按 schedule 百分比采样 heapSizes，显示显存随计算阶段的变化趋势。典型 MoE 模型曲线：
+- 0-2%: 参数加载（6 GiB → 42 GiB）
+- 2-8%: forward + MTP logits 计算（42 → 90 GiB，含峰值）
+- 10-60%: backward 激活梯度链（~48 GiB 稳态）
+- 60-85%: backward 权重梯度 + AllGather（48 → 75 GiB）
+- 85-95%: optimizer update（下降到 8 GiB）
+- 95-100%: 回到参数基线（6 GiB）
+
 ## 分析报告结构
 
 推荐简洁实用的 5 段结构：
@@ -403,6 +736,10 @@ Roofline MFU 是混合算子的加权 MFU 上限（无通信、无并行开销�
 | 通信未 overlap = 需要优化算法 | 先检查 XLA flags 配置（CF/SparseCore/DATA_PARALLEL_OVERLAP），往往是 flags 缺失 |
 | `async_comm` 是独立于通信的类别 | 通信的 async-done 事件（如 `all-reduce.*.call-done`）就是通信类别，其 duration = stall 时间 |
 | trace.json.gz 包含完整数据 | **trace.json.gz 有 1M event 硬上限**，大模型（GA>1、MoE）单 device 可有 800K+ events，trace 会截断。检查 `Complete (X) events` 是否 = 1,000,000，若是则必须用 xplane.pb |
+| `bytes_allocated` = 实际 HBM 用量 | **bytes_allocated 只跟踪动态 I/O buffer**（参数 + optimizer 入口），不含编译程序内部工作空间（~70 GiB）。实际 HBM = `bytes_reserved - bytes_available` |
+| memory_viewer.json 峰值 = 运行时峰值 | memory_viewer 是**静态上限**（HLO heap sim），运行时通过 buffer aliasing 和 reuse 实际更低（差 5-15%）。xplane 运行时数据是权威来源 |
+| 峰值 HBM 由 activations 主导 | 对 MoE 模型，expert 权重 AllGather 和 logits tensor 可能是最大的 buffer。先看 top buffers 再下结论 |
+| Logits tensor 大小固定不可优化 | Chunked cross-entropy 可将 `[B,T,vocab]` 减到 `[B,chunk,vocab]`，节省 ~18 GiB |
 
 ## xplane.pb 解析
 
