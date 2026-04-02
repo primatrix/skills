@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from typing import Any
 
 import httpx
@@ -37,14 +38,27 @@ _client: httpx.Client | None = None
 def _get_client() -> httpx.Client:
     global _client
     if _client is None:
-        _client = httpx.Client(base_url=XPROF_URL, timeout=120.0)
+        _client = httpx.Client(base_url=XPROF_URL, timeout=180.0)
     return _client
 
 
+# Simple TTL cache for expensive endpoints like /runs
+_cache: dict[str, tuple[float, Any]] = {}
+_CACHE_TTL = 300  # 5 minutes
+
+
 def _fetch(path: str, params: dict[str, Any] | None = None) -> Any:
+    cache_key = f"{path}:{json.dumps(params, sort_keys=True) if params else ''}"
+    now = time.monotonic()
+    if cache_key in _cache:
+        ts, data = _cache[cache_key]
+        if now - ts < _CACHE_TTL:
+            return data
     resp = _get_client().get(path, params=params)
     resp.raise_for_status()
-    return resp.json()
+    data = resp.json()
+    _cache[cache_key] = (now, data)
+    return data
 
 
 def _fetch_tag(run: str, tag: str, **extra_params: str) -> Any:
