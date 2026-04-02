@@ -20,7 +20,7 @@ from typing import Any
 import httpx
 from mcp.server.fastmcp import FastMCP
 
-XPROF_URL = os.environ.get("XPROF_URL", "http://localhost:8080")
+XPROF_URL = os.environ.get("XPROF_URL", "http://127.0.0.1:8080")
 
 mcp = FastMCP(
     "xprof",
@@ -37,7 +37,7 @@ _client: httpx.Client | None = None
 def _get_client() -> httpx.Client:
     global _client
     if _client is None:
-        _client = httpx.Client(base_url=XPROF_URL, timeout=60.0)
+        _client = httpx.Client(base_url=XPROF_URL, timeout=120.0)
     return _client
 
 
@@ -409,6 +409,11 @@ if __name__ == "__main__":
     transport = os.environ.get("MCP_TRANSPORT", "stdio")
     if transport == "sse":
         port = int(os.environ.get("MCP_PORT", "8081"))
-        mcp.run(transport="sse", sse_params={"port": port})
+        host = os.environ.get("MCP_HOST", "0.0.0.0")
+        mcp.settings.host = host
+        mcp.settings.port = port
+        # Allow connections from any host (K8s port-forward / internal network)
+        mcp.settings.transport_security.enable_dns_rebinding_protection = False
+        mcp.run(transport="sse")
     else:
         mcp.run(transport="stdio")
