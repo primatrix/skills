@@ -1,5 +1,5 @@
 {
   "name": "xprof-profiling-analysis",
-  "description": "Analyze TPU/XLA profiling data: trace parsing, HLO op classification, MFU calculation, communication bottleneck identification, and XLA flags diagnostics",
-  "version": "1.0.0"
+  "description": "TPU/XLA profiling analysis: MCP tools for XProf HTTP API (operator breakdowns, memory profiles, A/B comparisons) + methodology skills for trace parsing, MFU calculation, bottleneck identification",
+  "version": "2.0.0"
 }
