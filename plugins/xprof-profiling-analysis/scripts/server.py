@@ -280,15 +280,18 @@ def xprof_memory(run: str) -> str:
     allocators = data.get("memoryProfilePerAllocator", {})
     result = {"run": run, "allocators": {}}
 
+    def _bytes_to_gib(val: Any) -> float:
+        return round(int(val or 0) / (1024**3), 2)
+
     for alloc_id, alloc_data in allocators.items():
         summary = alloc_data.get("profileSummary", {})
         peak_stats = summary.get("peakStats", {})
         result["allocators"][alloc_id] = {
-            "memory_capacity_gib": round(int(summary.get("memoryCapacity", 0)) / (1024**3), 2),
-            "peak_usage_gib": round(int(summary.get("peakBytesUsageLifetime", 0)) / (1024**3), 2),
-            "peak_heap_allocated_gib": round(int(peak_stats.get("heapAllocatedBytes", 0)) / (1024**3), 2),
-            "peak_stack_reserved_gib": round(int(peak_stats.get("stackReservedBytes", 0)) / (1024**3), 2),
-            "peak_free_gib": round(int(peak_stats.get("freeMemoryBytes", 0)) / (1024**3), 2),
+            "memory_capacity_gib": _bytes_to_gib(summary.get("memoryCapacity")),
+            "peak_usage_gib": _bytes_to_gib(summary.get("peakBytesUsageLifetime")),
+            "peak_heap_allocated_gib": _bytes_to_gib(peak_stats.get("heapAllocatedBytes")),
+            "peak_stack_reserved_gib": _bytes_to_gib(peak_stats.get("stackReservedBytes")),
+            "peak_free_gib": _bytes_to_gib(peak_stats.get("freeMemoryBytes")),
             "fragmentation": peak_stats.get("fragmentation", 0),
         }
 
