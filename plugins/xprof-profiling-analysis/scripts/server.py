@@ -63,7 +63,7 @@ def _parse_table(data: dict | list) -> list[dict]:
     rows = []
     for row in data.get("rows", []):
         cells = row.get("c", [])
-        rows.append({col: (cells[i]["v"] if i < len(cells) and cells[i] else None) for i, col in enumerate(cols)})
+        rows.append({col: (cells[i].get("v") if i < len(cells) and cells[i] else None) for i, col in enumerate(cols)})
     return rows
 
 
@@ -200,6 +200,8 @@ def xprof_op_profile(run: str, top: int = 30) -> str:
         top: Number of top operators to return (default 30)
     """
     data = _fetch_tag(run, "op_profile")
+    if isinstance(data, list) and data:
+        data = data[0]
     by_program = data.get("byProgram", data.get("byCategory", {}))
     flat_ops = _flatten_op_tree(by_program)
     flat_ops.sort(key=lambda x: x["self_time_us"], reverse=True)
@@ -273,6 +275,8 @@ def xprof_memory(run: str) -> str:
         run: XProf run name
     """
     data = _fetch_tag(run, "memory_profile")
+    if isinstance(data, list) and data:
+        data = data[0]
     allocators = data.get("memoryProfilePerAllocator", {})
     result = {"run": run, "allocators": {}}
 
