@@ -327,14 +327,14 @@ def xprof_compare(run_a: str, run_b: str, top: int = 20) -> str:
         if a_time == 0 and b_time == 0:
             continue
         delta = b_time - a_time
-        delta_pct = (delta / a_time * 100) if a_time != 0 else float("inf")
+        delta_pct = round(delta / a_time * 100, 1) if a_time != 0 else None
         comparisons.append({
             "operation": op,
             "category": _categorize_op(op),
             "time_a_us": a_time,
             "time_b_us": b_time,
             "delta_us": round(delta, 1),
-            "delta_pct": round(delta_pct, 1),
+            "delta_pct": delta_pct,  # None when baseline had no time (new op)
         })
 
     comparisons.sort(key=lambda x: abs(x["delta_us"]), reverse=True)
@@ -361,7 +361,7 @@ def xprof_trace_url(run: str) -> str:
     """
     base = XPROF_URL
     hosts = _fetch("/hosts", params={"run": run})
-    host = hosts[0]["hostname"] if hosts else None
+    host = hosts[0].get("hostname") if hosts else None
 
     urls = {
         "run": run,
