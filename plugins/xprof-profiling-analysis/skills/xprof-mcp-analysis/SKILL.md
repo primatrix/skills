@@ -7,9 +7,62 @@ description: Use when analyzing TPU/GPU profiling performance via XProf MCP tool
 
 Analyze TPU/GPU training performance using XProf MCP tools. This skill defines the methodology for profiling analysis — the actual data is fetched via MCP tools (`xprof_*`).
 
-## Prerequisites
+## Step 0: Connection Check (MUST do first)
 
-The `xprof` MCP server must be configured and connected. Verify by calling `xprof_list_runs()` — if it returns runs, the connection is working.
+Before any analysis, verify that XProf MCP tools are available:
+
+1. **Try calling `xprof_list_runs()`.**
+2. **If it succeeds** — skip to Step 1.
+3. **If the tool is not found** (no `xprof_*` tools available) — the plugin is not enabled. Guide the user:
+
+   > XProf MCP tools are not available. To enable them:
+   >
+   > 1. Add the plugin to your Claude Code settings:
+   >    ```bash
+   >    claude settings set enabledPlugins.xprof-profiling-analysis@primatrix-skills true
+   >    ```
+   > 2. Restart Claude Code (the plugin starts automatically).
+   >
+   > The plugin will auto-connect to the XProf K8s service via `kubectl port-forward`.
+   > **Prerequisite**: `kubectl` must be configured with access to the GKE cluster:
+   > ```bash
+   > gcloud container clusters get-credentials tpu7x-cluster --region us-central1 --project tpu-service-473302
+   > ```
+
+   **Stop here** — wait for the user to enable the plugin and restart before continuing.
+
+4. **If the tool exists but returns an error** (connection refused, timeout, etc.) — XProf is unreachable. Diagnose:
+
+   > XProf MCP server is running but cannot reach the XProf backend. Common causes:
+   >
+   > **a) kubectl not configured or wrong cluster:**
+   > ```bash
+   > kubectl config current-context
+   > # Expected: gke_tpu-service-473302_us-central1_tpu7x-cluster
+   > # If wrong:
+   > gcloud container clusters get-credentials tpu7x-cluster --region us-central1 --project tpu-service-473302
+   > ```
+   >
+   > **b) XProf K8s service not running:**
+   > ```bash
+   > kubectl get pods -l app=xprof-service
+   > # Should show a Running pod with 3/3 READY
+   > ```
+   >
+   > **c) Port conflict (another process on port 8080):**
+   > ```bash
+   > lsof -i :8080
+   > # If occupied by something else, set a custom port:
+   > # In .claude/settings.json under the plugin env, change XPROF_LOCAL_PORT
+   > ```
+   >
+   > **d) Manual port-forward as workaround:**
+   > ```bash
+   > kubectl port-forward svc/xprof-service 8080:8080
+   > ```
+   > Then retry the analysis.
+
+   **Stop here** — help the user resolve the connection issue before continuing.
 
 ## Analysis Workflow
 
