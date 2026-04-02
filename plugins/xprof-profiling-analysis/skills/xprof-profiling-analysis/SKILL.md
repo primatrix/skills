@@ -19,11 +19,14 @@ Before any analysis, verify that XProf MCP tools are available:
    > ```bash
    > claude settings set enabledPlugins.xprof-profiling-analysis@primatrix-skills true
    > ```
-   > The plugin auto-connects to the XProf K8s service via `kubectl port-forward`. Requires `kubectl` configured with cluster access.
 
    **Stop here** — wait for the user to restart before continuing.
 
-4. **If the tool exists but returns an error** — XProf is unreachable. Tell the user the connection failed and ask them to check that `kubectl` can reach the cluster and that the XProf service pod is running. The plugin's `start.sh` will auto-detect existing port-forwards or create one.
+4. **If the tool exists but returns an error** — ask the user to configure `XPROF_URL` to point to their XProf instance. They need to either:
+   - Run `kubectl port-forward svc/xprof-service <local-port>:8080` and set `XPROF_URL=http://localhost:<local-port>`
+   - Or point to an XProf instance directly if running locally
+
+   The URL is configured in the plugin's `.mcp.json` env or via the `XPROF_URL` environment variable.
 
 ## Analysis Workflow
 
