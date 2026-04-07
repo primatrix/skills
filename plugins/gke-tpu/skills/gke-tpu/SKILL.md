@@ -1,6 +1,6 @@
 ---
 name: gke-tpu
-description: Manage GKE-based TPU workloads — create pods/jobs via kubectl, sync code, run multi-process benchmarks, and profile Pallas kernels with xprof LLO. Use when the user wants to create/manage/run/profile TPU workloads on GKE. Reads config from gke.toml in the current working directory.
+description: Manage GKE-based TPU workloads — create pods/jobs via kubectl, sync code, and run multi-process benchmarks. Use when the user wants to create/manage/run TPU workloads on GKE. Reads config from gke.toml in the current working directory.
 ---
 
 # GKE TPU Skill
@@ -14,7 +14,6 @@ Manage GKE-based TPU workloads via `kubectl`. Config-driven via `gke.toml` in th
 | `create` | Create TPU pod (single-host) or job (multi-host) | [references/create.md](references/create.md) |
 | `sync` | Sync code + install deps to all containers | [references/sync.md](references/sync.md) |
 | `run` | Execute script on multi-process TPU | [references/run.md](references/run.md) |
-| `profile` | Run with xprof LLO profiling | [references/profile.md](references/profile.md) |
 | `status` | Check pod/workload status | [references/teardown.md](references/teardown.md) |
 
 **Read the relevant reference file for the user's command before executing.**
@@ -52,9 +51,6 @@ git_url = "https://github.com/sgl-project/sglang-jax.git"
 remote_path = "/tmp/sglang-jax"
 install_cmd = "pip install -e ."            # run in repo root
 # requirements_file = "requirements-tpu.txt"  # optional: extra deps file (relative to repo root)
-
-[profile]
-gcs_bucket = "gs://bucket/profile_tmp"
 ```
 
 ### TPU Topology Reference

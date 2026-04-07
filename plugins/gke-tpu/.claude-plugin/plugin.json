@@ -1,5 +1,5 @@
 {
   "name": "gke-tpu",
-  "description": "Manage GKE-based TPU workloads — create pods/jobs via kubectl, sync code, run multi-process benchmarks, and profile Pallas kernels with xprof LLO",
+  "description": "Manage GKE-based TPU workloads — create pods/jobs via kubectl, sync code, and run multi-process benchmarks",
   "version": "1.0.0"
 }
