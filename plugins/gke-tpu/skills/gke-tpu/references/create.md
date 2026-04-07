@@ -71,7 +71,7 @@ gcloud container node-pools create <nodepool> \
   --num-nodes=0 \
   --enable-autoscaling \
   --total-min-nodes=0 \
-  --max-nodes=<tpu.max_nodes> \
+  --total-max-nodes=<tpu.max_nodes> \
   --placement-policy=<nodepool>-policy
 ```
 

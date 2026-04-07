@@ -26,18 +26,24 @@ runpy.run_path("<repo.remote_path>/path/to/script.py", run_name="__main__")
 ## Copy and launch
 
 ```bash
-# Copy to all containers
-for CONTAINER in <all containers>; do
-  kubectl cp /tmp/launcher.py <POD_NAME>:/tmp/launcher.py -c $CONTAINER
+# Get pod list
+PODS=$(kubectl get pods -l job-name=<workload.name> -o jsonpath='{.items[*].metadata.name}')
+FIRST_POD=$(echo $PODS | awk '{print $1}')
+
+# Copy to all pods
+for POD in $PODS; do
+  kubectl cp /tmp/launcher.py $POD:/tmp/launcher.py -c <workload.name>
 done
 
-# Launch worker containers in background
-for WORKER in <all containers except first>; do
-  kubectl exec <POD_NAME> -c $WORKER -- python3 -u /tmp/launcher.py 2>&1 &
+# Launch worker pods in background
+for POD in $PODS; do
+  if [ "$POD" != "$FIRST_POD" ]; then
+    kubectl exec $POD -c <workload.name> -- python3 -u /tmp/launcher.py 2>&1 &
+  fi
 done
 
-# Launch main container in foreground
-kubectl exec <POD_NAME> -c <first container> -- python3 -u /tmp/launcher.py 2>&1
+# Launch main pod in foreground
+kubectl exec $FIRST_POD -c <workload.name> -- python3 -u /tmp/launcher.py 2>&1
 
 # Cleanup
 wait

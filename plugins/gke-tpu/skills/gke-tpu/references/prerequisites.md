@@ -1,15 +1,10 @@
 # Prerequisites
 
-## PATH setup (needed in every shell/command)
-
-```bash
-export PATH="/opt/homebrew/bin:/opt/homebrew/share/google-cloud-sdk/bin:/usr/bin:$PATH"
-```
-
 ## Install
 
 ```bash
-# Google Cloud SDK
+# Google Cloud SDK (see https://cloud.google.com/sdk/docs/install for your platform)
+# macOS (Homebrew):
 brew install --cask google-cloud-sdk
 
 # kubectl + auth plugin
@@ -32,5 +27,5 @@ gcloud container clusters get-credentials <gke.cluster> --zone=<gke.zone> --proj
 If gcloud/kubectl timeout, set proxy:
 
 ```bash
-export https_proxy=http://127.0.0.1:7890
+export https_proxy=<your-proxy-url>
 ```

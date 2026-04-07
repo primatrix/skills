@@ -14,7 +14,7 @@ Manage GKE-based TPU workloads via `kubectl`. Config-driven via `gke.toml` in th
 | `create` | Create TPU pod (single-host) or job (multi-host) | [references/create.md](references/create.md) |
 | `sync` | Sync code + install deps to all containers | [references/sync.md](references/sync.md) |
 | `run` | Execute script on multi-process TPU | [references/run.md](references/run.md) |
-| `status` | Check pod/workload status | [references/teardown.md](references/teardown.md) |
+| `status` | Check pod/workload status | [references/status.md](references/status.md) |
 
 **Read the relevant reference file for the user's command before executing.**
 
