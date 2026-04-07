@@ -60,6 +60,15 @@
       "license": "Apache-2.0",
       "keywords": ["tpu", "xla", "profiling", "xprof", "xplane", "mfu", "performance"],
       "category": "performance"
+    },
+    {
+      "name": "gke-tpu",
+      "source": "./plugins/gke-tpu",
+      "description": "Manage GKE-based TPU workloads — create pods/jobs via kubectl, sync code, and run multi-process benchmarks",
+      "version": "1.0.0",
+      "license": "Apache-2.0",
+      "keywords": ["gke", "tpu", "kubectl", "kubernetes", "jax"],
+      "category": "infrastructure"
     }
   ]
 }
