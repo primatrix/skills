@@ -55,17 +55,9 @@ install_cmd = "pip install -e ."            # run in repo root
 
 ### TPU Topology Reference
 
-| Chips | Topology | Hosts | Mode |
-|---|---|---|---|
-| 4 | `2x2` | 1 | single-host Pod |
-| 8 | `2x4` | 2 | multi-host Job |
-| 16 | `4x4` | 4 | multi-host Job |
-| 32 | `4x8` | 8 | multi-host Job |
-| 64 | `8x8` | 16 | multi-host Job |
-| 128 | `8x16` | 32 | multi-host Job |
-| 256 | `16x16` | 64 | multi-host Job |
+See [references/tpu-topologies.md](references/tpu-topologies.md) for supported topologies (v6e and v7x), machine types, and chips-per-node mappings.
 
-**Single-host** (1 host, e.g. 2x2): use Pod. **Multi-host** (>1 host): use Indexed Job + headless Service.
+**Single-host** (1 VM): use Pod. **Multi-host** (>1 VM): use Indexed Job + headless Service.
 
 ## Critical Rules
 
