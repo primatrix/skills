@@ -42,9 +42,19 @@ docker_image = "us-docker.pkg.dev/cloud-tpu-images/jax-ai-image/tpu:jax0.8.1-rev
 service_account = "gcs-account"
 
 [storage]
-bucket = "inference-model-storage-poc-tpu"
+type = "gcsfuse"                # "gcsfuse" or "pvc"
 mount_path = "/inference-models"
+
+# --- gcsfuse-specific (only when type = "gcsfuse") ---
+bucket = "inference-model-storage-poc-tpu"
 mount_options = "implicit-dirs,file-cache:max-parallel-downloads:256,file-cache:enable-parallel-downloads:true,file-cache:download-chunk-size-mb:128,file-cache:max-size-mb:81920,file-cache:parallel-downloads-per-file:512,metadata-cache:ttl-secs:-1,metadata-cache:stat-cache-max-size-mb:-1,metadata-cache:type-cache-max-size-mb:-1,file-cache:cache-file-for-range-read:true,file-system:kernel-list-cache-ttl-secs:-1,read_ahead_kb=1024"
+
+# --- pvc-specific (only when type = "pvc") ---
+# pvc_name = "my-model-pvc"       # name of existing PersistentVolumeClaim
+# read_only = false                # mount as read-only (default: false)
+# gcsfuse_backed = false           # true if PVC's StorageClass uses GCS Fuse CSI driver
+                                   # when true: adds gke-gcsfuse/volumes annotation + gke-gcsfuse-cache volume
+                                   # when false: plain PVC mount, no sidecar needed
 
 [repo]
 git_url = "https://github.com/sgl-project/sglang-jax.git"
@@ -62,7 +72,11 @@ See [references/tpu-topologies.md](references/tpu-topologies.md) for supported t
 ## Critical Rules
 
 1. **Single vs multi-host**: Determine from topology. `chips / chips_per_node = hosts`. If hosts > 1, must use Job + headless Service.
-2. **GCS Fuse**: Always mount with `gke-gcsfuse/volumes: "true"` annotation and `gke-gcsfuse-cache` emptyDir volume.
+2. **Storage**: Check `storage.type`:
+   - `gcsfuse`: mount with `gke-gcsfuse/volumes: "true"` annotation and `gke-gcsfuse-cache` emptyDir volume.
+   - `pvc`: mount the existing PVC directly. The PVC must already exist in the namespace.
+     - If `storage.gcsfuse_backed = true`: the PVC's StorageClass uses GCS Fuse CSI driver under the hood — still needs `gke-gcsfuse/volumes: "true"` annotation and `gke-gcsfuse-cache` emptyDir volume, otherwise mount will fail with "failed to find the sidecar container".
+     - If `storage.gcsfuse_backed = false` (default): plain PVC mount, no gcsfuse annotation or cache volume needed.
 3. **Simultaneous launch**: For multi-host, `jax.distributed.initialize()` must run in all pods at the same time.
 4. **Same code path**: ALL processes must execute the SAME jitted computations.
 5. **Docker image must match JAX version** in pyproject.toml.

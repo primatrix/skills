@@ -97,7 +97,13 @@ If `specificReservationRequired: true`, nodes **must** use `--reservation-affini
 
 ## Step 4: Create workload
 
+Choose the YAML template based on **two dimensions**:
+1. **Single-host vs multi-host** (from topology)
+2. **storage.type**: `gcsfuse` or `pvc`
+
 ### Single-host → Pod
+
+#### storage.type = "gcsfuse"
 
 ```yaml
 apiVersion: v1
@@ -146,9 +152,61 @@ spec:
         mountOptions: "<storage.mount_options>"
 ```
 
+#### storage.type = "pvc"
+
+The PVC must already exist in the target namespace.
+
+If `storage.gcsfuse_backed = true`, the PVC's StorageClass uses GCS Fuse CSI driver — add the gcsfuse annotation and cache volume (same as the gcsfuse template). If `false` (default), no gcsfuse sidecar is needed.
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: <workload.name>
+  # Only if storage.gcsfuse_backed = true:
+  annotations:
+    gke-gcsfuse/volumes: "true"
+spec:
+  restartPolicy: Never
+  nodeSelector:
+    cloud.google.com/gke-tpu-accelerator: <tpu.accelerator>
+    cloud.google.com/gke-tpu-topology: <tpu.topology>
+    cloud.google.com/gke-nodepool: <nodepool>
+  containers:
+  - name: <workload.name>
+    image: <workload.docker_image>
+    command: ["sleep", "infinity"]
+    resources:
+      requests:
+        google.com/tpu: <tpu.chips_per_node>
+      limits:
+        google.com/tpu: <tpu.chips_per_node>
+    volumeMounts:
+    - name: model-storage
+      mountPath: <storage.mount_path>
+      readOnly: <storage.read_only>   # default false
+    - name: dev-shm
+      mountPath: /dev/shm
+  serviceAccountName: <workload.service_account>
+  volumes:
+  - name: dev-shm
+    emptyDir:
+      medium: Memory
+  # Only if storage.gcsfuse_backed = true:
+  - name: gke-gcsfuse-cache
+    emptyDir:
+      medium: Memory
+  - name: model-storage
+    persistentVolumeClaim:
+      claimName: <storage.pvc_name>
+      readOnly: <storage.read_only>   # default false
+```
+
 ### Multi-host → headless Service + Indexed Job
 
 `parallelism` and `completions` = `num_hosts`.
+
+#### storage.type = "gcsfuse"
 
 ```yaml
 ---
@@ -213,6 +271,74 @@ spec:
             gcsfuseMetadataPrefetchOnMount: "true"
             bucketName: <storage.bucket>
             mountOptions: "<storage.mount_options>"
+```
+
+#### storage.type = "pvc"
+
+The PVC must already exist in the target namespace and support `ReadWriteMany` (or `ReadOnlyMany`) access mode for multi-host jobs.
+
+If `storage.gcsfuse_backed = true`, add the gcsfuse annotation and cache volume. If `false` (default), omit them.
+
+```yaml
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: <workload.name>-headless-svc
+spec:
+  clusterIP: None
+  selector:
+    job-name: <workload.name>
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: <workload.name>
+spec:
+  completionMode: Indexed
+  parallelism: <num_hosts>
+  completions: <num_hosts>
+  backoffLimit: 0
+  template:
+    metadata:
+      # Only if storage.gcsfuse_backed = true:
+      annotations:
+        gke-gcsfuse/volumes: "true"
+    spec:
+      subdomain: <workload.name>-headless-svc
+      restartPolicy: Never
+      nodeSelector:
+        cloud.google.com/gke-tpu-accelerator: <tpu.accelerator>
+        cloud.google.com/gke-tpu-topology: <tpu.topology>
+        cloud.google.com/gke-nodepool: <nodepool>
+      containers:
+      - name: <workload.name>
+        image: <workload.docker_image>
+        command: ["sleep", "infinity"]
+        resources:
+          requests:
+            google.com/tpu: <tpu.chips_per_node>
+          limits:
+            google.com/tpu: <tpu.chips_per_node>
+        volumeMounts:
+        - name: model-storage
+          mountPath: <storage.mount_path>
+          readOnly: <storage.read_only>   # default false
+        - name: dev-shm
+          mountPath: /dev/shm
+      serviceAccountName: <workload.service_account>
+      volumes:
+      - name: dev-shm
+        emptyDir:
+          medium: Memory
+      # Only if storage.gcsfuse_backed = true:
+      - name: gke-gcsfuse-cache
+        emptyDir:
+          medium: Memory
+      - name: model-storage
+        persistentVolumeClaim:
+          claimName: <storage.pvc_name>
+          readOnly: <storage.read_only>   # default false
 ```
 
 ## Step 5: Apply, wait, and verify
