@@ -106,12 +106,14 @@ gh api repos/{owner}/{repo}/issues/{number}/labels --method POST -f "labels[]=be
 
 Write the generated report to a temporary file first, then post it:
 ```bash
-cat > /tmp/beaver-audit-report.md << 'BEAVEREOF'
+AUDIT_REPORT_FILE=$(mktemp)
+cat > "$AUDIT_REPORT_FILE" << 'BEAVEREOF'
 {rendered_audit_report}
 BEAVEREOF
 
 gh api repos/{owner}/{repo}/issues/{number}/comments --method POST \
-  --raw-field body="$(cat /tmp/beaver-audit-report.md)"
+  --raw-field body=@"$AUDIT_REPORT_FILE"
+rm "$AUDIT_REPORT_FILE"
 ```
 
 ### Step 7: Conditional transition

@@ -54,7 +54,8 @@ Show complete issue details in a structured preview. Wait for explicit approval.
 
 Write the issue body (from template in "Issue Body Template" section) to a temp file:
 ```bash
-cat > /tmp/beaver-issue-body.md << 'BEAVEREOF'
+BODY_FILE=$(mktemp)
+cat > "$BODY_FILE" << 'BEAVEREOF'
 {rendered_body}
 BEAVEREOF
 ```
@@ -62,7 +63,7 @@ BEAVEREOF
 ```bash
 gh api repos/{org}/{issueRepo}/issues --method POST \
   -H "X-GitHub-Api-Version: 2026-03-10" \
-  -f title="{title}" --raw-field body="$(cat /tmp/beaver-issue-body.md)" \
+  -f title="{title}" --raw-field body=@"$BODY_FILE" \
   -f type="{level}" \
   -f "labels[]=Control-By-Beaver" \
   -f "labels[]=type/{type}" \
@@ -71,6 +72,7 @@ gh api repos/{org}/{issueRepo}/issues --method POST \
   -f "labels[]=status/triage"
 ```
 Add `-f milestone={number}` if selected. If issue type API fails, retry without `-f type`.
+After the API call, clean up: `rm "$BODY_FILE"`
 
 ### Step 6: Add to Project V2 and set fields
 

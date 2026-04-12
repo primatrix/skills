@@ -112,12 +112,14 @@ Ask user: "Publish this report as an Issue comment? (provide issue number, or sk
 
 If yes, write the report to a temporary file first, then post it:
 ```bash
-cat > /tmp/beaver-report.md << 'BEAVEREOF'
+REPORT_FILE=$(mktemp)
+cat > "$REPORT_FILE" << 'BEAVEREOF'
 {rendered_report}
 BEAVEREOF
 
 gh api repos/{org}/{issueRepo}/issues/{target_number}/comments --method POST \
-  --raw-field body="$(cat /tmp/beaver-report.md)"
+  --raw-field body=@"$REPORT_FILE"
+rm "$REPORT_FILE"
 ```
 
 ## Constraints
