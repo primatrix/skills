@@ -1,5 +1,5 @@
 {
   "name": "beaver",
-  "description": "Beaver issue tracker: project setup, issue creation, and PR workflows for GitHub Projects V2",
-  "version": "1.0.0"
+  "description": "Beaver project management: GitHub-native issue lifecycle, compliance checks, task audit, and developer dashboards for Projects V2",
+  "version": "2.0.0"
 }
