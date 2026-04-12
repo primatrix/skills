@@ -23,7 +23,7 @@ Read `beaver-config` per engine Section 5. Identify issue repo and observed repo
 ### Step 2: Fetch active milestone
 
 ```bash
-gh api repos/{org}/{issueRepo}/milestones --jq '[.[] | select(.state=="open")] | sort_by(.due_on) | .[0] | {number, title, due_on, open_issues, closed_issues}'
+gh api repos/{org}/{issueRepo}/milestones --jq '[.[] | select(.state=="open") | select(.due_on != null)] | sort_by(.due_on) | .[0] // empty | {number, title, due_on, open_issues, closed_issues}'
 ```
 
 ### Step 3: Fetch all open Beaver issues
@@ -64,7 +64,7 @@ Calculate: total sub-tasks, completed (has `status/done`), percentage.
 
 ### Step 6: Generate report
 
-```
+```markdown
 # Beaver Project Report
 
 **Generated:** {date} | **Milestone:** {title} (due {due_on})
@@ -110,10 +110,14 @@ Calculate: total sub-tasks, completed (has `status/done`), percentage.
 
 Ask user: "Publish this report as an Issue comment? (provide issue number, or skip)"
 
-If yes:
+If yes, write the report to a temporary file first, then post it:
 ```bash
+cat > /tmp/beaver-report.md << 'BEAVEREOF'
+{rendered_report}
+BEAVEREOF
+
 gh api repos/{org}/{issueRepo}/issues/{target_number}/comments --method POST \
-  --raw-field body="$(cat "$REPORT_FILE")"
+  --raw-field body="$(cat /tmp/beaver-report.md)"
 ```
 
 ## Constraints

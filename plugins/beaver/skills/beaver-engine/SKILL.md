@@ -50,12 +50,12 @@ All labels use a `prefix/name` format:
 ## 2. State Machine
 
 ### size/S Fast Track
-```
+```text
 triage → in-progress → review-needed → done
 ```
 
 ### size/L Standard SOP
-```
+```text
 triage → requirements-gathering → design-pending → ready-to-develop → in-progress → review-needed → done
 ```
 
@@ -151,7 +151,7 @@ Read from Project V2 README's `beaver-config` YAML block:
 gh project view {number} --owner {org} --format json --jq '.readme'
 ```
 
-Parse the ` ```yaml beaver-config ` fenced block for:
+Parse the `yaml beaver-config` fenced block for:
 - `repositories`: list of observed repos
 - `issueRepo`: the repo hosting Beaver issues
 - `customFields`: field name overrides (default: Level, Status, Progress)

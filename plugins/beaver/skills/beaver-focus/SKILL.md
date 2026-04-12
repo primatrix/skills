@@ -48,7 +48,7 @@ For issues with milestones, check if `due_on` is within 48 hours. Flag according
 
 ### Step 6: Generate dashboard
 
-```
+```markdown
 # Beaver Focus: @{username}
 
 **Date:** {today}
