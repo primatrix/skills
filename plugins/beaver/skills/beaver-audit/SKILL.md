@@ -66,7 +66,7 @@ Check each sub-issue's body for a testing section. Look for:
 
 Present as a table:
 
-```
+```markdown
 ## Beaver Audit Report: #{parent_number} {parent_title}
 
 ### Coverage Analysis
@@ -104,9 +104,16 @@ gh api repos/{owner}/{repo}/issues/{number}/labels --method POST -f "labels[]=be
 
 ### Step 6: Post audit summary as Issue comment
 
+Write the generated report to a temporary file first, then post it:
 ```bash
+AUDIT_REPORT_FILE=$(mktemp)
+cat > "$AUDIT_REPORT_FILE" << 'BEAVEREOF'
+{rendered_audit_report}
+BEAVEREOF
+
 gh api repos/{owner}/{repo}/issues/{number}/comments --method POST \
-  --raw-field body="$(cat "$AUDIT_REPORT_FILE")"
+  --raw-field body=@"$AUDIT_REPORT_FILE"
+rm "$AUDIT_REPORT_FILE"
 ```
 
 ### Step 7: Conditional transition
