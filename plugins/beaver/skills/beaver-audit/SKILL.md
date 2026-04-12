@@ -21,7 +21,7 @@ Audit the decomposition quality of a `size/L` parent Issue's sub-tasks. Checks t
 
 ```bash
 gh api repos/{owner}/{repo}/issues/{number} \
-  --jq '{title, body, labels: [.labels[].name], milestone: .milestone.title}'
+  --jq '{title, body, labels: [.labels[].name], milestone: (.milestone.title // null)}'
 ```
 
 Verify it has `size/L` label. If not, inform the user this skill is for size/L issues only.

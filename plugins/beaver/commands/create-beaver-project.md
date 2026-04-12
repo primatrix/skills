@@ -139,7 +139,7 @@ Skip on 422 (already exists). Warn and continue on 404 (org plan may not support
 
 ### Create Labels
 
-Create on the issue repository. Skip any that already exist (`--force` updates color/description if label exists).
+Create on the issue repository. Skip any that already exist (on 422 error, continue to next label).
 
 **Type labels:**
 
@@ -199,10 +199,10 @@ Create on the issue repository. Skip any that already exist (`--force` updates c
 | Control-By-Beaver | 7B61FF | Issue managed by Beaver automation |
 
 ```bash
-gh label create "{label}" --repo {org}/{issueRepo} --color "{color}" --description "{desc}" --force
+gh label create "{label}" --repo {org}/{issueRepo} --color "{color}" --description "{desc}"
 ```
 
-Create all labels in sequence. `--force` ensures idempotency (updates existing labels).
+Create all labels in sequence. Skip on error (label already exists).
 
 ### Create Milestones
 
@@ -216,7 +216,7 @@ Skip on 422 (title already exists).
 
 ## Success Report
 
-Print summary with: project URL, custom fields, observed repos, issue repo, issue types, labels, milestones. Inform the user they can now use `create-beaver-issue` with project identifier `{org}/{number}`.
+Print summary with: project URL, custom fields, observed repos, issue repo, issue types, labels, milestones. Inform the user they can now use `beaver-issue` with project identifier `{org}/{number}`.
 
 ## Constraints
 

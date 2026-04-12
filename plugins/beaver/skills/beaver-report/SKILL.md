@@ -30,7 +30,7 @@ gh api repos/{org}/{issueRepo}/milestones --jq '[.[] | select(.state=="open")] |
 
 ```bash
 gh api repos/{org}/{issueRepo}/issues?labels=Control-By-Beaver\&state=open\&per_page=100 \
-  --jq '.[] | {number, title, labels: [.labels[].name], assignees: [.assignees[].login], updated_at, created_at, milestone: .milestone.title}'
+  --jq '.[] | {number, title, labels: [.labels[].name], assignees: [.assignees[].login], updated_at, created_at, milestone: (.milestone.title // null)}'
 ```
 
 ### Step 4: Compute health indicators

@@ -37,7 +37,7 @@ Collect one at a time:
 3. **Title**: concise issue title
 4. **Description**: structured as 目标 (objective) and 验收标准 (acceptance criteria), in Chinese
 5. **Type label** (`type/`): feat / bug / refactor / docs / chore
-6. **Priority label** (`p/`): p0/blocker / p1/urgent / p2/high / p3/normal
+6. **Priority label** (`p/`): choose one: `p0/blocker` / `p1/urgent` / `p2/high` / `p3/normal`
 
 ### Step 3: Auto-classify size
 
@@ -52,15 +52,22 @@ Show complete issue details in a structured preview. Wait for explicit approval.
 
 ### Step 5: Create the Issue
 
+Write the issue body (from template in "Issue Body Template" section) to a temp file:
+```bash
+cat > /tmp/beaver-issue-body.md << 'BEAVEREOF'
+{rendered_body}
+BEAVEREOF
+```
+
 ```bash
 gh api repos/{org}/{issueRepo}/issues --method POST \
   -H "X-GitHub-Api-Version: 2026-03-10" \
-  -f title="{title}" --raw-field body="$(cat "$BODY_FILE")" \
+  -f title="{title}" --raw-field body="$(cat /tmp/beaver-issue-body.md)" \
   -f type="{level}" \
   -f "labels[]=Control-By-Beaver" \
   -f "labels[]=type/{type}" \
   -f "labels[]=size/{size}" \
-  -f "labels[]=p{n}/{priority}" \
+  -f "labels[]={priority}" \
   -f "labels[]=status/triage"
 ```
 Add `-f milestone={number}` if selected. If issue type API fails, retry without `-f type`.
@@ -70,7 +77,7 @@ Add `-f milestone={number}` if selected. If issue type API fails, retry without 
 ```bash
 gh project item-add {projectNumber} --owner {org} --url {issue_url} --format json
 ```
-Set Level, Status (Not Started), Progress (0) fields per engine Section 4.
+Set Level, Status (Not Started), Progress (0) fields via `gh project item-edit`.
 
 ### Step 7: Link to parent (Task/SubTask only)
 
@@ -166,4 +173,4 @@ keywords:
 - Always preview before creating
 - Issue body in Chinese (中文)
 - Read-only project config
-- Never modify existing issues (except label transitions during claim)
+- Never modify existing issues (except label transitions and assignee updates during claim)

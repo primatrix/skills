@@ -129,10 +129,10 @@ Parse into structured data:
 - `beaver_flags`: all labels matching `beaver/*`
 
 ### Set status label (atomic swap)
-Remove all existing `status/*` labels, then add the new one:
+Remove all existing `status/*` labels, then add the new one. **Note:** label names containing `/` must be URL-encoded in the DELETE path (e.g., `status/triage` → `status%2Ftriage`).
 ```bash
-# Remove current status label
-gh api repos/{owner}/{repo}/issues/{number}/labels/{current_status_label} --method DELETE
+# Remove current status label (URL-encode the label name)
+gh api repos/{owner}/{repo}/issues/{number}/labels/{url_encoded_current_status_label} --method DELETE
 
 # Add new status label
 gh api repos/{owner}/{repo}/issues/{number}/labels --method POST -f "labels[]={new_status_label}"

@@ -30,7 +30,7 @@ Read `beaver-config` per engine Section 5.
 
 ```bash
 gh api "repos/{org}/{issueRepo}/issues?labels=Control-By-Beaver&assignee=$CURRENT_USER&state=open&per_page=100" \
-  --jq '.[] | {number, title, labels: [.labels[].name], milestone: {title: .milestone.title, due_on: .milestone.due_on}, updated_at}'
+  --jq '.[] | {number, title, labels: [.labels[].name], milestone: {title: (.milestone.title // null), due_on: (.milestone.due_on // null)}, updated_at}'
 ```
 
 Parse labels per engine Section 4. Group by status.

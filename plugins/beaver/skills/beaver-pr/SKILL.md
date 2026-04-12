@@ -118,7 +118,7 @@ gh pr create --title "{title}" --body "$(cat <<'EOF'
 ## Test Plan
 {test evidence summary from G004, or "TODO: add test evidence"}
 
-Relates to {owner}/{repo}#{number}
+{If issue associated: "Relates to {owner}/{repo}#{number}"}
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)
 EOF
@@ -126,6 +126,8 @@ EOF
 ```
 
 ### Phase 6: Post-PR Actions (auto)
+
+If an Issue is associated (user did NOT choose `skip`):
 
 1. Apply beaver labels for any WARN checks:
    ```bash
@@ -136,7 +138,9 @@ EOF
    ```
 
 2. Transition Issue status to `status/review-needed`:
-   Execute per engine Section 6 — validates G003 (must come from `in-progress`).
+   Execute per engine Section 6 — validate target is legal next state from current status per Section 2.
+
+If no Issue associated (`skip`): skip label and transition steps.
 
 3. Report PR URL to user.
 
