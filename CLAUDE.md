@@ -17,7 +17,7 @@ plugins/<plugin>/
     scripts/                        # Supporting scripts (Python, Bash, YAML)
 ```
 
-Four plugins exist: **exec-remote** (3 skills), **beaver** (3 skills), **session-recorder** (1 skill), **lint-fix** (1 skill).
+Four plugins exist: **exec-remote** (3 skills), **beaver** (6 skills), **session-recorder** (1 skill), **lint-fix** (1 skill).
 
 ## Architecture: exec-remote Plugin
 

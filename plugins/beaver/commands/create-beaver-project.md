@@ -139,18 +139,70 @@ Skip on 422 (already exists). Warn and continue on 404 (org plan may not support
 
 ### Create Labels
 
-Create on the issue repository. Skip any that already exist.
+Create on the issue repository. Skip any that already exist (on 422 error, continue to next label).
+
+**Type labels:**
+
+| Label | Color | Description |
+|-------|-------|-------------|
+| type/feat | 0E8A16 | New feature |
+| type/bug | D73A4A | Bug fix |
+| type/refactor | E4E669 | Code refactoring |
+| type/docs | 0075CA | Documentation |
+| type/chore | BFD4F2 | Infrastructure, build, misc |
+
+**Priority labels:**
+
+| Label | Color | Description |
+|-------|-------|-------------|
+| p0/blocker | B60205 | Blocking — top of daily report |
+| p1/urgent | D93F0B | Urgent — top of daily report |
+| p2/high | FBCA04 | High priority |
+| p3/normal | C2E0C6 | Normal priority |
+
+**Size labels:**
+
+| Label | Color | Description |
+|-------|-------|-------------|
+| size/S | C5DEF5 | Small task — fast-track SOP |
+| size/L | 1D76DB | Large task — full lifecycle SOP |
+
+**Status labels:**
+
+| Label | Color | Description |
+|-------|-------|-------------|
+| status/triage | E4E669 | Awaiting triage |
+| status/requirements-gathering | D4C5F9 | Requirements refinement (size/L) |
+| status/design-pending | D4C5F9 | Design review in progress (size/L) |
+| status/ready-to-develop | 0E8A16 | Ready to code (size/L) |
+| status/in-progress | FBCA04 | Active development |
+| status/blocked | B60205 | Blocked |
+| status/review-needed | 1D76DB | Awaiting review |
+| status/done | 0E8A16 | Completed and merged |
+
+**Beaver agent labels:**
+
+| Label | Color | Description |
+|-------|-------|-------------|
+| beaver/needs-split | D93F0B | PR LOC exceeds 200 in core dirs |
+| beaver/missing-test | D93F0B | No test evidence before done |
+| beaver/missing-context | D93F0B | Incomplete labels or description |
+| beaver/stale | E4E669 | Stuck in same status > 3 days |
+| beaver/overdue | B60205 | Past DDL and not done |
+| beaver/upstream-blocked | D93F0B | Upstream dependency blocked |
+| beaver/wontfix | BFDADC | Will not fix |
+
+**Control label:**
 
 | Label | Color | Description |
 |-------|-------|-------------|
 | Control-By-Beaver | 7B61FF | Issue managed by Beaver automation |
-| Approve-Design | 0E8A16 | Design approved and ready for implementation |
-| Reviewing | FBCA04 | Under review |
-| Waiting-For-Merge | 1D76DB | Approved and waiting for merge |
 
 ```bash
 gh label create "{label}" --repo {org}/{issueRepo} --color "{color}" --description "{desc}"
 ```
+
+Create all labels in sequence. Skip on error (label already exists).
 
 ### Create Milestones
 
@@ -164,7 +216,7 @@ Skip on 422 (title already exists).
 
 ## Success Report
 
-Print summary with: project URL, custom fields, observed repos, issue repo, issue types, labels, milestones. Inform the user they can now use `create-beaver-issue` with project identifier `{org}/{number}`.
+Print summary with: project URL, custom fields, observed repos, issue repo, issue types, labels, milestones. Inform the user they can now use `beaver-issue` with project identifier `{org}/{number}`.
 
 ## Constraints
 
