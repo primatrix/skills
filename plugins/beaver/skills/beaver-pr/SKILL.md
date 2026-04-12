@@ -1,54 +1,148 @@
 ---
 name: beaver-pr
-description: Commit, push, and open a PR linked to a Beaver issue. Trigger this skill whenever the user wants to create a GitHub pull request.
+description: "Commit, push, and open a PR with Beaver compliance checks (LOC guard, label completeness, test evidence). Automatically transitions the linked Issue to review-needed. Trigger when the user wants to commit, push, or create a pull request."
 ---
 
 # Beaver PR
 
-Commit staged changes, push the branch, and open a GitHub pull request with optional Beaver issue association. The workflow gathers repository context, handles branching, and links the PR to a Beaver-tracked issue.
+Commit changes, push, and open a GitHub PR with integrated Beaver compliance checks. Validates LOC limits, label completeness, and test evidence before PR creation. Automatically transitions the linked Issue to `status/review-needed`.
+
+**References beaver-engine for:** guardrails G004-G006 (Section 3), label ops (Section 4), config reading (Section 5), transition execution (Section 6).
 
 ## Prerequisites
 
-- `gh auth status` must succeed (run `gh auth login` if not)
-- Working directory must be inside a git repository
+- `gh auth status` must succeed
+- Working directory inside a git repository
+- Changes to commit (staged or unstaged)
 
 ## Workflow
 
-1. **Gather context** -- Run the following commands to understand the current repository state:
-   - `git status` to see staged/unstaged changes
-   - `git diff HEAD` to see the full diff
-   - `git branch --show-current` to identify the current branch
-   - `git log --oneline -10` to review recent commits
+### Phase 1: Context Gathering (auto)
 
-2. **Create a new branch** if currently on main/master. Use a descriptive branch name based on the changes.
+Run in parallel:
+```bash
+git status
+git diff HEAD
+git branch --show-current
+git log --oneline -10
+```
 
-3. **Stage and commit** all changes with an appropriate commit message.
+### Phase 2: Branch + Commit + Push (auto)
 
-4. **Push** the branch to origin. If a new branch was created, use `git push -u origin <branch-name>` to set the upstream.
+1. If on main/master, create branch: `<type>/<issue-number>-<short-desc>`
+   - Extract type and issue number from context if available
+2. Stage all relevant changes (exclude secrets: `.env`, `credentials.*`)
+3. Commit with descriptive message
+4. Push with `-u origin <branch>` if new branch
 
-5. **Ask about Beaver issue association.** Present this question to the user:
+### Phase 3: Issue Association (prompt user)
 
-   > "Associate this PR with a Beaver issue?
-   > - Enter an issue number (e.g., `#42` or `42`) or full issue URL
-   > - Type `new` to create a new issue via `create-beaver-issue`
-   > - Type `skip` to create the PR without issue association"
+Detect issue number from:
+1. Branch name pattern (e.g., `feat/42-add-login` → #42)
+2. Recent commit messages containing `#N`
 
-   Handle the response:
-   - **Issue number/URL provided:** Parse the input. If a full URL like `https://github.com/org/repo/issues/42` is given, extract `ISSUE_OWNER`, `ISSUE_REPO`, and `ISSUE_NUMBER`. If just a number like `#42` or `42`, record only `ISSUE_NUMBER`.
-   - **`new`:** Tell the user to run `create-beaver-issue` first, then come back with the issue number. Stop here -- do NOT create the PR yet. Say: "Please run `create-beaver-issue` to create the issue, then run `beaver-pr` again or tell me the issue number to continue."
-   - **`skip`:** Set `ISSUE_NUMBER` to empty.
+If detected, confirm with user. If not detected, ask:
 
-6. **Create the PR** using `gh pr create`:
-   - Generate a concise PR title from the commit(s)
-   - Build the PR body:
-     - A brief summary section describing the changes
-     - If `ISSUE_NUMBER` is set, add a line: `Relates to #ISSUE_NUMBER`. If `ISSUE_OWNER/ISSUE_REPO` differ from the current PR's repo, use `Relates to ISSUE_OWNER/ISSUE_REPO#ISSUE_NUMBER` instead.
-   - Use a HEREDOC for the body to preserve formatting
+> "Associate this PR with a Beaver issue?"
+> - Enter issue number (e.g., `42` or `#42`) or full URL
+> - `new` → create via beaver-issue first
+> - `skip` → no association
 
-7. **Report** the PR URL to the user.
+Parse response. If `new`: tell user to run `/beaver-issue` first, then resume.
 
-## Execution Notes
+### Phase 4: Compliance Checks (auto, report to user)
 
-- Steps 1-4 should be executed in a single message, using parallel tool calls where possible (e.g., gather context commands in parallel, then branch/commit/push sequentially).
-- Step 5 requires user input -- pause and wait for the response.
-- After receiving the answer, execute steps 6-7 in a single message.
+Run all checks and present results as a table:
+
+#### G005: LOC Guard
+
+```bash
+git diff --numstat origin/main...HEAD
+```
+
+Filter to core directories (from `beaver-config`, default: repo root). Exclude:
+- `**/*_test.*`, `**/test_*.*`, `**/tests/**`
+- `**/*.md`, `**/docs/**`
+- `*.pb.go`, `*_generated.*`, `*.lock`
+
+Sum added lines. If > 200:
+- Mark check as WARN
+- Will add `beaver/needs-split` label after PR creation
+
+#### G006: Label Completeness
+
+If Issue is associated:
+```bash
+gh api repos/{owner}/{repo}/issues/{number}/labels --jq '.[].name'
+```
+Check for at least one `type/` and one `size/` label. If missing:
+- Mark check as FAIL
+- List missing label categories
+
+#### G004: Test Evidence
+
+Search for test evidence in order:
+1. **Session context**: scan conversation history for test runner output patterns (`PASSED`, `FAILED`, `ok`, `FAIL`, test count summaries)
+2. **Diff**: check if PR includes new/modified test files
+3. **Note**: CI checks will run after PR creation
+
+If evidence found, extract summary for PR body. If not found:
+- Mark check as WARN
+- Will add `beaver/missing-test` label after PR creation
+
+#### Present Results
+
+```
+## Beaver Compliance Check
+
+| Rule | Status | Details |
+|------|--------|---------|
+| G005 LOC Guard | PASS/WARN | {N} lines in core dirs (limit: 200) |
+| G006 Labels | PASS/FAIL | type/{x}, size/{y} present |
+| G004 Test Evidence | PASS/WARN | {source}: {summary} |
+
+{If any FAIL}: "Some checks failed. Fix issues before creating PR."
+{If only WARN}: "Warnings found. Continue with PR creation? (y/n)"
+{If all PASS}: "All checks passed. Creating PR."
+```
+
+Wait for user confirmation if there are warnings.
+
+### Phase 5: Create PR (auto after confirmation)
+
+```bash
+gh pr create --title "{title}" --body "$(cat <<'EOF'
+## Summary
+{bullet points describing changes}
+
+## Test Plan
+{test evidence summary from G004, or "TODO: add test evidence"}
+
+Relates to {owner}/{repo}#{number}
+
+🤖 Generated with [Claude Code](https://claude.com/claude-code)
+EOF
+)"
+```
+
+### Phase 6: Post-PR Actions (auto)
+
+1. Apply beaver labels for any WARN checks:
+   ```bash
+   # If G005 warned:
+   gh api repos/{owner}/{repo}/issues/{issue_number}/labels --method POST -f "labels[]=beaver/needs-split"
+   # If G004 warned:
+   gh api repos/{owner}/{repo}/issues/{issue_number}/labels --method POST -f "labels[]=beaver/missing-test"
+   ```
+
+2. Transition Issue status to `status/review-needed`:
+   Execute per engine Section 6 — validates G003 (must come from `in-progress`).
+
+3. Report PR URL to user.
+
+## Constraints
+
+- Never commit `.env`, `credentials.*`, or files likely containing secrets
+- Always preview compliance check results before PR creation
+- If G006 fails (missing labels), do not create PR — ask user to fix labels first
+- Issue body/comments in Chinese where applicable
