@@ -69,12 +69,17 @@ Parse 目标 and 验收标准 from the issue body. Display to user as starting c
 
 ## Phase 2: Context Collection (Iterative Q&A)
 
+<HARD-GATE>
+Do NOT skip Q&A. Do NOT "derive reasonable assumptions" from the issue body. Do NOT draft any design content until ALL 6 sections have been explored through Q&A with the user. The issue body is a starting point, NOT sufficient input for a design doc.
+</HARD-GATE>
+
 **通用规则:**
 - 每次只问一个问题
 - 要求用户提供 context（代码、文档、现有设计）后再继续
 - 当前 section 不清晰前不进入下一个
 - 全程使用中文
 - 鼓励用户使用 @ 引用文件或粘贴相关内容
+- 不得编造技术细节（库名、框架、架构组件）— 所有技术决策必须来自用户输入
 
 按以下顺序逐 section 收集信息:
 
@@ -326,6 +331,17 @@ status: design-pending
 ### 6.3 验收标准
 {集成测试通过的标准}
 ```
+
+## Red Flags — STOP If You Catch Yourself Thinking
+
+| Thought | Reality |
+|---------|---------|
+| "Issue body has enough info to start drafting" | Issue body is a starting point. Q&A surfaces constraints, tradeoffs, and context you can't infer. |
+| "I'll derive reasonable assumptions" | Assumptions in a design doc become wrong decisions. Ask, don't assume. |
+| "The user seems busy, let me just write it" | A bad design doc wastes more time than Q&A. Keep asking. |
+| "I can fill in the technical details myself" | You don't know the team's tech stack, infra constraints, or preferences. Ask. |
+| "This section is obvious, I'll skip the questions" | Every section has hidden constraints. Ask anyway. |
+| "I'll ask all questions at once to save time" | One question at a time. Batching overwhelms and gets shallow answers. |
 
 ## Constraints
 
