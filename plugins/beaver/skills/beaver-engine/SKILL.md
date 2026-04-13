@@ -1,6 +1,6 @@
 ---
 name: beaver-engine
-description: "Internal engine for Beaver workflow skills. DO NOT trigger directly. Provides state machine rules, guardrail checks, label operations, and project config reading used by beaver-issue, beaver-pr, beaver-audit, beaver-report, and beaver-focus."
+description: "Internal engine for Beaver workflow skills. DO NOT trigger directly. Provides state machine rules, guardrail checks, label operations, and project config reading used by beaver-issue, beaver-pr, beaver-audit, beaver-report, beaver-focus, and beaver-design-doc."
 ---
 
 # Beaver Engine
