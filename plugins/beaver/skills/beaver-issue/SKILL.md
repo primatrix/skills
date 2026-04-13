@@ -52,18 +52,20 @@ Show complete issue details in a structured preview. Wait for explicit approval.
 
 ### Step 5: Create the Issue
 
-Write the issue body (from template in "Issue Body Template" section) to a temp file:
-```bash
-BODY_FILE=$(mktemp)
-cat > "$BODY_FILE" << 'BEAVEREOF'
-{rendered_body}
-BEAVEREOF
-```
+Store the issue body (from template in "Issue Body Template" section) in a shell variable, then pass it inline via `-f body=`:
 
 ```bash
+BODY='## 目标
+
+{objective}
+
+## 验收标准
+
+{acceptance_criteria}'
+
 gh api repos/{org}/{issueRepo}/issues --method POST \
   -H "X-GitHub-Api-Version: 2026-03-10" \
-  -f title="{title}" --raw-field body=@"$BODY_FILE" \
+  -f title="{title}" -f body="$BODY" \
   -f type="{level}" \
   -f "labels[]=Control-By-Beaver" \
   -f "labels[]=type/{type}" \
@@ -72,7 +74,8 @@ gh api repos/{org}/{issueRepo}/issues --method POST \
   -f "labels[]=status/triage"
 ```
 Add `-f milestone={number}` if selected. If issue type API fails, retry without `-f type`.
-After the API call, clean up: `rm "$BODY_FILE"`
+
+> **WARNING:** `gh api -f`/`--raw-field` does NOT support `@file` syntax. Using `--raw-field body=@"$FILE"` will pass the literal file path as the body content, not the file's contents. Always use `-f body="$VAR"` with an inline shell variable.
 
 ### Step 6: Add to Project V2 and set fields
 
@@ -87,8 +90,10 @@ Set Level, Status (Not Started), Progress (0) fields via `gh project item-edit`.
 CHILD_ID=$(gh api repos/{org}/{issueRepo}/issues/{number} --jq '.id')
 gh api repos/{org}/{issueRepo}/issues/{parent_number}/sub_issues \
   --method POST -H "X-GitHub-Api-Version: 2026-03-10" \
-  -f sub_issue_id="$CHILD_ID"
+  -F sub_issue_id=$CHILD_ID
 ```
+
+> **WARNING:** The sub-issues API requires `sub_issue_id` to be an integer. Use `-F` (uppercase) instead of `-f` to pass it as a numeric type. `-f` sends strings, which will cause a 422 error.
 
 ### Step 8: Auto-transition from triage
 
