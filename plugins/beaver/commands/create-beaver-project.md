@@ -172,7 +172,6 @@ Create on the issue repository. Skip any that already exist (on 422 error, conti
 | Label | Color | Description |
 |-------|-------|-------------|
 | status/triage | E4E669 | Awaiting triage |
-| status/requirements-gathering | D4C5F9 | Requirements refinement (size/L) |
 | status/design-pending | D4C5F9 | Design review in progress (size/L) |
 | status/ready-to-develop | 0E8A16 | Ready to code (size/L) |
 | status/in-progress | FBCA04 | Active development |

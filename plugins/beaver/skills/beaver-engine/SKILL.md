@@ -30,7 +30,6 @@ All labels use a `prefix/name` format:
 
 ### Status labels (`status/`)
 - `status/triage` — Initial state, awaiting triage
-- `status/requirements-gathering` — (size/L only) Requirements refinement
 - `status/design-pending` — (size/L only) Design review in progress
 - `status/ready-to-develop` — (size/L only) Design approved, ready to code
 - `status/in-progress` — Active development
@@ -56,7 +55,7 @@ triage → in-progress → review-needed → done
 
 ### size/L Standard SOP
 ```text
-triage → requirements-gathering → design-pending → ready-to-develop → in-progress → review-needed → done
+triage → design-pending → ready-to-develop → in-progress → review-needed → done
 ```
 
 ### Universal transitions
@@ -67,8 +66,7 @@ triage → requirements-gathering → design-pending → ready-to-develop → in
 
 | Current Status | size/S next | size/L next |
 |---|---|---|
-| triage | in-progress | requirements-gathering |
-| requirements-gathering | N/A | design-pending |
+| triage | in-progress | design-pending |
 | design-pending | N/A | ready-to-develop |
 | ready-to-develop | N/A | in-progress |
 | in-progress | review-needed | review-needed |

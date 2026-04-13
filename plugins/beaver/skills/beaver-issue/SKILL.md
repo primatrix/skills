@@ -97,7 +97,7 @@ gh api repos/{org}/{issueRepo}/issues/{parent_number}/sub_issues \
 
 Per engine state machine:
 - `size/S`: transition `status/triage` → `status/in-progress`
-- `size/L`: transition `status/triage` → `status/requirements-gathering`
+- `size/L`: transition `status/triage` → `status/design-pending`
 
 Execute transition per engine Section 6 (validates G001).
 
