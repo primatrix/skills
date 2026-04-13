@@ -52,20 +52,17 @@ Show complete issue details in a structured preview. Wait for explicit approval.
 
 ### Step 5: Create the Issue
 
-Store the issue body (from template in "Issue Body Template" section) in a shell variable, then pass it inline via `-f body=`:
+Write the issue body (from template in "Issue Body Template" section) to a temp file, then pass it via `-F body=@`:
 
 ```bash
-BODY='## 目标
-
-{objective}
-
-## 验收标准
-
-{acceptance_criteria}'
+BODY_FILE=$(mktemp)
+cat > "$BODY_FILE" << 'BEAVEREOF'
+{rendered_body}
+BEAVEREOF
 
 gh api repos/{org}/{issueRepo}/issues --method POST \
   -H "X-GitHub-Api-Version: 2026-03-10" \
-  -f title="{title}" -f body="$BODY" \
+  -f title="{title}" -F body=@"$BODY_FILE" \
   -f type="{level}" \
   -f "labels[]=Control-By-Beaver" \
   -f "labels[]=type/{type}" \
@@ -74,8 +71,9 @@ gh api repos/{org}/{issueRepo}/issues --method POST \
   -f "labels[]=status/triage"
 ```
 Add `-f milestone={number}` if selected. If issue type API fails, retry without `-f type`.
+After the API call, clean up: `rm "$BODY_FILE"`
 
-> **WARNING:** `gh api -f`/`--raw-field` does NOT support `@file` syntax. Using `--raw-field body=@"$FILE"` will pass the literal file path as the body content, not the file's contents. Always use `-f body="$VAR"` with an inline shell variable.
+> **NOTE:** Only `-F`/`--field` supports `@file` syntax for reading file contents. `-f`/`--raw-field` passes values as literal strings (so `body=@path` would send the literal text `@path`).
 
 ### Step 6: Add to Project V2 and set fields
 
@@ -93,7 +91,7 @@ gh api repos/{org}/{issueRepo}/issues/{parent_number}/sub_issues \
   -F sub_issue_id=$CHILD_ID
 ```
 
-> **WARNING:** The sub-issues API requires `sub_issue_id` to be an integer. Use `-F` (uppercase) instead of `-f` to pass it as a numeric type. `-f` sends strings, which will cause a 422 error.
+> **NOTE:** The sub-issues API requires `sub_issue_id` to be an integer. Use `-F` (uppercase, `--field`) which infers numeric types automatically. `-f` (lowercase, `--raw-field`) always sends strings, causing a 422 error.
 
 ### Step 8: Auto-transition from triage
 
