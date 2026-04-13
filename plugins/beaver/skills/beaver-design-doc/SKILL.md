@@ -45,6 +45,9 @@ digraph design_doc {
 
 Extract `owner`, `repo`, and `issue_number` from the argument. Format: `owner/repo#number`.
 
+If the argument does not match this format, stop and inform user:
+- "参数格式错误，请使用 owner/repo#number 格式。例如: primatrix/myproject#42"
+
 ### Step 2: Fetch issue
 
 ```bash
@@ -177,8 +180,12 @@ After all sections approved, show full document and ask for final confirmation.
 ### Step 1: Prepare wiki repo
 
 ```bash
-# If ~/Code/wiki exists, pull latest
+# If ~/Code/wiki exists, check clean state and pull latest
 if [ -d ~/Code/wiki ]; then
+  if [ -n "$(git -C ~/Code/wiki status --porcelain)" ]; then
+    echo "~/Code/wiki has uncommitted changes. Please commit or stash before proceeding."
+    exit 1
+  fi
   git -C ~/Code/wiki checkout main && git -C ~/Code/wiki pull
 else
   gh repo clone primatrix/wiki ~/Code/wiki
@@ -190,17 +197,17 @@ fi
 Generate slug from issue title (lowercase, hyphens, no special chars).
 
 ```bash
-git -C ~/Code/wiki checkout -b design/{issue_number}-{slug}
+git -C ~/Code/wiki checkout -B design/{issue_number}-{slug}
 ```
 
 ### Step 3: Write design doc
 
-Write to: `~/Code/wiki/docs/designs/YYYY-MM-DD-{issue-slug}.md`
-
-Ensure the `docs/designs/` directory exists:
+Ensure the `docs/designs/` directory exists, then write the design doc:
 ```bash
 mkdir -p ~/Code/wiki/docs/designs
 ```
+
+Write to: `~/Code/wiki/docs/designs/YYYY-MM-DD-{issue-slug}.md`
 
 ### Step 4: Commit and push
 
@@ -213,9 +220,8 @@ git -C ~/Code/wiki push -u origin design/{issue_number}-{slug}
 ### Step 5: Create PR
 
 ```bash
-gh pr create --repo primatrix/wiki \
-  --title "Design: {issue_title}" \
-  --body "$(cat <<'EOF'
+PR_BODY_FILE=$(mktemp)
+cat > "$PR_BODY_FILE" << 'EOF'
 ## 设计文档
 
 关联 Issue: {owner}/{repo}#{number}
@@ -225,7 +231,12 @@ gh pr create --repo primatrix/wiki \
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)
 EOF
-)"
+
+gh pr create --repo primatrix/wiki \
+  --title "Design: {issue_title}" \
+  --body-file "$PR_BODY_FILE"
+
+rm "$PR_BODY_FILE"
 ```
 
 ### Step 6: Comment on original issue
