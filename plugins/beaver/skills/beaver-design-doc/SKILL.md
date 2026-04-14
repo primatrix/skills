@@ -46,7 +46,7 @@ digraph design_doc {
 Extract `owner`, `repo`, and `issue_number` from the argument. Format: `owner/repo#number`.
 
 If the argument does not match this format, stop and inform user:
-- "参数格式错误，请使用 owner/repo#number 格式。例如: primatrix/myproject#42"
+- "Invalid argument format. Please use owner/repo#number. Example: primatrix/myproject#42"
 
 ### Step 2: Fetch issue
 
@@ -61,12 +61,12 @@ Parse labels per engine Section 4. Verify:
 - Has `status/design-pending` label
 
 If either is missing, stop and inform user:
-- Missing `size/L`: "该 issue 不是 size/L，design-doc 仅适用于 size/L issue。"
-- Missing `status/design-pending`: "该 issue 当前状态不是 design-pending，无法开始设计文档。当前状态: {current_status}"
+- Missing `size/L`: "This issue is not size/L. Design docs only apply to size/L issues."
+- Missing `status/design-pending`: "This issue is not in design-pending status. Cannot start a design doc. Current status: {current_status}"
 
 ### Step 4: Extract context from issue body
 
-Parse 目标 and 验收标准 from the issue body. Display to user as starting context.
+Parse Goals and Acceptance Criteria from the issue body. Display to user as starting context.
 
 ---
 
@@ -76,68 +76,67 @@ Parse 目标 and 验收标准 from the issue body. Display to user as starting c
 Do NOT skip Q&A. Do NOT "derive reasonable assumptions" from the issue body. Do NOT draft any design content until ALL 4 sections have been explored through Q&A with the user. The issue body is a starting point, NOT sufficient input for a design doc.
 </HARD-GATE>
 
-**通用规则:**
-- 每次只问一个问题
-- Agent 必须先主动搜索代码库（现有架构、相关文件、测试基础设施等），基于搜索结果提问
-- 持续要求用户补充 context — 每个 section 都应询问是否有相关文档、代码、设计可以参考
-- 鼓励用户使用 @ 引用文件或粘贴相关内容
-- 当前 section 不清晰前不进入下一个
-- 全程使用中文
-- 不得编造技术细节（库名、框架、架构组件）— 所有技术决策必须来自用户输入
-- 不可在缺乏 context 的情况下跳过问题或做假设
-- 每个设计决策都要追问 trade-off — "为什么选这个而不是其他方案"
+**General Rules:**
+- Ask only one question at a time
+- Agent must proactively search the codebase first (existing architecture, related files, test infrastructure, etc.), then ask questions based on search results
+- Continuously ask the user for additional context — for each section, ask whether there are related docs, code, or designs to reference
+- Encourage the user to use @ to reference files or paste relevant content
+- Do not move to the next section until the current one is clear
+- Do not fabricate technical details (library names, frameworks, architecture components) — all technical decisions must come from user input
+- Do not skip questions or make assumptions without sufficient context
+- For every design decision, ask about trade-offs — "Why this approach instead of alternatives?"
 
-按以下 4 个 section 逐一收集信息。每个 section 不预设固定问题列表，而是根据已收集的信息和代码库搜索结果动态决定下一个问题:
+Collect information across the following 4 sections one by one. Each section does not have a fixed list of questions; instead, dynamically determine the next question based on already-collected information and codebase search results:
 
-### Section 1: 背景与范围 (Context & Scope)
+### Section 1: Context & Scope
 
-**目标:** 理解项目所处环境和边界，建立客观背景事实
+**Goal:** Understand the environment and boundaries of the project; establish objective background facts
 
-**切入点:**
-- 从 issue body 中提取的上下文开始
-- 主动搜索代码库中相关的文件、模块、依赖
-- 追问缺失的背景信息
+**Starting Points:**
+- Begin with the context extracted from the issue body
+- Proactively search the codebase for related files, modules, and dependencies
+- Ask about missing background information
 
-**完成标准:** 读者能仅凭此 section 理解新系统将在什么环境中构建，以及构建什么。简洁、客观、事实导向。
+**Completion Criteria:** A reader should be able to understand, solely from this section, what environment the new system will be built in and what is being built. Concise, objective, and fact-oriented.
 
-### Section 2: 设计目标 (Goals & Non-goals)
+### Section 2: Design Goals (Goals & Non-goals)
 
-**目标:** 明确 goals、non-goals、成功指标
+**Goal:** Clarify goals, non-goals, and success metrics
 
-**切入点:**
-- 区分"想做什么"和"选择不做什么"
-- Non-goals 不是否定目标（如"系统不应崩溃"），而是可以合理成为目标但明确选择不做的事
-- 追问成功指标的具体量化方式
+**Starting Points:**
+- Distinguish between "what we want to do" and "what we choose not to do"
+- Non-goals are not negative goals (e.g., "the system should not crash"), but rather things that could reasonably be goals but are explicitly chosen not to pursue
+- Ask about specific, quantifiable ways to measure success
 
-**完成标准:** Goals 覆盖用户场景，Non-goals 边界清晰，成功指标可衡量。
+**Completion Criteria:** Goals cover user scenarios, non-goals have clear boundaries, and success metrics are measurable.
 
-### Section 3: 设计方案 (The Design)
+### Section 3: The Design
 
-**目标:** 架构、组件、接口、数据流、trade-offs，以及轻量的测试策略和部署依赖
+**Goal:** Architecture, components, interfaces, data flow, trade-offs, plus lightweight test strategy and deployment dependencies
 
-**切入点:**
-- 先搜索并要求用户提供现有系统信息（架构、代码结构、技术栈）
-- 探讨新组件在现有系统中的位置（系统上下文图）
-- 技术选型及理由
-- 接口概要、数据存储方式、数据流转路径
-- 关键 trade-offs — 每个设计决策都要问"为什么选这个"
-- 轻量覆盖测试策略（关键测试路径、mock 策略）
-- 轻量覆盖部署与依赖（部署方式、外部依赖）
+**Starting Points:**
+- First search and ask the user to provide existing system information (architecture, code structure, tech stack)
+- Explore where new components fit within the existing system (system context diagram)
+- Technology choices and rationale
+- Interface overview, data storage approach, data flow paths
+- Key trade-offs — for every design decision, ask "why this choice"
+- Lightweight coverage of test strategy (key test paths, mock strategy)
+- Lightweight coverage of deployment and dependencies (deployment approach, external dependencies)
 
-**重点:** 聚焦 trade-offs。设计文档的核心价值在于记录你在设计中做出的权衡。给定背景（事实）和目标（需求），设计方案应展示为什么特定方案最好地满足了这些目标。
+**Key Focus:** Focus on trade-offs. The core value of a design doc lies in recording the trade-offs made during design. Given the context (facts) and goals (requirements), the design should demonstrate why a particular approach best satisfies those goals.
 
-**完成标准:** 架构边界清晰、选型有理由、trade-offs 明确记录、测试和部署有轻量覆盖。
+**Completion Criteria:** Architecture boundaries are clear, technology choices are justified, trade-offs are explicitly recorded, and testing and deployment have lightweight coverage.
 
-### Section 4: 备选方案 (Alternatives Considered)
+### Section 4: Alternatives Considered
 
-**目标:** 收集用户考虑过的其他方案及其放弃理由
+**Goal:** Collect other approaches the user considered and the reasons they were rejected
 
-**切入点:**
-- "在确定这个方案之前，你考虑过哪些其他方案？"
-- 每个备选方案的 trade-off 是什么
-- 为什么当前方案在给定目标下更优
+**Starting Points:**
+- "Before settling on this approach, what other options did you consider?"
+- What are the trade-offs of each alternative
+- Why the current approach is better given the stated goals
 
-**完成标准:** 读者看完后能理解为什么当前方案最优，以及其他看似可行的方案为什么不够好。
+**Completion Criteria:** After reading this section, the reader should understand why the current approach is optimal and why other seemingly viable approaches fell short.
 
 ---
 
@@ -151,7 +150,7 @@ Based on all collected information, write the design doc using the template belo
 
 Present each of the 4 sections individually. For each section:
 - Show the section content
-- Ask: "这个 section 是否准确？需要修改吗？"
+- Ask: "Is this section accurate? Any changes needed?"
 - If user requests changes, revise and re-present
 - Only proceed to next section after approval
 
@@ -208,11 +207,11 @@ git -C ~/Code/wiki push -u origin design/{issue_number}-{slug}
 ```bash
 PR_BODY_FILE=$(mktemp)
 cat > "$PR_BODY_FILE" << 'EOF'
-## 设计文档
+## Design Document
 
-关联 Issue: {owner}/{repo}#{number}
+Related Issue: {owner}/{repo}#{number}
 
-### 概要
+### Summary
 {one-paragraph summary of the design}
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)
@@ -230,9 +229,9 @@ rm "$PR_BODY_FILE"
 ```bash
 BODY_FILE=$(mktemp)
 cat > "$BODY_FILE" << 'BEAVEREOF'
-设计文档已提交: {PR_URL}
+Design document submitted: {PR_URL}
 
-请在 PR 中 review 设计文档。Review 通过后，请将此 issue 状态从 `status/design-pending` 转为 `status/ready-to-develop`。
+Please review the design document in the PR. Once the review is approved, transition this issue from `status/design-pending` to `status/ready-to-develop`.
 BEAVEREOF
 
 gh api repos/{owner}/{repo}/issues/{number}/comments \
@@ -257,46 +256,46 @@ date: {YYYY-MM-DD}
 status: design-pending
 ---
 
-# {Issue Title} 设计文档
+# {Issue Title} Design Document
 
-## 1. 背景与范围
+## 1. Context & Scope
 
-{客观背景事实。新系统所处的技术环境，正在构建什么。简洁，不含观点。}
+{Objective background facts. The technical environment the new system operates in and what is being built. Concise, no opinions.}
 
-## 2. 设计目标
+## 2. Design Goals
 
 ### 2.1 Goals
-{目标列表}
+{List of goals}
 
 ### 2.2 Non-Goals
-{可以合理成为目标但明确选择不做的事。不是否定目标。}
+{Things that could reasonably be goals but are explicitly chosen not to pursue. Not negative goals.}
 
-### 2.3 成功指标
-{如何衡量设计的成功}
+### 2.3 Success Metrics
+{How to measure the success of the design}
 
-## 3. 设计方案
+## 3. The Design
 
-### 3.1 系统上下文图
-{新系统在更大技术版图中的位置，帮助读者将新设计放入已熟悉的环境中理解}
+### 3.1 System Context Diagram
+{Where the new system fits within the larger technical landscape, helping readers place the new design in a familiar context}
 
-### 3.2 核心架构
-{关键组件、系统边界、技术选型及理由}
+### 3.2 Core Architecture
+{Key components, system boundaries, technology choices and rationale}
 
-### 3.3 接口与数据流
-{API 概要（避免粘贴完整接口定义，聚焦与设计 trade-off 相关的部分）、数据存储方式、模块间数据流转}
+### 3.3 Interfaces & Data Flow
+{API overview (avoid pasting complete interface definitions; focus on parts relevant to design trade-offs), data storage approach, data flow between modules}
 
 ### 3.4 Trade-offs
-{设计中做出的关键权衡及其理由。这是设计文档的核心价值。}
+{Key trade-offs made in the design and their rationale. This is the core value of a design document.}
 
-### 3.5 测试策略
-{关键测试路径、mock 策略 — 简要描述}
+### 3.5 Test Strategy
+{Key test paths, mock strategy — brief description}
 
-### 3.6 部署与依赖
-{部署方式、外部依赖 — 简要描述}
+### 3.6 Deployment & Dependencies
+{Deployment approach, external dependencies — brief description}
 
-## 4. 备选方案
+## 4. Alternatives Considered
 
-{其他可行方案及其 trade-off。聚焦每个方案的权衡，以及为什么当前方案在给定目标下更优。}
+{Other viable approaches and their trade-offs. Focus on the trade-offs of each alternative and why the current approach is better given the stated goals.}
 ```
 
 ## Red Flags — STOP If You Catch Yourself Thinking
@@ -315,7 +314,6 @@ status: design-pending
 
 - Argument is required (must provide owner/repo#issue-number)
 - Issue must have `size/L` + `status/design-pending` labels
-- Design doc content in Chinese (中文)
 - One question at a time during Q&A
 - All sections must be individually approved before submission
 - Issue status stays at `design-pending` — no automatic transition

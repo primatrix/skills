@@ -42,7 +42,7 @@ For each sub-issue, evaluate:
 
 #### A. Coverage
 
-Compare the parent Issue's 目标 and 验收标准 against the combined scope of all sub-issues. Identify:
+Compare the parent Issue's Objective and Acceptance Criteria against the combined scope of all sub-issues. Identify:
 - Covered modules/requirements
 - **Gaps**: requirements in the parent that no sub-issue addresses
 
@@ -58,7 +58,7 @@ Criteria for "too large":
 #### C. Test Definition
 
 Check each sub-issue's body for a testing section. Look for:
-- Explicit "测试方法" or "How to Test" or "Test Plan" section
+- Explicit "Test Method" or "How to Test" or "Test Plan" section
 - Specific test scenarios or commands
 - Mark as missing if no testing guidance found
 
@@ -131,4 +131,4 @@ If ANY check fails:
 - Only works on `size/L` issues with sub-issues
 - Atomicity is an LLM estimate, not exact — flag as warning not failure
 - Never auto-transition without user confirmation
-- Audit comments in Chinese where applicable
+- Audit comments in English where applicable
