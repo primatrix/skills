@@ -21,15 +21,17 @@ The brainstorming skill creates an RFC PR with design spec content. This skill a
 
 **To append to the RFC:**
 ```bash
+set -e
+
 # Fetch current RFC content
 CURRENT=$(gh api repos/primatrix/wiki/contents/docs/rfc/NNNN-<topic>.md \
-  --header "ref: rfc/NNNN-<topic>" --jq '.content' | base64 -d)
+  -f ref="rfc/NNNN-<topic>" --jq '.content' | base64 -d)
 FILE_SHA=$(gh api repos/primatrix/wiki/contents/docs/rfc/NNNN-<topic>.md \
-  --header "ref: rfc/NNNN-<topic>" --jq '.sha')
+  -f ref="rfc/NNNN-<topic>" --jq '.sha')
 
 # Append implementation plan
 UPDATED=$(printf '%s\n\n---\n\n## Implementation Plan\n\n%s' "$CURRENT" "$PLAN_CONTENT")
-NEW_CONTENT=$(echo "$UPDATED" | base64)
+NEW_CONTENT=$(printf '%s' "$UPDATED" | base64 | tr -d '\n')
 
 # Push update
 gh api repos/primatrix/wiki/contents/docs/rfc/NNNN-<topic>.md \

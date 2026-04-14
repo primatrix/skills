@@ -113,7 +113,7 @@ digraph brainstorming {
 
 1. **Determine next RFC number:**
    ```bash
-   gh api repos/primatrix/wiki/contents/docs/rfc --jq '[.[].name | select(test("^[0-9]{4}-"))] | sort | last | split("-") | .[0] | tonumber + 1'
+   gh api repos/primatrix/wiki/contents/docs/rfc --jq '[.[].name | select(test("^[0-9]{4}-"))] | sort | (last // "0000-") | split("-") | .[0] | tonumber + 1'
    ```
    Format as zero-padded 4-digit number (e.g., `0002`).
 
@@ -123,13 +123,18 @@ digraph brainstorming {
 3. **Create branch:**
    ```bash
    MAIN_SHA=$(gh api repos/primatrix/wiki/git/ref/heads/main --jq '.object.sha')
-   gh api repos/primatrix/wiki/git/refs -f ref="refs/heads/rfc/NNNN-<topic>" -f sha="$MAIN_SHA"
+   # Check if branch already exists
+   if gh api repos/primatrix/wiki/git/ref/heads/rfc/NNNN-<topic> >/dev/null 2>&1; then
+     echo "Branch rfc/NNNN-<topic> already exists. Using existing branch."
+   else
+     gh api repos/primatrix/wiki/git/refs -f ref="refs/heads/rfc/NNNN-<topic>" -f sha="$MAIN_SHA"
+   fi
    ```
 
 4. **Create RFC file** (`docs/rfc/NNNN-<topic>.md`):
    Use the design spec content as-is (current brainstorming output format). Encode as base64 and push:
    ```bash
-   CONTENT=$(echo "$SPEC_CONTENT" | base64)
+   CONTENT=$(printf '%s' "$SPEC_CONTENT" | base64 | tr -d '\n')
    gh api repos/primatrix/wiki/contents/docs/rfc/NNNN-<topic>.md \
      -X PUT -f message="docs: add RFC NNNN <topic>" \
      -f content="$CONTENT" -f branch="rfc/NNNN-<topic>"
@@ -144,7 +149,7 @@ digraph brainstorming {
 7. **Create PR:**
    ```bash
    gh pr create --repo primatrix/wiki --head "rfc/NNNN-<topic>" \
-     --title "RFC NNNN: <topic>" --body "<spec summary>"
+     --title "RFC NNNN: <topic>" --body-file <(echo "<spec summary>")
    ```
 
 8. **Associate with Project:**
@@ -154,6 +159,7 @@ digraph brainstorming {
 
 - Use elements-of-style:writing-clearly-and-concisely skill if available for the RFC content
 - Store RFC metadata (branch name, RFC number, RFC file path, PR URL) in session context for writing-plans to use
+  Store as session variables: `RFC_NUMBER`, `RFC_BRANCH` (e.g., `rfc/NNNN-<topic>`), `RFC_PATH` (e.g., `docs/rfc/NNNN-<topic>.md`), `RFC_PR_URL`. Downstream skills access these via the same session context.
 
 **Spec Review Loop:**
 After publishing the RFC:
@@ -162,7 +168,7 @@ After publishing the RFC:
    - Provide the RFC content by fetching from GitHub:
      ```bash
      gh api repos/primatrix/wiki/contents/docs/rfc/NNNN-<topic>.md \
-       -H "Accept: application/vnd.github.raw" --header "ref: rfc/NNNN-<topic>"
+       -H "Accept: application/vnd.github.raw" -f ref="rfc/NNNN-<topic>"
      ```
 2. If Issues Found: fix, push update to the RFC file on the branch, re-dispatch
 3. If loop exceeds 5 iterations, surface to human for guidance
