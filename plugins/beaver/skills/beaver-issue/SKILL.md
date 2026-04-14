@@ -35,7 +35,7 @@ Collect one at a time:
 1. **Level**: Goal / Task / SubTask
 2. **Parent issue** (Task/SubTask only): list project items, filter by parent level, let user pick
 3. **Title**: concise issue title
-4. **Description**: structured as 目标 (objective) and 验收标准 (acceptance criteria), in Chinese
+4. **Description**: structured as Objective and Acceptance Criteria
 5. **Type label** (`type/`): feat / bug / refactor / docs / chore
 6. **Priority label** (`p/`): choose one: `p0/blocker` / `p1/urgent` / `p2/high` / `p3/normal`
 
@@ -143,22 +143,22 @@ Print: issue URL, title, assigned user, new status.
 
 ### Goal
 ```
-## 目标
+## Objective
 
 {objective}
 
-## 验收标准
+## Acceptance Criteria
 
 {acceptance_criteria}
 ```
 
 ### Task / SubTask
 ```
-## 目标
+## Objective
 
 {objective}
 
-## 验收标准
+## Acceptance Criteria
 
 {acceptance_criteria}
 
@@ -176,6 +176,4 @@ keywords:
 
 - One issue at a time
 - Always preview before creating
-- Issue body in Chinese (中文)
-- Read-only project config
 - Never modify existing issues (except label transitions and assignee updates during claim)

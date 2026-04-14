@@ -26,7 +26,7 @@ You MUST create a task for each of these items and complete them in order:
 3. **Ask clarifying questions** — one at a time, understand purpose/constraints/success criteria
 4. **Propose 2-3 approaches** — with trade-offs and your recommendation
 5. **Present design** — in sections scaled to their complexity, get user approval after each section
-6. **Write design doc** — save to `docs/superpowers/specs/YYYY-MM-DD-<topic>-design.md` and commit
+6. **Publish RFC to wiki** — create RFC in `primatrix/wiki` via GitHub API: determine next RFC number, ask user to select GitHub Project, create branch + RFC file + PR, associate with Project
 7. **Spec review loop** — dispatch spec-document-reviewer subagent with precisely crafted review context (never your session history); fix issues and re-dispatch until approved (max 5 iterations, then surface to human)
 8. **User reviews written spec** — ask user to review the spec file before proceeding
 9. **Transition to implementation** — invoke writing-plans skill to create implementation plan
@@ -42,7 +42,7 @@ digraph brainstorming {
     "Propose 2-3 approaches" [shape=box];
     "Present design sections" [shape=box];
     "User approves design?" [shape=diamond];
-    "Write design doc" [shape=box];
+    "Publish RFC to wiki" [shape=box];
     "Spec review loop" [shape=box];
     "Spec review passed?" [shape=diamond];
     "User reviews spec?" [shape=diamond];
@@ -56,12 +56,12 @@ digraph brainstorming {
     "Propose 2-3 approaches" -> "Present design sections";
     "Present design sections" -> "User approves design?";
     "User approves design?" -> "Present design sections" [label="no, revise"];
-    "User approves design?" -> "Write design doc" [label="yes"];
-    "Write design doc" -> "Spec review loop";
+    "User approves design?" -> "Publish RFC to wiki" [label="yes"];
+    "Publish RFC to wiki" -> "Spec review loop";
     "Spec review loop" -> "Spec review passed?";
     "Spec review passed?" -> "Spec review loop" [label="issues found,\nfix and re-dispatch"];
     "Spec review passed?" -> "User reviews spec?" [label="approved"];
-    "User reviews spec?" -> "Write design doc" [label="changes requested"];
+    "User reviews spec?" -> "Publish RFC to wiki" [label="changes requested"];
     "User reviews spec?" -> "Invoke writing-plans skill" [label="approved"];
 }
 ```
@@ -109,26 +109,76 @@ digraph brainstorming {
 
 ## After the Design
 
-**Documentation:**
+**Publish RFC to wiki:**
 
-- Write the validated design (spec) to `docs/superpowers/specs/YYYY-MM-DD-<topic>-design.md`
-  - (User preferences for spec location override this default)
-- Use elements-of-style:writing-clearly-and-concisely skill if available
-- Commit the design document to git
+1. **Determine next RFC number:**
+   ```bash
+   gh api repos/primatrix/wiki/contents/docs/rfc --jq '[.[].name | select(test("^[0-9]{4}-"))] | sort | (last // "0000-") | split("-") | .[0] | tonumber + 1'
+   ```
+   Format as zero-padded 4-digit number (e.g., `0002`).
+
+2. **Select GitHub Project:**
+   Run `gh project list --owner primatrix` and present interactive choice to user via AskUserQuestion. Store the selected project number.
+
+3. **Create branch:**
+   ```bash
+   MAIN_SHA=$(gh api repos/primatrix/wiki/git/ref/heads/main --jq '.object.sha')
+   # Check if branch already exists
+   if gh api repos/primatrix/wiki/git/ref/heads/rfc/NNNN-<topic> >/dev/null 2>&1; then
+     echo "Branch rfc/NNNN-<topic> already exists. Using existing branch."
+   else
+     gh api repos/primatrix/wiki/git/refs -f ref="refs/heads/rfc/NNNN-<topic>" -f sha="$MAIN_SHA"
+   fi
+   ```
+
+4. **Create RFC file** (`docs/rfc/NNNN-<topic>.md`):
+   Use the design spec content as-is (current brainstorming output format). Encode as base64 and push:
+   ```bash
+   CONTENT=$(printf '%s' "$SPEC_CONTENT" | base64 | tr -d '\n')
+   gh api repos/primatrix/wiki/contents/docs/rfc/NNNN-<topic>.md \
+     -X PUT -f message="docs: add RFC NNNN <topic>" \
+     -f content="$CONTENT" -f branch="rfc/NNNN-<topic>"
+   ```
+
+5. **Update `docs/rfc/index.md`:**
+   Fetch current content, add a new row to the RFC table, push update to the same branch.
+
+6. **Update `docs/.vitepress/config.ts`:**
+   Fetch current content, add new sidebar entry to the RFC items array, push update to the same branch.
+
+7. **Create PR:**
+   ```bash
+   gh pr create --repo primatrix/wiki --head "rfc/NNNN-<topic>" \
+     --title "RFC NNNN: <topic>" --body-file <(echo "<spec summary>")
+   ```
+
+8. **Associate with Project:**
+   ```bash
+   gh project item-add <project-number> --owner primatrix --url <pr-url>
+   ```
+
+- Use elements-of-style:writing-clearly-and-concisely skill if available for the RFC content
+- Store RFC metadata (branch name, RFC number, RFC file path, PR URL) in session context for writing-plans to use
+  Store as session variables: `RFC_NUMBER`, `RFC_BRANCH` (e.g., `rfc/NNNN-<topic>`), `RFC_PATH` (e.g., `docs/rfc/NNNN-<topic>.md`), `RFC_PR_URL`. Downstream skills access these via the same session context.
 
 **Spec Review Loop:**
-After writing the spec document:
+After publishing the RFC:
 
 1. Dispatch spec-document-reviewer subagent (see spec-document-reviewer-prompt.md)
-2. If Issues Found: fix, re-dispatch, repeat until Approved
+   - Provide the RFC content by fetching from GitHub:
+     ```bash
+     gh api repos/primatrix/wiki/contents/docs/rfc/NNNN-<topic>.md \
+       -H "Accept: application/vnd.github.raw" -f ref="rfc/NNNN-<topic>"
+     ```
+2. If Issues Found: fix, push update to the RFC file on the branch, re-dispatch
 3. If loop exceeds 5 iterations, surface to human for guidance
 
 **User Review Gate:**
-After the spec review loop passes, ask the user to review the written spec before proceeding:
+After the spec review loop passes, ask the user to review the RFC before proceeding:
 
-> "Spec written and committed to `<path>`. Please review it and let me know if you want to make any changes before we start writing out the implementation plan."
+> "RFC published as PR: `<PR_URL>`. Please review the RFC and let me know if you want to make any changes before we start writing out the implementation plan."
 
-Wait for the user's response. If they request changes, make them and re-run the spec review loop. Only proceed once the user approves.
+Wait for the user's response. If they request changes, make them (push updates to the RFC branch) and re-run the spec review loop. Only proceed once the user approves.
 
 **Implementation:**
 

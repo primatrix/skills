@@ -46,7 +46,7 @@ digraph design_doc {
 Extract `owner`, `repo`, and `issue_number` from the argument. Format: `owner/repo#number`.
 
 If the argument does not match this format, stop and inform user:
-- "参数格式错误，请使用 owner/repo#number 格式。例如: primatrix/myproject#42"
+- "Invalid argument format. Please use owner/repo#number. Example: primatrix/myproject#42"
 
 ### Step 2: Fetch issue
 
@@ -61,97 +61,82 @@ Parse labels per engine Section 4. Verify:
 - Has `status/design-pending` label
 
 If either is missing, stop and inform user:
-- Missing `size/L`: "该 issue 不是 size/L，design-doc 仅适用于 size/L issue。"
-- Missing `status/design-pending`: "该 issue 当前状态不是 design-pending，无法开始设计文档。当前状态: {current_status}"
+- Missing `size/L`: "This issue is not size/L. Design docs only apply to size/L issues."
+- Missing `status/design-pending`: "This issue is not in design-pending status. Cannot start a design doc. Current status: {current_status}"
 
 ### Step 4: Extract context from issue body
 
-Parse 目标 and 验收标准 from the issue body. Display to user as starting context.
+Parse Goals and Acceptance Criteria from the issue body. Display to user as starting context.
 
 ---
 
 ## Phase 2: Context Collection (Iterative Q&A)
 
 <HARD-GATE>
-Do NOT skip Q&A. Do NOT "derive reasonable assumptions" from the issue body. Do NOT draft any design content until ALL 6 sections have been explored through Q&A with the user. The issue body is a starting point, NOT sufficient input for a design doc.
+Do NOT skip Q&A. Do NOT "derive reasonable assumptions" from the issue body. Do NOT draft any design content until ALL 4 sections have been explored through Q&A with the user. The issue body is a starting point, NOT sufficient input for a design doc.
 </HARD-GATE>
 
-**通用规则:**
-- 每次只问一个问题
-- 要求用户提供 context（代码、文档、现有设计）后再继续
-- 当前 section 不清晰前不进入下一个
-- 全程使用中文
-- 鼓励用户使用 @ 引用文件或粘贴相关内容
-- 不得编造技术细节（库名、框架、架构组件）— 所有技术决策必须来自用户输入
+**General Rules:**
+- Ask only one question at a time
+- Agent must proactively search the codebase first (existing architecture, related files, test infrastructure, etc.), then ask questions based on search results
+- Continuously ask the user for additional context — for each section, ask whether there are related docs, code, or designs to reference
+- Encourage the user to use @ to reference files or paste relevant content
+- Do not move to the next section until the current one is clear
+- Do not fabricate technical details (library names, frameworks, architecture components) — all technical decisions must come from user input
+- Do not skip questions or make assumptions without sufficient context
+- For every design decision, ask about trade-offs — "Why this approach instead of alternatives?"
 
-按以下顺序逐 section 收集信息:
+Collect information across the following 4 sections one by one. Each section does not have a fixed list of questions; instead, dynamically determine the next question based on already-collected information and codebase search results:
 
-### Section 1: 设计目标 / 核心原则
+### Section 1: Context & Scope
 
-**策略:** Why + 场景验证
+**Goal:** Understand the environment and boundaries of the project; establish objective background facts
 
-**核心问题（逐一提问）:**
-1. 这个功能/变更要解决什么问题？背景是什么？
-2. 请提供相关的需求文档或用户反馈（如有）
-3. 设计应遵循哪些核心原则或约束？
-4. 明确的 Non-Goals 是什么？（哪些是不做的）
-5. 如何衡量这个设计的成功？具体指标是什么？
+**Starting Points:**
+- Begin with the context extracted from the issue body
+- Proactively search the codebase for related files, modules, and dependencies
+- Ask about missing background information
 
-**验证:** 用用户提供的具体场景检验目标是否完整。如果场景无法被目标覆盖，继续追问。
+**Completion Criteria:** A reader should be able to understand, solely from this section, what environment the new system will be built in and what is being built. Concise, objective, and fact-oriented.
 
-### Section 2: 整体架构
+### Section 2: Design Goals (Goals & Non-goals)
 
-**策略:** 先要 context，再问边界/选型
+**Goal:** Clarify goals, non-goals, and success metrics
 
-**核心问题（逐一提问）:**
-1. 请提供现有系统的架构信息（架构图、代码结构、技术栈文档），用 @ 引用相关文件
-2. 新组件在现有系统中的位置和边界是什么？
-3. 关键技术选型是什么？为什么选这个而不是其他方案？
-4. 有哪些已知的技术约束或限制？
+**Starting Points:**
+- Distinguish between "what we want to do" and "what we choose not to do"
+- Non-goals are not negative goals (e.g., "the system should not crash"), but rather things that could reasonably be goals but are explicitly chosen not to pursue
+- Ask about specific, quantifiable ways to measure success
 
-**验证:** 确认边界清晰、选型有理由、与现有系统集成点明确。
+**Completion Criteria:** Goals cover user scenarios, non-goals have clear boundaries, and success metrics are measurable.
 
-### Section 3: 功能模块与数据流
+### Section 3: The Design
 
-**策略:** 收集 + 提议 + 反问细节
+**Goal:** Architecture, components, interfaces, data flow, trade-offs, plus lightweight test strategy and deployment dependencies
 
-**核心问题（逐一提问）:**
-1. 请提供现有的 API 定义、接口文档或数据模型（如有）
-2. （基于已收集信息）我建议以下模块拆分: {提议}。是否合理？需要调整吗？
-3. 模块之间的接口如何定义？
-4. 数据从输入到输出的完整流转路径是什么？
-5. 有没有需要特别注意的并发、一致性或性能问题？
+**Starting Points:**
+- First search and ask the user to provide existing system information (architecture, code structure, tech stack)
+- Explore where new components fit within the existing system (system context diagram)
+- Technology choices and rationale
+- Interface overview, data storage approach, data flow paths
+- Key trade-offs — for every design decision, ask "why this choice"
+- Lightweight coverage of test strategy (key test paths, mock strategy)
+- Lightweight coverage of deployment and dependencies (deployment approach, external dependencies)
 
-**验证:** 确认每个模块职责单一、接口明确、数据流无断点。
+**Key Focus:** Focus on trade-offs. The core value of a design doc lies in recording the trade-offs made during design. Given the context (facts) and goals (requirements), the design should demonstrate why a particular approach best satisfies those goals.
 
-### Section 4: 单元测试
+**Completion Criteria:** Architecture boundaries are clear, technology choices are justified, trade-offs are explicitly recorded, and testing and deployment have lightweight coverage.
 
-**策略:** Agent 推导 + 用户约束
+### Section 4: Alternatives Considered
 
-**核心问题（逐一提问）:**
-1. 请提供现有的测试基础设施信息（测试框架、CI 配置等）
-2. （基于前面的架构和模块拆分）我推导出以下关键测试路径: {推导结果}。你有补充或调整吗？
-3. 外部依赖的 mock 策略是什么？有什么特殊约束？
-4. 有覆盖率目标或其他测试约束吗？
+**Goal:** Collect other approaches the user considered and the reasons they were rejected
 
-### Section 5: 外部依赖与部署
+**Starting Points:**
+- "Before settling on this approach, what other options did you consider?"
+- What are the trade-offs of each alternative
+- Why the current approach is better given the stated goals
 
-**策略:** Agent 推导 + 用户约束
-
-**核心问题（逐一提问）:**
-1. （基于架构推导）这个设计涉及以下外部依赖: {推导结果}。是否遗漏？
-2. 部署方式是什么？有什么环境要求？
-3. 有没有需要特别考虑的运维/监控需求？
-
-### Section 6: 集成测试
-
-**策略:** Agent 推导 + 用户约束
-
-**核心问题（逐一提问）:**
-1. 请提供现有的 CI/CD 配置和集成测试设置
-2. （基于模块交互）我推导出以下集成测试场景: {推导结果}。你有补充吗？
-3. 集成测试环境如何搭建？
-4. 验收标准是什么？如何判断集成测试通过？
+**Completion Criteria:** After reading this section, the reader should understand why the current approach is optimal and why other seemingly viable approaches fell short.
 
 ---
 
@@ -163,9 +148,9 @@ Based on all collected information, write the design doc using the template belo
 
 ### Step 2: Present each section for approval
 
-Present each of the 6 sections individually. For each section:
+Present each of the 4 sections individually. For each section:
 - Show the section content
-- Ask: "这个 section 是否准确？需要修改吗？"
+- Ask: "Is this section accurate? Any changes needed?"
 - If user requests changes, revise and re-present
 - Only proceed to next section after approval
 
@@ -222,11 +207,11 @@ git -C ~/Code/wiki push -u origin design/{issue_number}-{slug}
 ```bash
 PR_BODY_FILE=$(mktemp)
 cat > "$PR_BODY_FILE" << 'EOF'
-## 设计文档
+## Design Document
 
-关联 Issue: {owner}/{repo}#{number}
+Related Issue: {owner}/{repo}#{number}
 
-### 概要
+### Summary
 {one-paragraph summary of the design}
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)
@@ -244,9 +229,9 @@ rm "$PR_BODY_FILE"
 ```bash
 BODY_FILE=$(mktemp)
 cat > "$BODY_FILE" << 'BEAVEREOF'
-设计文档已提交: {PR_URL}
+Design document submitted: {PR_URL}
 
-请在 PR 中 review 设计文档。Review 通过后，请将此 issue 状态从 `status/design-pending` 转为 `status/ready-to-develop`。
+Please review the design document in the PR. Once the review is approved, transition this issue from `status/design-pending` to `status/ready-to-develop`.
 BEAVEREOF
 
 gh api repos/{owner}/{repo}/issues/{number}/comments \
@@ -271,76 +256,46 @@ date: {YYYY-MM-DD}
 status: design-pending
 ---
 
-# {Issue Title} 设计文档
+# {Issue Title} Design Document
 
-## 1. 设计目标
+## 1. Context & Scope
 
-### 1.1 背景与动机
-{为什么需要这个功能/变更}
+{Objective background facts. The technical environment the new system operates in and what is being built. Concise, no opinions.}
 
-### 1.2 核心原则
-{设计遵循的关键原则}
+## 2. Design Goals
 
-### 1.3 Non-Goals
-{明确不做什么}
+### 2.1 Goals
+{List of goals}
 
-### 1.4 成功指标
-{如何衡量设计的成功}
+### 2.2 Non-Goals
+{Things that could reasonably be goals but are explicitly chosen not to pursue. Not negative goals.}
 
-## 2. 整体架构
+### 2.3 Success Metrics
+{How to measure the success of the design}
 
-### 2.1 系统边界
-{新组件在现有系统中的位置}
+## 3. The Design
 
-### 2.2 核心组件
-{关键组件及其职责}
+### 3.1 System Context Diagram
+{Where the new system fits within the larger technical landscape, helping readers place the new design in a familiar context}
 
-### 2.3 技术选型
-{关键技术决策及理由}
+### 3.2 Core Architecture
+{Key components, system boundaries, technology choices and rationale}
 
-## 3. 功能模块与数据流
+### 3.3 Interfaces & Data Flow
+{API overview (avoid pasting complete interface definitions; focus on parts relevant to design trade-offs), data storage approach, data flow between modules}
 
-### 3.1 模块拆分
-{各模块及其职责}
+### 3.4 Trade-offs
+{Key trade-offs made in the design and their rationale. This is the core value of a design document.}
 
-### 3.2 接口定义
-{模块间接口}
+### 3.5 Test Strategy
+{Key test paths, mock strategy — brief description}
 
-### 3.3 数据流
-{数据如何在模块间流转}
+### 3.6 Deployment & Dependencies
+{Deployment approach, external dependencies — brief description}
 
-## 4. 单元测试
+## 4. Alternatives Considered
 
-### 4.1 测试范围
-{需要测试的关键路径}
-
-### 4.2 Mock 策略
-{外部依赖的 mock 方式}
-
-### 4.3 关键用例
-{核心测试用例列表}
-
-## 5. 外部依赖与部署
-
-### 5.1 外部依赖
-{依赖的外部服务/库}
-
-### 5.2 部署方式
-{如何部署}
-
-### 5.3 环境要求
-{运行环境需求}
-
-## 6. 集成测试
-
-### 6.1 测试场景
-{端到端测试场景}
-
-### 6.2 测试环境
-{集成测试环境}
-
-### 6.3 验收标准
-{集成测试通过的标准}
+{Other viable approaches and their trade-offs. Focus on the trade-offs of each alternative and why the current approach is better given the stated goals.}
 ```
 
 ## Red Flags — STOP If You Catch Yourself Thinking
@@ -353,12 +308,12 @@ status: design-pending
 | "I can fill in the technical details myself" | You don't know the team's tech stack, infra constraints, or preferences. Ask. |
 | "This section is obvious, I'll skip the questions" | Every section has hidden constraints. Ask anyway. |
 | "I'll ask all questions at once to save time" | One question at a time. Batching overwhelms and gets shallow answers. |
+| "I can derive the trade-offs from the code" | Trade-offs are design decisions, not code facts. They must come from the user. Ask. |
 
 ## Constraints
 
 - Argument is required (must provide owner/repo#issue-number)
 - Issue must have `size/L` + `status/design-pending` labels
-- Design doc content in Chinese (中文)
 - One question at a time during Q&A
 - All sections must be individually approved before submission
 - Issue status stays at `design-pending` — no automatic transition

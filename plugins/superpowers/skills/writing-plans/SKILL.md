@@ -15,8 +15,31 @@ Assume they are a skilled developer, but know almost nothing about our toolset o
 
 **Context:** This should be run in a dedicated worktree (created by brainstorming skill).
 
-**Save plans to:** `docs/superpowers/plans/YYYY-MM-DD-<feature-name>.md`
-- (User preferences for plan location override this default)
+**Save plans to:** Append to the existing RFC file on `primatrix/wiki` (created by brainstorming skill).
+
+The brainstorming skill creates an RFC PR with design spec content. This skill appends the implementation plan as a new `## Implementation Plan` section to the same RFC file, pushing a new commit to the same branch/PR.
+
+**To append to the RFC:**
+```bash
+set -e
+
+# Fetch current RFC content
+CURRENT=$(gh api repos/primatrix/wiki/contents/docs/rfc/NNNN-<topic>.md \
+  -f ref="rfc/NNNN-<topic>" --jq '.content' | base64 -d)
+FILE_SHA=$(gh api repos/primatrix/wiki/contents/docs/rfc/NNNN-<topic>.md \
+  -f ref="rfc/NNNN-<topic>" --jq '.sha')
+
+# Append implementation plan
+UPDATED=$(printf '%s\n\n---\n\n## Implementation Plan\n\n%s' "$CURRENT" "$PLAN_CONTENT")
+NEW_CONTENT=$(printf '%s' "$UPDATED" | base64 | tr -d '\n')
+
+# Push update
+gh api repos/primatrix/wiki/contents/docs/rfc/NNNN-<topic>.md \
+  -X PUT -f message="docs: add implementation plan to RFC NNNN" \
+  -f content="$NEW_CONTENT" -f sha="$FILE_SHA" -f branch="rfc/NNNN-<topic>"
+```
+
+RFC metadata (branch name, RFC number, file path, PR URL) is available in the session context from the brainstorming phase.
 
 ## Scope Check
 
@@ -133,7 +156,7 @@ After completing each chunk of the plan:
 
 After saving the plan:
 
-**"Plan complete and saved to `docs/superpowers/plans/<filename>.md`. Ready to execute?"**
+**"Implementation plan appended to RFC: `<PR_URL>`. Ready to execute?"**
 
 **Execution path depends on harness capabilities:**
 
