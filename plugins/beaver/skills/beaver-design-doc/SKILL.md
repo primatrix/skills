@@ -73,85 +73,71 @@ Parse 目标 and 验收标准 from the issue body. Display to user as starting c
 ## Phase 2: Context Collection (Iterative Q&A)
 
 <HARD-GATE>
-Do NOT skip Q&A. Do NOT "derive reasonable assumptions" from the issue body. Do NOT draft any design content until ALL 6 sections have been explored through Q&A with the user. The issue body is a starting point, NOT sufficient input for a design doc.
+Do NOT skip Q&A. Do NOT "derive reasonable assumptions" from the issue body. Do NOT draft any design content until ALL 4 sections have been explored through Q&A with the user. The issue body is a starting point, NOT sufficient input for a design doc.
 </HARD-GATE>
 
 **通用规则:**
 - 每次只问一个问题
-- 要求用户提供 context（代码、文档、现有设计）后再继续
+- Agent 必须先主动搜索代码库（现有架构、相关文件、测试基础设施等），基于搜索结果提问
+- 持续要求用户补充 context — 每个 section 都应询问是否有相关文档、代码、设计可以参考
+- 鼓励用户使用 @ 引用文件或粘贴相关内容
 - 当前 section 不清晰前不进入下一个
 - 全程使用中文
-- 鼓励用户使用 @ 引用文件或粘贴相关内容
 - 不得编造技术细节（库名、框架、架构组件）— 所有技术决策必须来自用户输入
+- 不可在缺乏 context 的情况下跳过问题或做假设
+- 每个设计决策都要追问 trade-off — "为什么选这个而不是其他方案"
 
-按以下顺序逐 section 收集信息:
+按以下 4 个 section 逐一收集信息。每个 section 不预设固定问题列表，而是根据已收集的信息和代码库搜索结果动态决定下一个问题:
 
-### Section 1: 设计目标 / 核心原则
+### Section 1: 背景与范围 (Context & Scope)
 
-**策略:** Why + 场景验证
+**目标:** 理解项目所处环境和边界，建立客观背景事实
 
-**核心问题（逐一提问）:**
-1. 这个功能/变更要解决什么问题？背景是什么？
-2. 请提供相关的需求文档或用户反馈（如有）
-3. 设计应遵循哪些核心原则或约束？
-4. 明确的 Non-Goals 是什么？（哪些是不做的）
-5. 如何衡量这个设计的成功？具体指标是什么？
+**切入点:**
+- 从 issue body 中提取的上下文开始
+- 主动搜索代码库中相关的文件、模块、依赖
+- 追问缺失的背景信息
 
-**验证:** 用用户提供的具体场景检验目标是否完整。如果场景无法被目标覆盖，继续追问。
+**完成标准:** 读者能仅凭此 section 理解新系统将在什么环境中构建，以及构建什么。简洁、客观、事实导向。
 
-### Section 2: 整体架构
+### Section 2: 设计目标 (Goals & Non-goals)
 
-**策略:** 先要 context，再问边界/选型
+**目标:** 明确 goals、non-goals、成功指标
 
-**核心问题（逐一提问）:**
-1. 请提供现有系统的架构信息（架构图、代码结构、技术栈文档），用 @ 引用相关文件
-2. 新组件在现有系统中的位置和边界是什么？
-3. 关键技术选型是什么？为什么选这个而不是其他方案？
-4. 有哪些已知的技术约束或限制？
+**切入点:**
+- 区分"想做什么"和"选择不做什么"
+- Non-goals 不是否定目标（如"系统不应崩溃"），而是可以合理成为目标但明确选择不做的事
+- 追问成功指标的具体量化方式
 
-**验证:** 确认边界清晰、选型有理由、与现有系统集成点明确。
+**完成标准:** Goals 覆盖用户场景，Non-goals 边界清晰，成功指标可衡量。
 
-### Section 3: 功能模块与数据流
+### Section 3: 设计方案 (The Design)
 
-**策略:** 收集 + 提议 + 反问细节
+**目标:** 架构、组件、接口、数据流、trade-offs，以及轻量的测试策略和部署依赖
 
-**核心问题（逐一提问）:**
-1. 请提供现有的 API 定义、接口文档或数据模型（如有）
-2. （基于已收集信息）我建议以下模块拆分: {提议}。是否合理？需要调整吗？
-3. 模块之间的接口如何定义？
-4. 数据从输入到输出的完整流转路径是什么？
-5. 有没有需要特别注意的并发、一致性或性能问题？
+**切入点:**
+- 先搜索并要求用户提供现有系统信息（架构、代码结构、技术栈）
+- 探讨新组件在现有系统中的位置（系统上下文图）
+- 技术选型及理由
+- 接口概要、数据存储方式、数据流转路径
+- 关键 trade-offs — 每个设计决策都要问"为什么选这个"
+- 轻量覆盖测试策略（关键测试路径、mock 策略）
+- 轻量覆盖部署与依赖（部署方式、外部依赖）
 
-**验证:** 确认每个模块职责单一、接口明确、数据流无断点。
+**重点:** 聚焦 trade-offs。设计文档的核心价值在于记录你在设计中做出的权衡。给定背景（事实）和目标（需求），设计方案应展示为什么特定方案最好地满足了这些目标。
 
-### Section 4: 单元测试
+**完成标准:** 架构边界清晰、选型有理由、trade-offs 明确记录、测试和部署有轻量覆盖。
 
-**策略:** Agent 推导 + 用户约束
+### Section 4: 备选方案 (Alternatives Considered)
 
-**核心问题（逐一提问）:**
-1. 请提供现有的测试基础设施信息（测试框架、CI 配置等）
-2. （基于前面的架构和模块拆分）我推导出以下关键测试路径: {推导结果}。你有补充或调整吗？
-3. 外部依赖的 mock 策略是什么？有什么特殊约束？
-4. 有覆盖率目标或其他测试约束吗？
+**目标:** 收集用户考虑过的其他方案及其放弃理由
 
-### Section 5: 外部依赖与部署
+**切入点:**
+- "在确定这个方案之前，你考虑过哪些其他方案？"
+- 每个备选方案的 trade-off 是什么
+- 为什么当前方案在给定目标下更优
 
-**策略:** Agent 推导 + 用户约束
-
-**核心问题（逐一提问）:**
-1. （基于架构推导）这个设计涉及以下外部依赖: {推导结果}。是否遗漏？
-2. 部署方式是什么？有什么环境要求？
-3. 有没有需要特别考虑的运维/监控需求？
-
-### Section 6: 集成测试
-
-**策略:** Agent 推导 + 用户约束
-
-**核心问题（逐一提问）:**
-1. 请提供现有的 CI/CD 配置和集成测试设置
-2. （基于模块交互）我推导出以下集成测试场景: {推导结果}。你有补充吗？
-3. 集成测试环境如何搭建？
-4. 验收标准是什么？如何判断集成测试通过？
+**完成标准:** 读者看完后能理解为什么当前方案最优，以及其他看似可行的方案为什么不够好。
 
 ---
 
@@ -163,7 +149,7 @@ Based on all collected information, write the design doc using the template belo
 
 ### Step 2: Present each section for approval
 
-Present each of the 6 sections individually. For each section:
+Present each of the 4 sections individually. For each section:
 - Show the section content
 - Ask: "这个 section 是否准确？需要修改吗？"
 - If user requests changes, revise and re-present
@@ -273,74 +259,44 @@ status: design-pending
 
 # {Issue Title} 设计文档
 
-## 1. 设计目标
+## 1. 背景与范围
 
-### 1.1 背景与动机
-{为什么需要这个功能/变更}
+{客观背景事实。新系统所处的技术环境，正在构建什么。简洁，不含观点。}
 
-### 1.2 核心原则
-{设计遵循的关键原则}
+## 2. 设计目标
 
-### 1.3 Non-Goals
-{明确不做什么}
+### 2.1 Goals
+{目标列表}
 
-### 1.4 成功指标
+### 2.2 Non-Goals
+{可以合理成为目标但明确选择不做的事。不是否定目标。}
+
+### 2.3 成功指标
 {如何衡量设计的成功}
 
-## 2. 整体架构
+## 3. 设计方案
 
-### 2.1 系统边界
-{新组件在现有系统中的位置}
+### 3.1 系统上下文图
+{新系统在更大技术版图中的位置，帮助读者将新设计放入已熟悉的环境中理解}
 
-### 2.2 核心组件
-{关键组件及其职责}
+### 3.2 核心架构
+{关键组件、系统边界、技术选型及理由}
 
-### 2.3 技术选型
-{关键技术决策及理由}
+### 3.3 接口与数据流
+{API 概要（避免粘贴完整接口定义，聚焦与设计 trade-off 相关的部分）、数据存储方式、模块间数据流转}
 
-## 3. 功能模块与数据流
+### 3.4 Trade-offs
+{设计中做出的关键权衡及其理由。这是设计文档的核心价值。}
 
-### 3.1 模块拆分
-{各模块及其职责}
+### 3.5 测试策略
+{关键测试路径、mock 策略 — 简要描述}
 
-### 3.2 接口定义
-{模块间接口}
+### 3.6 部署与依赖
+{部署方式、外部依赖 — 简要描述}
 
-### 3.3 数据流
-{数据如何在模块间流转}
+## 4. 备选方案
 
-## 4. 单元测试
-
-### 4.1 测试范围
-{需要测试的关键路径}
-
-### 4.2 Mock 策略
-{外部依赖的 mock 方式}
-
-### 4.3 关键用例
-{核心测试用例列表}
-
-## 5. 外部依赖与部署
-
-### 5.1 外部依赖
-{依赖的外部服务/库}
-
-### 5.2 部署方式
-{如何部署}
-
-### 5.3 环境要求
-{运行环境需求}
-
-## 6. 集成测试
-
-### 6.1 测试场景
-{端到端测试场景}
-
-### 6.2 测试环境
-{集成测试环境}
-
-### 6.3 验收标准
-{集成测试通过的标准}
+{其他可行方案及其 trade-off。聚焦每个方案的权衡，以及为什么当前方案在给定目标下更优。}
 ```
 
 ## Red Flags — STOP If You Catch Yourself Thinking
@@ -353,6 +309,7 @@ status: design-pending
 | "I can fill in the technical details myself" | You don't know the team's tech stack, infra constraints, or preferences. Ask. |
 | "This section is obvious, I'll skip the questions" | Every section has hidden constraints. Ask anyway. |
 | "I'll ask all questions at once to save time" | One question at a time. Batching overwhelms and gets shallow answers. |
+| "I can derive the trade-offs from the code" | Trade-offs are design decisions, not code facts. They must come from the user. Ask. |
 
 ## Constraints
 
