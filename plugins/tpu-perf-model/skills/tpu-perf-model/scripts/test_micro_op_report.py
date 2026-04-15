@@ -88,6 +88,9 @@ def _sample_mermaid_schedule():
         block_dims={"M": 128, "N": 128, "K": 128},
         num_tiles=2,
         double_buffer=True,
+        tile_input_bytes=65536,
+        tile_output_bytes=32768,
+        vmem_usage_bytes=196608,
     )
     graph = build_micro_op_graph_for_step(step, tile, step_idx=0)
     schedule = schedule_micro_op_graph(graph, TPU_V7X)
