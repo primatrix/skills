@@ -45,6 +45,23 @@ class TestFlashAttentionE2E(unittest.TestCase):
         data = json.loads(result.stdout)
         self.assertIn("steps", data)
 
+    def test_cli_runs_in_micro_mode(self):
+        scripts_dir = os.path.dirname(__file__)
+        example_path = os.path.join(scripts_dir, "examples", "flash_attention.json")
+        result = subprocess.run(
+            [
+                "python", os.path.join(scripts_dir, "cli.py"),
+                "--steps", example_path,
+                "--analysis-level", "micro",
+                "--format", "json",
+            ],
+            capture_output=True, text=True, cwd=scripts_dir,
+        )
+        self.assertEqual(result.returncode, 0, f"CLI failed: {result.stderr}")
+        data = json.loads(result.stdout)
+        self.assertIn("micro_ops", data)
+        self.assertIn("critical_path", data)
+
 
 if __name__ == "__main__":
     unittest.main()

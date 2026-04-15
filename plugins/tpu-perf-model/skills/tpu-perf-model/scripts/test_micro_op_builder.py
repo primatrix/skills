@@ -81,6 +81,48 @@ class TestMicroOpBuilder(unittest.TestCase):
         self.assertEqual(op_kinds.count("dma_load_hbm_to_vmem"), 2)
         self.assertEqual(op_kinds.count("dma_store_vmem_to_hbm"), 1)
 
+    def test_pipeline_keeps_op_ids_unique_across_steps(self):
+        from compute_step import ComputeStep, TensorRef
+        from micro_op_builder import build_micro_op_graph_for_pipeline
+        from pipeline_simulator import TileConfig
+
+        first = ComputeStep(
+            name="qk_matmul",
+            op_type="matmul",
+            inputs=[TensorRef("Q", (128, 128), "bf16"), TensorRef("K", (128, 128), "bf16")],
+            outputs=[TensorRef("S", (128, 128), "bf16")],
+            flops_formula="2*M*N*K",
+            flops_vars={"M": 128, "N": 128, "K": 128},
+            compute_unit="MXU",
+            fusable_with_prev=False,
+        )
+        second = ComputeStep(
+            name="sv_matmul",
+            op_type="matmul",
+            inputs=[TensorRef("S", (128, 128), "bf16"), TensorRef("V", (128, 128), "bf16")],
+            outputs=[TensorRef("O", (128, 128), "bf16")],
+            flops_formula="2*M*N*K",
+            flops_vars={"M": 128, "N": 128, "K": 128},
+            compute_unit="MXU",
+            fusable_with_prev=False,
+        )
+        tile = TileConfig(
+            block_dims={"M": 128, "N": 128, "K": 128},
+            num_tiles=1,
+            tile_input_bytes=128 * 128 * 2 * 2,
+            tile_output_bytes=128 * 128 * 2,
+            double_buffer=False,
+            vmem_usage_bytes=128 * 128 * 2 * 3,
+        )
+
+        graph = build_micro_op_graph_for_pipeline(
+            [first, second],
+            {"qk_matmul": tile, "sv_matmul": tile},
+        )
+
+        self.assertIn("qk_matmul_load_q_tile0", graph.micro_ops)
+        self.assertIn("sv_matmul_load_q_tile0", graph.micro_ops)
+
 
 if __name__ == "__main__":
     unittest.main()
