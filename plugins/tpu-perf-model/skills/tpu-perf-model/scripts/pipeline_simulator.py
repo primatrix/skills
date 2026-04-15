@@ -85,9 +85,8 @@ def simulate_step(
     # Fusion: skip re-reading inputs that came from previous step's output
     fusion_savings = 0
     if fused_with_prev and prev_output_bytes > 0:
-        fusion_savings = min(prev_output_bytes, step.total_input_bytes)
-        # Save both the read of fused input and the write from prev step
-        fusion_savings += min(prev_output_bytes, step.total_input_bytes)
+        # Fusion saves one HBM write from the previous op and one HBM read for this op.
+        fusion_savings = 2 * min(prev_output_bytes, step.total_input_bytes)
         hbm_bytes -= fusion_savings
         hbm_bytes = max(0, hbm_bytes)
 

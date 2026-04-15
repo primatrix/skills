@@ -128,7 +128,7 @@ Savings = 2 × intermediate_size_bytes / HBM_BW
 
 ```python
 def can_fuse(op_a, op_b, vpr_limit=32):
-    intermediate_vprs = ceil(op_a.output_elements / VPR_LANE_COUNT)
+    intermediate_vprs = math.ceil(op_a.output_elements / VPR_LANE_COUNT)
     fused_vprs = op_a.input_vprs + intermediate_vprs + op_b.output_vprs
     return fused_vprs <= vpr_limit
 ```
