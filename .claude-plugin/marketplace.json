@@ -69,6 +69,15 @@
       "license": "Apache-2.0",
       "keywords": ["gke", "tpu", "kubectl", "kubernetes", "jax"],
       "category": "infrastructure"
+    },
+    {
+      "name": "tpu-perf-model",
+      "source": "./plugins/tpu-perf-model",
+      "description": "Theoretical TPU v7x performance modeling via Register/VMEM/HBM data flow simulation",
+      "version": "1.0.0",
+      "license": "Apache-2.0",
+      "keywords": ["tpu", "performance", "modeling", "roofline", "pallas"],
+      "category": "performance"
     }
   ]
 }
