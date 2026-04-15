@@ -28,6 +28,18 @@ class TestHWParams(unittest.TestCase):
         from hw_params import TPU_V7X
         self.assertAlmostEqual(TPU_V7X.mxu_peak_flops, 2307e12)
 
+    def test_v7x_dma_engine_count(self):
+        from hw_params import TPU_V7X
+        self.assertEqual(TPU_V7X.dma_engine_count, 1)
+
+    def test_v7x_vpu_count(self):
+        from hw_params import TPU_V7X
+        self.assertEqual(TPU_V7X.vpu_count, 1)
+
+    def test_reg_group_count_aliases_vpr_count(self):
+        from hw_params import TPU_V7X
+        self.assertEqual(TPU_V7X.reg_group_count, TPU_V7X.vpr_count)
+
     def test_dtype_bytes(self):
         from hw_params import dtype_bytes
         self.assertEqual(dtype_bytes("bf16"), 2)
