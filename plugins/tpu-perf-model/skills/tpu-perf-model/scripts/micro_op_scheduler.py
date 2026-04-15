@@ -2,6 +2,7 @@
 """Schedule fragment-level micro-ops under resource constraints."""
 from __future__ import annotations
 
+from collections import deque
 from dataclasses import dataclass
 
 from hw_params import TPUParams
@@ -162,48 +163,61 @@ def schedule_micro_op_graph(graph: MicroOpGraph, hw: TPUParams) -> ScheduleResul
         "WAIT_VMEM": 0,
         "WAIT_REG": 0,
     }
+    dependency_count = {
+        op_id: len(op.depends_on)
+        for op_id, op in graph.micro_ops.items()
+    }
+    children: dict[str, list[str]] = {op_id: [] for op_id in graph.micro_ops}
+    for op_id, op in graph.micro_ops.items():
+        for dep in op.depends_on:
+            children[dep].append(op_id)
+    ready_ops = deque(
+        op_id for op_id, dep_count in dependency_count.items()
+        if dep_count == 0
+    )
 
-    pending = dict(graph.micro_ops)
-    while pending:
-        progress = False
-        for op_id, op in list(pending.items()):
-            if any(dep not in op_timings for dep in op.depends_on):
-                continue
+    scheduled_ops = 0
+    while ready_ops:
+        op_id = ready_ops.popleft()
+        op = graph.micro_ops[op_id]
 
-            dep_ready_ns = max((op_timings[dep].end_ns for dep in op.depends_on), default=0.0)
-            unit_ready_ns = dep_ready_ns
-            chosen_units: list[tuple[str, int]] = []
-            for unit in op.required_units:
-                unit_idx, ready_ns = _resource_ready_time(resource_busy_until, unit)
-                chosen_units.append((unit, unit_idx))
-                unit_ready_ns = max(unit_ready_ns, ready_ns)
-            slot_ready_ns = _named_resource_ready_time(vmem_busy_until, op.required_vmem_slots)
-            reg_ready_ns = _named_resource_ready_time(reg_busy_until, op.required_reg_groups)
+        dep_ready_ns = max((op_timings[dep].end_ns for dep in op.depends_on), default=0.0)
+        unit_ready_ns = dep_ready_ns
+        chosen_units: list[tuple[str, int]] = []
+        for unit in op.required_units:
+            unit_idx, ready_ns = _resource_ready_time(resource_busy_until, unit)
+            chosen_units.append((unit, unit_idx))
+            unit_ready_ns = max(unit_ready_ns, ready_ns)
+        slot_ready_ns = _named_resource_ready_time(vmem_busy_until, op.required_vmem_slots)
+        reg_ready_ns = _named_resource_ready_time(reg_busy_until, op.required_reg_groups)
 
-            start_ns = max(dep_ready_ns, unit_ready_ns, slot_ready_ns, reg_ready_ns)
-            end_ns = start_ns + op.latency_ns
-            op_timings[op_id] = OpTiming(start_ns=start_ns, end_ns=end_ns)
+        start_ns = max(dep_ready_ns, unit_ready_ns, slot_ready_ns, reg_ready_ns)
+        end_ns = start_ns + op.latency_ns
+        op_timings[op_id] = OpTiming(start_ns=start_ns, end_ns=end_ns)
 
-            for reason in _classify_wait(op, dep_ready_ns, unit_ready_ns, slot_ready_ns, reg_ready_ns):
-                stall_breakdown[reason] += 1
+        for reason in _classify_wait(op, dep_ready_ns, unit_ready_ns, slot_ready_ns, reg_ready_ns):
+            stall_breakdown[reason] += 1
 
-            for unit, unit_idx in chosen_units:
-                resource_busy_until[unit][unit_idx] = end_ns
-                _record_interval(resource_occupancy, f"{unit}:{unit_idx}", start_ns, end_ns, op_id)
+        for unit, unit_idx in chosen_units:
+            resource_busy_until[unit][unit_idx] = end_ns
+            _record_interval(resource_occupancy, f"{unit}:{unit_idx}", start_ns, end_ns, op_id)
 
-            for slot_name in op.required_vmem_slots:
-                vmem_busy_until[slot_name] = end_ns
-                _record_interval(resource_occupancy, f"VMEM:{slot_name}", start_ns, end_ns, op_id)
+        for slot_name in op.required_vmem_slots:
+            vmem_busy_until[slot_name] = end_ns
+            _record_interval(resource_occupancy, f"VMEM:{slot_name}", start_ns, end_ns, op_id)
 
-            for reg_name in op.required_reg_groups:
-                reg_busy_until[reg_name] = end_ns
-                _record_interval(resource_occupancy, f"REG:{reg_name}", start_ns, end_ns, op_id)
+        for reg_name in op.required_reg_groups:
+            reg_busy_until[reg_name] = end_ns
+            _record_interval(resource_occupancy, f"REG:{reg_name}", start_ns, end_ns, op_id)
 
-            del pending[op_id]
-            progress = True
+        scheduled_ops += 1
+        for child_id in children[op_id]:
+            dependency_count[child_id] -= 1
+            if dependency_count[child_id] == 0:
+                ready_ops.append(child_id)
 
-        if not progress:
-            raise ValueError("Micro-op graph contains unresolved dependencies or unsupported resource constraints")
+    if scheduled_ops != len(graph.micro_ops):
+        raise ValueError("Micro-op graph contains unresolved dependencies or unsupported resource constraints")
 
     total_time_ns = max((timing.end_ns for timing in op_timings.values()), default=0.0)
     return ScheduleResult(
