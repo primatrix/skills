@@ -10,8 +10,11 @@ import sys
 
 from compute_step import load_steps, load_steps_from_file
 from hw_params import TPU_V7X
+from micro_op_builder import build_micro_op_graph_for_pipeline
+from micro_op_report import micro_schedule_to_json, micro_schedule_to_text
+from micro_op_scheduler import schedule_micro_op_graph
 from pipeline_simulator import simulate_steps
-from tiling_optimizer import find_optimal_tiling_with_analysis
+from tiling_optimizer import find_optimal_tiling, find_optimal_tiling_with_analysis
 from gap_analyzer import analyze_eval_result, load_eval_result
 from report import pipeline_report_to_json, pipeline_report_to_text
 from report import comparison_report_to_text
@@ -22,16 +25,30 @@ def main():
     parser.add_argument("--steps", required=True, help="Path to ComputeSteps JSON file")
     parser.add_argument("--eval", help="Path to eval_result.json for gap analysis")
     parser.add_argument("--format", choices=["text", "json"], default="text", help="Output format")
+    parser.add_argument("--analysis-level", choices=["step", "micro"], default="step", help="Simulation depth")
+    parser.add_argument("--show-timeline", action="store_true", help="Show micro-op timeline details")
+    parser.add_argument("--show-residency", action="store_true", help="Show micro-op residency details")
+    parser.add_argument("--show-critical-path", action="store_true", help="Show micro-op critical path details")
     parser.add_argument("--tiling", action="store_true", help="Show detailed tiling analysis")
     args = parser.parse_args()
 
     steps = load_steps_from_file(args.steps)
     report = simulate_steps(steps, TPU_V7X)
+    step_results = json.loads(pipeline_report_to_json(report))["steps"]
 
-    if args.format == "json":
-        print(pipeline_report_to_json(report))
+    if args.analysis_level == "micro":
+        tile_configs = {step.name: find_optimal_tiling(step, TPU_V7X) for step in steps}
+        graph = build_micro_op_graph_for_pipeline(steps, tile_configs)
+        schedule = schedule_micro_op_graph(graph, TPU_V7X)
+        if args.format == "json":
+            print(micro_schedule_to_json(schedule, step_results))
+        else:
+            print(micro_schedule_to_text(schedule, step_results))
     else:
-        print(pipeline_report_to_text(report))
+        if args.format == "json":
+            print(pipeline_report_to_json(report))
+        else:
+            print(pipeline_report_to_text(report))
 
     if args.tiling:
         print("\n" + "=" * 70)

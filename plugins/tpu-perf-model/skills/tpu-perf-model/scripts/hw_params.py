@@ -18,6 +18,8 @@ class TPUParams:
     vpr_size_bytes: int
     mxu_peak_flops: float
     mxu_count: int
+    dma_engine_count: int
+    vpu_count: int
     alignment: int
 
     @property
@@ -27,6 +29,10 @@ class TPUParams:
     @property
     def vpr_lane_count(self) -> int:
         return self.vpr_size_bytes // 2
+
+    @property
+    def reg_group_count(self) -> int:
+        return self.vpr_count
 
     @property
     def ridge_point(self) -> float:
@@ -43,6 +49,8 @@ TPU_V7X = TPUParams(
     vpr_size_bytes=8 * 128 * 4,
     mxu_peak_flops=2307e12,
     mxu_count=2,
+    dma_engine_count=1,
+    vpu_count=1,
     alignment=128,
 )
 

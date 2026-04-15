@@ -25,9 +25,9 @@ Theoretical performance modeling tool for TPU v7x centered on the Register ↔ V
 | Ridge Point | ~625 FLOPs/byte |
 | Alignment | Block dims must be divisible by 128 |
 
-## Phase 1: Formula Decomposition
+## Layer A: Formula -> ComputeStep
 
-Given the user's math formula, decompose it into a list of `ComputeStep` objects.
+Given the user's math formula, decompose it into a list of `ComputeStep` objects. This layer defines the mathematical pipeline, the FLOPs model, and which steps can be fused before any fragment-level scheduling begins.
 
 ### FLOPs Reference Table
 
@@ -74,17 +74,57 @@ Write a JSON file with array of steps:
 
 Save to a temporary file, e.g., `steps.json`.
 
-## Phase 2: Run Simulation
+## Layer B: ComputeStep -> TensorFragment -> MicroOp -> Schedule
+
+After the `ComputeStep` list is defined, refine the analysis into fragment-level dataflow. Your job is to explain the schedule as a resource-constrained mathematical model, not as a vague optimization intuition.
+
+At this layer, you must explicitly reason about:
+
+- Which tensor fragments or tiles exist at each stage
+- Which fragments live in `HBM`, `VMEM`, and `REG`
+- Which `DMA`, `MXU`, and `VPU` micro-ops consume each fragment
+- Which dependencies block later micro-ops from issuing
+- Which fragments are retained, evicted, or reloaded under VMEM pressure
+- Why the reported critical path determines total latency
+
+When describing the optimal schedule, use the VMEM and register constraints directly:
+
+- `sum(vmem_live_bytes(t)) <= VMEM_CAPACITY`
+- `sum(reg_groups_live(t)) <= REG_GROUP_CAPACITY`
+- `start(B) >= end(A)` for each dependency edge `A -> B`
+- `makespan = max(end(op_i))`
+
+The point of this layer is to answer:
+
+- At time `t`, which data is in registers?
+- Which buffer slots are occupied?
+- Which compute unit is active or stalled?
+- Why is this schedule optimal or near-optimal under the current VMEM limit?
+
+## Run Simulation
 
 ```bash
 # Basic analysis
 python scripts/cli.py --steps steps.json
 
-# With detailed tiling analysis
-python scripts/cli.py --steps steps.json --tiling
-
 # JSON output
 python scripts/cli.py --steps steps.json --format json
+
+# Micro-op analysis
+python scripts/cli.py --steps steps.json --analysis-level micro
+
+# Micro-op JSON output
+python scripts/cli.py --steps steps.json --format json \
+  --analysis-level \
+  micro
+
+# Micro-op analysis with timeline details
+python scripts/cli.py --steps steps.json --show-timeline \
+  --analysis-level \
+  micro
+
+# With detailed tiling analysis
+python scripts/cli.py --steps steps.json --tiling
 
 # Compare with measured profile data
 python scripts/cli.py --steps steps.json --eval eval_result.json
@@ -92,7 +132,7 @@ python scripts/cli.py --steps steps.json --eval eval_result.json
 
 The `scripts/` directory is at: `plugins/tpu-perf-model/skills/tpu-perf-model/scripts/`
 
-## Phase 3: Interpret Results
+## Interpret Results
 
 ### Per-Step Analysis
 
@@ -114,7 +154,32 @@ For each step, the report shows:
 | Fusion savings > 0 | Verify fusion is implemented in actual kernel |
 | Low efficiency vs peak | Multiple optimization opportunities exist |
 
-## Phase 4: Gap Analysis (Optional)
+### Micro-Op Analysis
+
+When using micro-op mode, interpret the report as a fragment-level execution plan:
+
+- **Timeline**: the ordered micro-op schedule with start and end times
+- **Residency and Occupancy**: which `VMEM` slots, register groups, and units are active over time
+- **Critical Path**: the dependency chain that determines total makespan
+- **Stall Breakdown**: whether time is lost to `WAIT_DATA`, `WAIT_UNIT`, `WAIT_VMEM`, or `WAIT_REG`
+- **Optimization Hints**: which resource or dependency bottleneck should be attacked first
+
+Use this mode when the user asks for finer-grained dataflow, explicit dependency reasoning, or a proof-like explanation of why one schedule is faster than another.
+
+## Required Output Sections
+
+When you answer with the micro-op model, use these sections in order:
+
+1. Fragment Inventory
+2. Micro-Op Expansion
+3. Residency Timeline
+4. Dependency Graph
+5. Critical Path
+6. Optimality Argument Under VMEM Constraint
+
+Do not collapse this into a generic summary. The point is to make the dataflow explicit enough that the user can see which fragments, units, and constraints control performance.
+
+## Gap Analysis (Optional)
 
 When comparing against `eval_result.json` from pallas-evolve profiling:
 
