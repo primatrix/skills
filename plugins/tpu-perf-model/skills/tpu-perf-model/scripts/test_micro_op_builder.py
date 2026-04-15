@@ -37,6 +37,50 @@ class TestMicroOpBuilder(unittest.TestCase):
         self.assertIn("reg_to_vmem", op_kinds)
         self.assertIn("dma_store_vmem_to_hbm", op_kinds)
 
+    def test_fused_elementwise_reuses_previous_fragment(self):
+        from compute_step import ComputeStep, TensorRef
+        from micro_op_builder import build_micro_op_graph_for_pipeline
+        from pipeline_simulator import TileConfig
+
+        matmul = ComputeStep(
+            name="qk_matmul",
+            op_type="matmul",
+            inputs=[TensorRef("Q", (128, 128), "bf16"), TensorRef("K", (128, 128), "bf16")],
+            outputs=[TensorRef("S", (128, 128), "bf16")],
+            flops_formula="2*M*N*K",
+            flops_vars={"M": 128, "N": 128, "K": 128},
+            compute_unit="MXU",
+            fusable_with_prev=False,
+        )
+        scale = ComputeStep(
+            name="scale_scores",
+            op_type="elementwise",
+            inputs=[TensorRef("S", (128, 128), "bf16")],
+            outputs=[TensorRef("S_scaled", (128, 128), "bf16")],
+            flops_formula="M*N",
+            flops_vars={"M": 128, "N": 128},
+            compute_unit="VPU",
+            fusable_with_prev=True,
+        )
+        tile = TileConfig(
+            block_dims={"M": 128, "N": 128, "K": 128},
+            num_tiles=1,
+            tile_input_bytes=128 * 128 * 2 * 2,
+            tile_output_bytes=128 * 128 * 2,
+            double_buffer=False,
+            vmem_usage_bytes=128 * 128 * 2 * 3,
+        )
+
+        graph = build_micro_op_graph_for_pipeline(
+            [matmul, scale],
+            {"qk_matmul": tile, "scale_scores": tile},
+        )
+        op_kinds = [op.op_kind for op in graph.micro_ops.values()]
+
+        self.assertIn("vpu_compute", op_kinds)
+        self.assertEqual(op_kinds.count("dma_load_hbm_to_vmem"), 2)
+        self.assertEqual(op_kinds.count("dma_store_vmem_to_hbm"), 1)
+
 
 if __name__ == "__main__":
     unittest.main()

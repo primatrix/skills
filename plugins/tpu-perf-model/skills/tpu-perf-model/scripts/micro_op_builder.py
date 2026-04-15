@@ -215,3 +215,164 @@ def build_micro_op_graph_for_step(step: ComputeStep, tile: TileConfig) -> MicroO
         )
 
     return MicroOpGraph(fragments=fragments, micro_ops=micro_ops)
+
+
+def _merge_graphs(target: MicroOpGraph, source: MicroOpGraph) -> None:
+    target.fragments.update(source.fragments)
+    target.micro_ops.update(source.micro_ops)
+
+
+def _remove_trailing_store(graph: MicroOpGraph, step: ComputeStep, tile_idx: int) -> str:
+    suffix = _tile_suffix(tile_idx)
+    store_id = f"store_{suffix}"
+    out_hbm = f"{step.outputs[0].name}_{suffix}_hbm"
+    if store_id in graph.micro_ops:
+        del graph.micro_ops[store_id]
+    graph.fragments.pop(out_hbm, None)
+    return f"{step.outputs[0].name}_{suffix}_vmem"
+
+
+def _append_fused_elementwise_step(
+    graph: MicroOpGraph,
+    prev_step: ComputeStep,
+    step: ComputeStep,
+    tile: TileConfig,
+) -> None:
+    numel = step.outputs[0].numel // max(tile.num_tiles, 1)
+    bytes_per_fragment = step.outputs[0].size_bytes // max(tile.num_tiles, 1)
+
+    for tile_idx in range(tile.num_tiles):
+        suffix = _tile_suffix(tile_idx)
+        input_vmem = _remove_trailing_store(graph, prev_step, tile_idx)
+        input_reg = f"{step.inputs[0].name}_{suffix}_reg"
+        output_reg = f"{step.outputs[0].name}_{suffix}_reg"
+        output_vmem = f"{step.outputs[0].name}_{suffix}_vmem"
+        output_hbm = f"{step.outputs[0].name}_{suffix}_hbm"
+
+        _add_fragment(
+            graph.fragments,
+            input_reg,
+            step.inputs[0].name,
+            step.name,
+            (numel,),
+            step.inputs[0].dtype,
+            bytes_per_fragment,
+            "REG",
+        )
+        _add_fragment(
+            graph.fragments,
+            output_reg,
+            step.outputs[0].name,
+            step.name,
+            (numel,),
+            step.outputs[0].dtype,
+            bytes_per_fragment,
+            "REG",
+        )
+        _add_fragment(
+            graph.fragments,
+            output_vmem,
+            step.outputs[0].name,
+            step.name,
+            step.outputs[0].shape,
+            step.outputs[0].dtype,
+            bytes_per_fragment,
+            "VMEM",
+        )
+        _add_fragment(
+            graph.fragments,
+            output_hbm,
+            step.outputs[0].name,
+            step.name,
+            step.outputs[0].shape,
+            step.outputs[0].dtype,
+            bytes_per_fragment,
+            "HBM",
+        )
+
+        input_slot = _buffer_slot("out", tile_idx, tile.double_buffer)
+        output_slot = _buffer_slot("fused_out", tile_idx, tile.double_buffer)
+        input_reg_group = _reg_group("fused_in", tile_idx, tile.double_buffer)
+        output_reg_group = _reg_group("fused_out", tile_idx, tile.double_buffer)
+
+        move_in = f"vmem_to_reg_{step.name}_{suffix}"
+        vpu = f"vpu_{step.name}_{suffix}"
+        spill = f"reg_to_vmem_{step.name}_{suffix}"
+        store = f"store_{step.name}_{suffix}"
+
+        producer_candidates = [
+            op_id for op_id, op in graph.micro_ops.items()
+            if input_vmem in op.output_fragments
+        ]
+        depends_on = sorted(producer_candidates)
+
+        _add_micro_op(
+            graph.micro_ops,
+            move_in,
+            step.name,
+            "vmem_to_reg",
+            depends_on,
+            [input_vmem],
+            [input_reg],
+            (),
+            (input_slot,),
+            (input_reg_group,),
+        )
+        _add_micro_op(
+            graph.micro_ops,
+            vpu,
+            step.name,
+            "vpu_compute",
+            [move_in],
+            [input_reg],
+            [output_reg],
+            ("VPU",),
+            (),
+            (input_reg_group, output_reg_group),
+        )
+        _add_micro_op(
+            graph.micro_ops,
+            spill,
+            step.name,
+            "reg_to_vmem",
+            [vpu],
+            [output_reg],
+            [output_vmem],
+            (),
+            (output_slot,),
+            (output_reg_group,),
+        )
+        _add_micro_op(
+            graph.micro_ops,
+            store,
+            step.name,
+            "dma_store_vmem_to_hbm",
+            [spill],
+            [output_vmem],
+            [output_hbm],
+            ("DMA",),
+            (output_slot,),
+            (),
+        )
+
+
+def build_micro_op_graph_for_pipeline(
+    steps: list[ComputeStep],
+    tile_configs: dict[str, TileConfig],
+) -> MicroOpGraph:
+    """Expand a step pipeline into one micro-op graph."""
+    if not steps:
+        return MicroOpGraph(fragments={}, micro_ops={})
+
+    graph = build_micro_op_graph_for_step(steps[0], tile_configs[steps[0].name])
+    prev_step = steps[0]
+
+    for step in steps[1:]:
+        tile = tile_configs[step.name]
+        if step.fusable_with_prev and step.op_type == "elementwise":
+            _append_fused_elementwise_step(graph, prev_step, step, tile)
+        else:
+            _merge_graphs(graph, build_micro_op_graph_for_step(step, tile))
+        prev_step = step
+
+    return graph
