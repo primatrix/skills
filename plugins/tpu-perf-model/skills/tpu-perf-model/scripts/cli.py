@@ -10,7 +10,7 @@ import sys
 from compute_step import load_steps, load_steps_from_file
 from hw_params import TPU_V7X
 from micro_op_builder import build_micro_op_graph_for_pipeline
-from micro_op_report import micro_schedule_to_json, micro_schedule_to_text
+from micro_op_report import micro_schedule_to_json, micro_schedule_to_mermaid, micro_schedule_to_text
 from micro_op_scheduler import schedule_micro_op_graph
 from pipeline_simulator import simulate_steps
 from tiling_optimizer import find_optimal_tiling, find_optimal_tiling_with_analysis
@@ -29,11 +29,16 @@ def main():
     parser.add_argument("--show-residency", action="store_true", help="Show micro-op residency details")
     parser.add_argument("--show-critical-path", action="store_true", help="Show micro-op critical path details")
     parser.add_argument("--tiling", action="store_true", help="Show detailed tiling analysis")
+    parser.add_argument("--mermaid", action="store_true", help="Output Mermaid Gantt pipeline diagram (micro mode only)")
+    parser.add_argument("--max-tiles", type=int, default=3, help="Max tiles to show in Mermaid diagram (default: 3)")
     args = parser.parse_args()
 
     steps = load_steps_from_file(args.steps)
     report = simulate_steps(steps, TPU_V7X)
     step_results = [_step_to_dict(step_result) for step_result in report.steps]
+
+    if args.mermaid and args.analysis_level != "micro":
+        parser.error("--mermaid requires --analysis-level micro")
 
     if args.analysis_level == "micro":
         tile_configs = [find_optimal_tiling(step, TPU_V7X) for step in steps]
@@ -43,6 +48,9 @@ def main():
             print(micro_schedule_to_json(schedule, step_results))
         else:
             print(micro_schedule_to_text(schedule, step_results))
+        if args.mermaid:
+            print()
+            print(micro_schedule_to_mermaid(schedule, graph, max_tiles=args.max_tiles))
     else:
         if args.format == "json":
             print(pipeline_report_to_json(report))
