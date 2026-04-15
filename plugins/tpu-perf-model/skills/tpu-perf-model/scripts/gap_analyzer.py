@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from pipeline_simulator import PipelineReport
 
@@ -24,6 +24,8 @@ class ComparisonReport:
     gaps: list[GapEntry]
     top_opportunities: list[str]
     achievable_speedup: float
+    theoretical_time_ns: float
+    measured_time_ns: float
 
 
 _DIAGNOSES = {
@@ -137,6 +139,8 @@ def analyze_eval_result(theoretical: PipelineReport, eval_result: dict) -> Compa
         gaps=gaps,
         top_opportunities=opportunities,
         achievable_speedup=achievable_speedup,
+        theoretical_time_ns=theoretical.total_time_ns,
+        measured_time_ns=measured_time_ns,
     )
 
 

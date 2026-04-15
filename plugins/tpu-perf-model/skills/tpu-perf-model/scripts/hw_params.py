@@ -4,7 +4,6 @@
 All values are for a single TPU v7x chip.
 """
 from dataclasses import dataclass
-import math
 
 
 @dataclass(frozen=True)

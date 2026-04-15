@@ -8,8 +8,7 @@ Takes a list of ComputeStep and produces timing analysis with:
 """
 from __future__ import annotations
 
-import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from compute_step import ComputeStep
 from hw_params import TPUParams
@@ -73,106 +72,6 @@ class PipelineReport:
     efficiency_vs_peak: float
 
 
-def _find_tile_config(step: ComputeStep, hw: TPUParams) -> TileConfig:
-    """Find a tile configuration that fits in VMEM, enabling double buffering if possible."""
-    vmem = hw.vmem_capacity_bytes
-    total_input = step.total_input_bytes
-    total_output = step.total_output_bytes
-
-    if step.op_type == "matmul":
-        # Try tiling along M dimension for matmul
-        M = step.flops_vars.get("M", 1)
-        N = step.flops_vars.get("N", 1)
-        K = step.flops_vars.get("K", 1)
-        dtype_b = step.inputs[0].size_bytes // (step.inputs[0].numel or 1)
-
-        # Find smallest tile along M that fits in VMEM with double buffering
-        # and produces multiple tiles (needed for overlap).
-        # First pass: find all valid tile sizes, prefer ones with num_tiles > 1.
-        best = None
-        tile_m = M
-        while tile_m >= 1:
-            tile_in = (tile_m * K + K * N) * dtype_b
-            tile_out = (tile_m * N) * dtype_b
-            db_vmem = 2 * tile_in + tile_out
-            if db_vmem <= vmem:
-                num_tiles = math.ceil(M / tile_m)
-                if num_tiles > 1:
-                    return TileConfig(
-                        block_dims={"M": tile_m, "N": N, "K": K},
-                        num_tiles=num_tiles,
-                        tile_input_bytes=tile_in,
-                        tile_output_bytes=tile_out,
-                        double_buffer=True,
-                        vmem_usage_bytes=db_vmem,
-                    )
-                elif best is None:
-                    best = (tile_m, tile_in, tile_out, db_vmem)
-            tile_m //= 2
-
-        # Only 1 tile fits — no double buffering possible
-        if best:
-            tile_m, tile_in, tile_out, db_vmem = best
-            return TileConfig(
-                block_dims={"M": tile_m, "N": N, "K": K},
-                num_tiles=1,
-                tile_input_bytes=tile_in,
-                tile_output_bytes=tile_out,
-                double_buffer=False,
-                vmem_usage_bytes=tile_in + tile_out,
-            )
-
-        # Fallback: single tile, no double buffer
-        return TileConfig(
-            block_dims={"M": 1, "N": N, "K": K},
-            num_tiles=M,
-            tile_input_bytes=(K + K * N) * dtype_b,
-            tile_output_bytes=N * dtype_b,
-            double_buffer=M > 1,
-            vmem_usage_bytes=(2 * (K + K * N) + N) * dtype_b,
-        )
-
-    else:
-        # Elementwise / other: tile along first dim
-        shape = step.inputs[0].shape
-        numel = step.inputs[0].numel
-        dtype_b = step.inputs[0].size_bytes // numel if numel else 1
-
-        tile_elems = numel
-        first_dim = shape[0] if shape else 1
-        tile_first = first_dim
-
-        while tile_first > 1:
-            tile_elems = (numel // first_dim) * tile_first
-            tile_in = tile_elems * dtype_b * len(step.inputs)
-            tile_out = tile_elems * dtype_b * len(step.outputs)
-            db_vmem = 2 * tile_in + tile_out
-            if db_vmem <= vmem:
-                num_tiles = math.ceil(first_dim / tile_first)
-                double_buffer = num_tiles > 1
-                usage = db_vmem if double_buffer else (tile_in + tile_out)
-                return TileConfig(
-                    block_dims={"dim0": tile_first},
-                    num_tiles=num_tiles,
-                    tile_input_bytes=tile_in,
-                    tile_output_bytes=tile_out,
-                    double_buffer=double_buffer,
-                    vmem_usage_bytes=usage,
-                )
-            tile_first //= 2
-
-        tile_in = total_input
-        tile_out = total_output
-        return TileConfig(
-            block_dims={"dim0": 1},
-            num_tiles=first_dim,
-            tile_input_bytes=tile_in // first_dim,
-            tile_output_bytes=tile_out // first_dim,
-            double_buffer=first_dim > 1,
-            vmem_usage_bytes=2 * (tile_in // first_dim) + tile_out // first_dim,
-        )
-
-
 def simulate_step(
     step: ComputeStep,
     hw: TPUParams,
@@ -190,6 +89,7 @@ def simulate_step(
         # Save both the read of fused input and the write from prev step
         fusion_savings += min(prev_output_bytes, step.total_input_bytes)
         hbm_bytes -= fusion_savings
+        hbm_bytes = max(0, hbm_bytes)
 
     t_hbm_ns = calc_dma_time_ns(hbm_bytes, hw)
 
@@ -198,7 +98,8 @@ def simulate_step(
     else:
         t_compute_ns = calc_vpu_time_ns(flops, hw)
 
-    tile_config = _find_tile_config(step, hw)
+    from tiling_optimizer import find_optimal_tiling
+    tile_config = find_optimal_tiling(step, hw)
 
     # Pipeline timing with double buffering
     if tile_config.double_buffer and tile_config.num_tiles > 1:

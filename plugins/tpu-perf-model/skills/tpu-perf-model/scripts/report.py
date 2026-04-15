@@ -114,5 +114,7 @@ def comparison_report_to_text(report: ComparisonReport) -> str:
         lines.append("")
 
     lines.append(f"Achievable speedup: {report.achievable_speedup:.2f}x")
+    lines.append(f"Theoretical time: {_format_ns(report.theoretical_time_ns)}")
+    lines.append(f"Measured time: {_format_ns(report.measured_time_ns)}")
 
     return "\n".join(lines)
