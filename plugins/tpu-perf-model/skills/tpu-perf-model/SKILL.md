@@ -123,6 +123,12 @@ python scripts/cli.py --steps steps.json --show-timeline \
   --analysis-level \
   micro
 
+# Micro-op analysis with pipeline diagram
+python scripts/cli.py --steps steps.json --analysis-level micro --mermaid
+
+# Pipeline diagram showing first 5 tiles
+python scripts/cli.py --steps steps.json --analysis-level micro --mermaid --max-tiles 5
+
 # With detailed tiling analysis
 python scripts/cli.py --steps steps.json --tiling
 
@@ -178,6 +184,28 @@ When you answer with the micro-op model, use these sections in order:
 6. Optimality Argument Under VMEM Constraint
 
 Do not collapse this into a generic summary. The point is to make the dataflow explicit enough that the user can see which fragments, units, and constraints control performance.
+
+## Output Language
+
+When writing analysis conclusions, use **Chinese** for all narrative text:
+- Section headers, bottleneck diagnoses, optimization recommendations, and summary conclusions: 用中文
+- Technical terms (HBM, VMEM, MXU, VPU, DMA, FLOPS, roofline) keep English spelling
+- Numeric data, formulas, units (ns, us, ms, GB/s, TFLOPS), and code blocks remain unchanged
+
+## Pipeline Diagram
+
+When using micro-op analysis, ALWAYS include the Mermaid pipeline diagram by adding `--mermaid` to the CLI command:
+
+```bash
+python scripts/cli.py --steps steps.json --analysis-level micro --mermaid
+```
+
+Include the generated Mermaid Gantt block in your output. The diagram shows the first 3 tiles by default (startup + steady-state overlap). Use `--max-tiles N` to adjust.
+
+The diagram groups micro-ops by execution unit (DMA / MXU / VPU) and visually shows:
+- Which operations overlap across different units (pipeline parallelism)
+- Where stalls create gaps between bars
+- How double-buffering enables tile overlap
 
 ## Gap Analysis (Optional)
 
