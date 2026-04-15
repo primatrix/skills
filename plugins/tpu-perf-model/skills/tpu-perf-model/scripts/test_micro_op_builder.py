@@ -73,7 +73,7 @@ class TestMicroOpBuilder(unittest.TestCase):
 
         graph = build_micro_op_graph_for_pipeline(
             [matmul, scale],
-            {"qk_matmul": tile, "scale_scores": tile},
+            [tile, tile],
         )
         op_kinds = [op.op_kind for op in graph.micro_ops.values()]
 
@@ -117,11 +117,154 @@ class TestMicroOpBuilder(unittest.TestCase):
 
         graph = build_micro_op_graph_for_pipeline(
             [first, second],
-            {"qk_matmul": tile, "sv_matmul": tile},
+            [tile, tile],
         )
 
-        self.assertIn("qk_matmul_load_q_tile0", graph.micro_ops)
-        self.assertIn("sv_matmul_load_q_tile0", graph.micro_ops)
+        self.assertIn("s0_qk_matmul_load_q_tile0", graph.micro_ops)
+        self.assertIn("s1_sv_matmul_load_q_tile0", graph.micro_ops)
+
+    def test_pipeline_supports_duplicate_step_names(self):
+        from compute_step import ComputeStep, TensorRef
+        from micro_op_builder import build_micro_op_graph_for_pipeline
+        from pipeline_simulator import TileConfig
+
+        first = ComputeStep(
+            name="matmul",
+            op_type="matmul",
+            inputs=[TensorRef("Q", (128, 128), "bf16"), TensorRef("K", (128, 128), "bf16")],
+            outputs=[TensorRef("S", (128, 128), "bf16")],
+            flops_formula="2*M*N*K",
+            flops_vars={"M": 128, "N": 128, "K": 128},
+            compute_unit="MXU",
+            fusable_with_prev=False,
+        )
+        second = ComputeStep(
+            name="matmul",
+            op_type="matmul",
+            inputs=[TensorRef("S", (128, 128), "bf16"), TensorRef("V", (128, 128), "bf16")],
+            outputs=[TensorRef("O", (128, 128), "bf16")],
+            flops_formula="2*M*N*K",
+            flops_vars={"M": 128, "N": 128, "K": 128},
+            compute_unit="MXU",
+            fusable_with_prev=False,
+        )
+        tile = TileConfig(
+            block_dims={"M": 128, "N": 128, "K": 128},
+            num_tiles=1,
+            tile_input_bytes=128 * 128 * 2 * 2,
+            tile_output_bytes=128 * 128 * 2,
+            double_buffer=False,
+            vmem_usage_bytes=128 * 128 * 2 * 3,
+        )
+
+        graph = build_micro_op_graph_for_pipeline([first, second], [tile, tile])
+
+        self.assertIn("s0_matmul_load_q_tile0", graph.micro_ops)
+        self.assertIn("s1_matmul_load_q_tile0", graph.micro_ops)
+
+    def test_fused_step_uses_previous_tile_buffering_for_input_slot(self):
+        from compute_step import ComputeStep, TensorRef
+        from micro_op_builder import build_micro_op_graph_for_pipeline
+        from pipeline_simulator import TileConfig
+
+        prev_step = ComputeStep(
+            name="producer",
+            op_type="matmul",
+            inputs=[TensorRef("Q", (256, 128), "bf16"), TensorRef("K", (128, 256), "bf16")],
+            outputs=[TensorRef("S", (256, 256), "bf16")],
+            flops_formula="2*M*N*K",
+            flops_vars={"M": 256, "N": 256, "K": 128},
+            compute_unit="MXU",
+            fusable_with_prev=False,
+        )
+        fused_step = ComputeStep(
+            name="consumer",
+            op_type="elementwise",
+            inputs=[TensorRef("S", (256, 256), "bf16")],
+            outputs=[TensorRef("S2", (256, 256), "bf16")],
+            flops_formula="M*N",
+            flops_vars={"M": 256, "N": 256},
+            compute_unit="VPU",
+            fusable_with_prev=True,
+        )
+        prev_tile = TileConfig(
+            block_dims={"M": 128, "N": 128, "K": 128},
+            num_tiles=4,
+            tile_input_bytes=128 * 128 * 2 * 2,
+            tile_output_bytes=128 * 128 * 2,
+            double_buffer=False,
+            vmem_usage_bytes=128 * 128 * 2 * 3,
+        )
+        fused_tile = TileConfig(
+            block_dims={"dim0": 16384},
+            num_tiles=4,
+            tile_input_bytes=16384 * 2,
+            tile_output_bytes=16384 * 2,
+            double_buffer=True,
+            vmem_usage_bytes=16384 * 2 * 3,
+        )
+
+        graph = build_micro_op_graph_for_pipeline([prev_step, fused_step], [prev_tile, fused_tile])
+        move_in = graph.micro_ops["s1_consumer_vmem_to_reg_tile1"]
+
+        self.assertEqual(move_in.required_vmem_slots, ("out_slot0",))
+
+    def test_unfused_dependencies_link_all_inputs(self):
+        from compute_step import ComputeStep, TensorRef
+        from micro_op_builder import build_micro_op_graph_for_pipeline
+        from pipeline_simulator import TileConfig
+
+        lhs = ComputeStep(
+            name="lhs",
+            op_type="elementwise",
+            inputs=[TensorRef("A0", (128, 128), "bf16")],
+            outputs=[TensorRef("A", (128, 128), "bf16")],
+            flops_formula="M*N",
+            flops_vars={"M": 128, "N": 128},
+            compute_unit="VPU",
+            fusable_with_prev=False,
+        )
+        rhs = ComputeStep(
+            name="rhs",
+            op_type="elementwise",
+            inputs=[TensorRef("B0", (128, 128), "bf16")],
+            outputs=[TensorRef("B", (128, 128), "bf16")],
+            flops_formula="M*N",
+            flops_vars={"M": 128, "N": 128},
+            compute_unit="VPU",
+            fusable_with_prev=False,
+        )
+        matmul = ComputeStep(
+            name="combine",
+            op_type="matmul",
+            inputs=[TensorRef("A", (128, 128), "bf16"), TensorRef("B", (128, 128), "bf16")],
+            outputs=[TensorRef("C", (128, 128), "bf16")],
+            flops_formula="2*M*N*K",
+            flops_vars={"M": 128, "N": 128, "K": 128},
+            compute_unit="MXU",
+            fusable_with_prev=False,
+        )
+        vpu_tile = TileConfig(
+            block_dims={"dim0": 16384},
+            num_tiles=1,
+            tile_input_bytes=16384 * 2,
+            tile_output_bytes=16384 * 2,
+            double_buffer=False,
+            vmem_usage_bytes=16384 * 2 * 2,
+        )
+        mm_tile = TileConfig(
+            block_dims={"M": 128, "N": 128, "K": 128},
+            num_tiles=1,
+            tile_input_bytes=128 * 128 * 2 * 2,
+            tile_output_bytes=128 * 128 * 2,
+            double_buffer=False,
+            vmem_usage_bytes=128 * 128 * 2 * 3,
+        )
+
+        graph = build_micro_op_graph_for_pipeline([lhs, rhs, matmul], [vpu_tile, vpu_tile, mm_tile])
+
+        self.assertIn("s0_lhs_store_tile0", graph.micro_ops["s2_combine_load_q_tile0"].depends_on)
+        self.assertIn("s1_rhs_store_tile0", graph.micro_ops["s2_combine_load_k_tile0"].depends_on)
 
 
 if __name__ == "__main__":

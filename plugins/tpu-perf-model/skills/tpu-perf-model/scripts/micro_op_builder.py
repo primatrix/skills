@@ -12,6 +12,16 @@ def _tile_suffix(tile_idx: int) -> str:
     return f"tile{tile_idx}"
 
 
+def _step_token(step: ComputeStep, step_idx: int | None) -> str:
+    if step_idx is None:
+        return step.name
+    return f"s{step_idx}_{step.name}"
+
+
+def _fragment_id(step_token: str, tensor_name: str, suffix: str, level: str) -> str:
+    return f"{step_token}_{tensor_name}_{suffix}_{level.lower()}"
+
+
 def _buffer_slot(prefix: str, tile_idx: int, double_buffer: bool) -> str:
     slot_idx = tile_idx % 2 if double_buffer else 0
     return f"{prefix}_slot{slot_idx}"
@@ -72,18 +82,23 @@ def _add_micro_op(
     )
 
 
-def build_micro_op_graph_for_step(step: ComputeStep, tile: TileConfig) -> MicroOpGraph:
+def build_micro_op_graph_for_step(
+    step: ComputeStep,
+    tile: TileConfig,
+    step_idx: int | None = None,
+) -> MicroOpGraph:
     """Expand one tiled step into a fragment-level micro-op graph."""
     if step.op_type == "matmul":
-        return _build_matmul_graph(step, tile)
-    return _build_vpu_graph(step, tile)
+        return _build_matmul_graph(step, tile, step_idx)
+    return _build_vpu_graph(step, tile, step_idx)
 
 
-def _build_matmul_graph(step: ComputeStep, tile: TileConfig) -> MicroOpGraph:
+def _build_matmul_graph(step: ComputeStep, tile: TileConfig, step_idx: int | None) -> MicroOpGraph:
     """Expand one tiled matmul step into a fragment-level micro-op graph."""
 
     fragments: dict[str, TensorFragment] = {}
     micro_ops: dict[str, MicroOp] = {}
+    step_token = _step_token(step, step_idx)
 
     bm = tile.block_dims.get("M", 1)
     bn = tile.block_dims.get("N", 1)
@@ -97,17 +112,17 @@ def _build_matmul_graph(step: ComputeStep, tile: TileConfig) -> MicroOpGraph:
     for tile_idx in range(tile.num_tiles):
         suffix = _tile_suffix(tile_idx)
 
-        q_hbm = f"{step.inputs[0].name}_{suffix}_hbm"
-        q_vmem = f"{step.inputs[0].name}_{suffix}_vmem"
-        q_reg = f"{step.inputs[0].name}_{suffix}_reg"
+        q_hbm = _fragment_id(step_token, step.inputs[0].name, suffix, "hbm")
+        q_vmem = _fragment_id(step_token, step.inputs[0].name, suffix, "vmem")
+        q_reg = _fragment_id(step_token, step.inputs[0].name, suffix, "reg")
 
-        k_hbm = f"{step.inputs[1].name}_{suffix}_hbm"
-        k_vmem = f"{step.inputs[1].name}_{suffix}_vmem"
-        k_reg = f"{step.inputs[1].name}_{suffix}_reg"
+        k_hbm = _fragment_id(step_token, step.inputs[1].name, suffix, "hbm")
+        k_vmem = _fragment_id(step_token, step.inputs[1].name, suffix, "vmem")
+        k_reg = _fragment_id(step_token, step.inputs[1].name, suffix, "reg")
 
-        acc_reg = f"{step.outputs[0].name}_{suffix}_acc"
-        out_vmem = f"{step.outputs[0].name}_{suffix}_vmem"
-        out_hbm = f"{step.outputs[0].name}_{suffix}_hbm"
+        acc_reg = _fragment_id(step_token, step.outputs[0].name, suffix, "acc")
+        out_vmem = _fragment_id(step_token, step.outputs[0].name, suffix, "vmem")
+        out_hbm = _fragment_id(step_token, step.outputs[0].name, suffix, "hbm")
 
         _add_fragment(fragments, q_hbm, step.inputs[0].name, step.name, (bm, bk), dtype, bytes_per_input, "HBM")
         _add_fragment(fragments, q_vmem, step.inputs[0].name, step.name, (bm, bk), dtype, bytes_per_input, "VMEM")
@@ -128,13 +143,13 @@ def _build_matmul_graph(step: ComputeStep, tile: TileConfig) -> MicroOpGraph:
         k_reg_group = _reg_group("k", tile_idx, tile.double_buffer)
         acc_reg_group = _reg_group("acc", tile_idx, tile.double_buffer)
 
-        load_q = f"{step.name}_load_q_{suffix}"
-        load_k = f"{step.name}_load_k_{suffix}"
-        move_q = f"{step.name}_vmem_to_reg_q_{suffix}"
-        move_k = f"{step.name}_vmem_to_reg_k_{suffix}"
-        mxu = f"{step.name}_mxu_{suffix}"
-        spill = f"{step.name}_reg_to_vmem_{suffix}"
-        store = f"{step.name}_store_{suffix}"
+        load_q = f"{step_token}_load_q_{suffix}"
+        load_k = f"{step_token}_load_k_{suffix}"
+        move_q = f"{step_token}_vmem_to_reg_q_{suffix}"
+        move_k = f"{step_token}_vmem_to_reg_k_{suffix}"
+        mxu = f"{step_token}_mxu_{suffix}"
+        spill = f"{step_token}_reg_to_vmem_{suffix}"
+        store = f"{step_token}_store_{suffix}"
 
         _add_micro_op(
             micro_ops,
@@ -224,10 +239,11 @@ def _build_matmul_graph(step: ComputeStep, tile: TileConfig) -> MicroOpGraph:
     return MicroOpGraph(fragments=fragments, micro_ops=micro_ops)
 
 
-def _build_vpu_graph(step: ComputeStep, tile: TileConfig) -> MicroOpGraph:
+def _build_vpu_graph(step: ComputeStep, tile: TileConfig, step_idx: int | None) -> MicroOpGraph:
     """Expand a vector-style step into load, VPU compute, and store micro-ops."""
     fragments: dict[str, TensorFragment] = {}
     micro_ops: dict[str, MicroOp] = {}
+    step_token = _step_token(step, step_idx)
 
     dtype = step.inputs[0].dtype
     dtype_b = dtype_bytes(dtype)
@@ -237,12 +253,12 @@ def _build_vpu_graph(step: ComputeStep, tile: TileConfig) -> MicroOpGraph:
 
     for tile_idx in range(tile.num_tiles):
         suffix = _tile_suffix(tile_idx)
-        input_hbm = f"{step.inputs[0].name}_{suffix}_hbm"
-        input_vmem = f"{step.inputs[0].name}_{suffix}_vmem"
-        input_reg = f"{step.inputs[0].name}_{suffix}_reg"
-        output_reg = f"{step.outputs[0].name}_{suffix}_reg"
-        output_vmem = f"{step.outputs[0].name}_{suffix}_vmem"
-        output_hbm = f"{step.outputs[0].name}_{suffix}_hbm"
+        input_hbm = _fragment_id(step_token, step.inputs[0].name, suffix, "hbm")
+        input_vmem = _fragment_id(step_token, step.inputs[0].name, suffix, "vmem")
+        input_reg = _fragment_id(step_token, step.inputs[0].name, suffix, "reg")
+        output_reg = _fragment_id(step_token, step.outputs[0].name, suffix, "reg")
+        output_vmem = _fragment_id(step_token, step.outputs[0].name, suffix, "vmem")
+        output_hbm = _fragment_id(step_token, step.outputs[0].name, suffix, "hbm")
 
         _add_fragment(fragments, input_hbm, step.inputs[0].name, step.name, (tile_numel,), dtype, bytes_per_fragment, "HBM")
         _add_fragment(fragments, input_vmem, step.inputs[0].name, step.name, (tile_numel,), dtype, bytes_per_fragment, "VMEM")
@@ -256,11 +272,11 @@ def _build_vpu_graph(step: ComputeStep, tile: TileConfig) -> MicroOpGraph:
         in_reg_group = _reg_group("vin", tile_idx, tile.double_buffer)
         out_reg_group = _reg_group("vout", tile_idx, tile.double_buffer)
 
-        load = f"{step.name}_load_{suffix}"
-        move_in = f"{step.name}_vmem_to_reg_{suffix}"
-        vpu = f"{step.name}_vpu_{suffix}"
-        spill = f"{step.name}_reg_to_vmem_{suffix}"
-        store = f"{step.name}_store_{suffix}"
+        load = f"{step_token}_load_{suffix}"
+        move_in = f"{step_token}_vmem_to_reg_{suffix}"
+        vpu = f"{step_token}_vpu_{suffix}"
+        spill = f"{step_token}_reg_to_vmem_{suffix}"
+        store = f"{step_token}_store_{suffix}"
 
         _add_micro_op(micro_ops, load, step.name, "dma_load_hbm_to_vmem", [], [input_hbm], [input_vmem], ("DMA",), (in_slot,), ())
         _add_micro_op(micro_ops, move_in, step.name, "vmem_to_reg", [load], [input_vmem], [input_reg], (), (in_slot,), (in_reg_group,))
@@ -276,9 +292,15 @@ def _merge_graphs(target: MicroOpGraph, source: MicroOpGraph) -> None:
     target.micro_ops.update(source.micro_ops)
 
 
-def _remove_trailing_store(graph: MicroOpGraph, step: ComputeStep, tile_idx: int) -> str:
+def _remove_trailing_store(
+    graph: MicroOpGraph,
+    prev_step: ComputeStep,
+    prev_step_idx: int,
+    tile_idx: int,
+) -> str:
+    prev_step_token = _step_token(prev_step, prev_step_idx)
     suffix = _tile_suffix(tile_idx)
-    out_hbm = f"{step.outputs[0].name}_{suffix}_hbm"
+    out_hbm = _fragment_id(prev_step_token, prev_step.outputs[0].name, suffix, "hbm")
     store_ids = [
         op_id for op_id, op in graph.micro_ops.items()
         if op.op_kind == "dma_store_vmem_to_hbm" and out_hbm in op.output_fragments
@@ -286,25 +308,29 @@ def _remove_trailing_store(graph: MicroOpGraph, step: ComputeStep, tile_idx: int
     for store_id in store_ids:
         del graph.micro_ops[store_id]
     graph.fragments.pop(out_hbm, None)
-    return f"{step.outputs[0].name}_{suffix}_vmem"
+    return _fragment_id(prev_step_token, prev_step.outputs[0].name, suffix, "vmem")
 
 
 def _append_fused_vpu_step(
     graph: MicroOpGraph,
     prev_step: ComputeStep,
+    prev_step_idx: int,
     step: ComputeStep,
     tile: TileConfig,
+    prev_tile: TileConfig,
+    step_idx: int,
 ) -> None:
     numel = max(step.outputs[0].numel // max(tile.num_tiles, 1), 1)
     bytes_per_fragment = max(step.outputs[0].size_bytes // max(tile.num_tiles, 1), 1)
+    step_token = _step_token(step, step_idx)
 
     for tile_idx in range(tile.num_tiles):
         suffix = _tile_suffix(tile_idx)
-        input_vmem = _remove_trailing_store(graph, prev_step, tile_idx)
-        input_reg = f"{step.inputs[0].name}_{suffix}_reg"
-        output_reg = f"{step.outputs[0].name}_{suffix}_reg"
-        output_vmem = f"{step.outputs[0].name}_{suffix}_vmem"
-        output_hbm = f"{step.outputs[0].name}_{suffix}_hbm"
+        input_vmem = _remove_trailing_store(graph, prev_step, prev_step_idx, tile_idx)
+        input_reg = _fragment_id(step_token, step.inputs[0].name, suffix, "reg")
+        output_reg = _fragment_id(step_token, step.outputs[0].name, suffix, "reg")
+        output_vmem = _fragment_id(step_token, step.outputs[0].name, suffix, "vmem")
+        output_hbm = _fragment_id(step_token, step.outputs[0].name, suffix, "hbm")
 
         _add_fragment(
             graph.fragments,
@@ -347,15 +373,15 @@ def _append_fused_vpu_step(
             "HBM",
         )
 
-        input_slot = _buffer_slot("out", tile_idx, tile.double_buffer)
+        input_slot = _buffer_slot("out", tile_idx, prev_tile.double_buffer)
         output_slot = _buffer_slot("fused_out", tile_idx, tile.double_buffer)
         input_reg_group = _reg_group("fused_in", tile_idx, tile.double_buffer)
         output_reg_group = _reg_group("fused_out", tile_idx, tile.double_buffer)
 
-        move_in = f"{step.name}_vmem_to_reg_{suffix}"
-        vpu = f"{step.name}_vpu_{suffix}"
-        spill = f"{step.name}_reg_to_vmem_{suffix}"
-        store = f"{step.name}_store_{suffix}"
+        move_in = f"{step_token}_vmem_to_reg_{suffix}"
+        vpu = f"{step_token}_vpu_{suffix}"
+        spill = f"{step_token}_reg_to_vmem_{suffix}"
+        store = f"{step_token}_store_{suffix}"
 
         producer_candidates = [
             op_id for op_id, op in graph.micro_ops.items()
@@ -415,10 +441,15 @@ def _append_fused_vpu_step(
 
 def _latest_hbm_producer(graph: MicroOpGraph, tensor_name: str, tile_idx: int) -> str | None:
     suffix = _tile_suffix(tile_idx)
-    target_fragment = f"{tensor_name}_{suffix}_hbm"
     candidates = [
-        op_id for op_id, op in graph.micro_ops.items()
-        if target_fragment in op.output_fragments
+        op_id
+        for op_id, op in graph.micro_ops.items()
+        if any(
+            graph.fragments[fragment_id].tensor_name == tensor_name
+            and fragment_id.endswith(f"_{suffix}_hbm")
+            for fragment_id in op.output_fragments
+            if fragment_id in graph.fragments
+        )
     ]
     if not candidates:
         return None
@@ -432,39 +463,55 @@ def _link_unfused_dependencies(
     tile: TileConfig,
 ) -> None:
     for tile_idx in range(tile.num_tiles):
-        producer_id = _latest_hbm_producer(graph, step.inputs[0].name, tile_idx)
-        if producer_id is None:
-            continue
         suffix = _tile_suffix(tile_idx)
-        load_candidates = [
-            op for op in step_graph.micro_ops.values()
-            if op.op_kind == "dma_load_hbm_to_vmem"
-            and f"{step.inputs[0].name}_{suffix}_hbm" in op.input_fragments
-        ]
-        for op in load_candidates:
-            if producer_id not in op.depends_on:
-                op.depends_on.append(producer_id)
+        for input_ref in step.inputs:
+            producer_id = _latest_hbm_producer(graph, input_ref.name, tile_idx)
+            if producer_id is None:
+                continue
+            load_candidates = [
+                op for op in step_graph.micro_ops.values()
+                if op.op_kind == "dma_load_hbm_to_vmem"
+                and any(
+                    step_graph.fragments[fragment_id].tensor_name == input_ref.name
+                    and fragment_id.endswith(f"_{suffix}_hbm")
+                    for fragment_id in op.input_fragments
+                    if fragment_id in step_graph.fragments
+                )
+            ]
+            for op in load_candidates:
+                if producer_id not in op.depends_on:
+                    op.depends_on.append(producer_id)
 
 
 def build_micro_op_graph_for_pipeline(
     steps: list[ComputeStep],
-    tile_configs: dict[str, TileConfig],
+    tile_configs: list[TileConfig],
 ) -> MicroOpGraph:
     """Expand a step pipeline into one micro-op graph."""
     if not steps:
         return MicroOpGraph(fragments={}, micro_ops={})
 
-    graph = build_micro_op_graph_for_step(steps[0], tile_configs[steps[0].name])
+    graph = build_micro_op_graph_for_step(steps[0], tile_configs[0], step_idx=0)
     prev_step = steps[0]
+    prev_idx = 0
 
-    for step in steps[1:]:
-        tile = tile_configs[step.name]
+    for step_idx, step in enumerate(steps[1:], 1):
+        tile = tile_configs[step_idx]
         if step.fusable_with_prev and step.compute_unit == "VPU":
-            _append_fused_vpu_step(graph, prev_step, step, tile)
+            _append_fused_vpu_step(
+                graph,
+                prev_step,
+                prev_idx,
+                step,
+                tile,
+                tile_configs[step_idx - 1],
+                step_idx,
+            )
         else:
-            step_graph = build_micro_op_graph_for_step(step, tile)
+            step_graph = build_micro_op_graph_for_step(step, tile, step_idx=step_idx)
             _link_unfused_dependencies(graph, step_graph, step, tile)
             _merge_graphs(graph, step_graph)
         prev_step = step
+        prev_idx = step_idx
 
     return graph
