@@ -31,6 +31,7 @@ class MicroOp:
     required_vmem_slots: tuple[str, ...]
     required_reg_groups: tuple[str, ...]
     latency_ns: float
+    required_vpr_count: int = 0
 
 
 @dataclass
