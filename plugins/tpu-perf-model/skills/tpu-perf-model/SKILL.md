@@ -202,30 +202,26 @@ python scripts/cli.py --steps steps.json --analysis-level micro --mermaid
 
 Include the generated Mermaid blocks in your output. The `--mermaid` flag produces two complementary diagrams:
 
-### Gantt Timeline (enhanced)
+### Resource Occupancy Gantt
 
-Shows the first 3 tiles by default (startup + steady-state overlap). Use `--max-tiles N` to adjust.
+Shows VMEM slot and REG group occupancy over time. Each row is a storage resource, not an execution unit.
 
-Each bar label includes:
-- **Tile dimensions**: `[M,N]` from the fragment shape
-- **Resource names**: VMEM slots (`q_slot0`) and REG groups (`acc_reg0`)
-- **Stall bars**: Red `crit` bars between ops where a gap exists, labeled with wait reason (`WAIT_DATA`, `WAIT_UNIT`, `WAIT_VMEM`, `WAIT_REG`)
+- **section VMEM Slots**: One bar per VMEM slot occupancy interval, labeled `slot_name [op_label]`
+- **section REG Groups**: One bar per REG group occupancy interval, labeled `reg_name [op_label]`
+- **Stall bars**: Red `crit` bars between intervals on the same resource, labeled with wait reason (`WAIT_DATA`, `WAIT_UNIT`, `WAIT_VMEM`, `WAIT_REG`)
+- **Capacity comments**: Peak VMEM slots and REG groups with percentage of hardware limit
 
-The diagram groups micro-ops by execution unit (DMA / MXU / VPU) and visually shows:
-- Which operations overlap across different units (pipeline parallelism)
-- Where stalls create gaps between bars (red bars with reason labels)
-- How double-buffering enables tile overlap
-- Which resources each operation occupies
+Shows first 3 tiles by default. Use `--max-tiles N` to adjust.
 
-### Per-Tile Flowchart
+### Register Data Flow Flowchart
 
-One flowchart per tile showing the dataflow graph:
+One flowchart per tile showing data movement through the memory hierarchy:
 
-- **Nodes**: Multi-line labels with op name, tile shape + dtype, execution unit, VMEM slot, and REG group
-- **Solid edges** (`-->`): Normal data dependencies from `depends_on`
-- **Dashed edges** (`-. .-->`): Stall/wait relationships labeled with reason (`WAIT_DATA`, `WAIT_UNIT`, `WAIT_REG`, `WAIT_VMEM`)
+- **Nodes**: Data fragments at each memory level — `HBM: tensor[shape] dtype`, `VMEM slot: tensor[shape]`, `REG group: tensor[shape]`
+- **Solid edges** (`-->`): Data transfers labeled with `op_kind latency`
+- **Dashed edges** (`-. .-->`): Stall/wait relationships labeled with reason
 
-Use the flowchart to trace dependency chains and identify which resource constraints cause stalls.
+Use the flowchart to trace how data flows from HBM through VMEM into registers, through compute, and back.
 
 ## Render Mermaid to Image
 

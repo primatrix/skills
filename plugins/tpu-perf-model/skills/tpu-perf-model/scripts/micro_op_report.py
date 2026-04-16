@@ -220,51 +220,9 @@ def _tile_index_from_op_id(op_id: str) -> int | None:
     return int(match.group(1)) if match else None
 
 
-def _unit_from_op(graph: MicroOpGraph, op_id: str) -> str | None:
-    """Return the primary execution unit (DMA, MXU, VPU) for a micro-op."""
-    op = graph.micro_ops.get(op_id)
-    if not op or not op.required_units:
-        return None
-    return op.required_units[0]
-
-
 def _short_label(op_id: str) -> str:
     """Shorten op_id for Mermaid bar labels. Strip step prefix like 's0_'."""
     return re.sub(r"^s\d+_", "", op_id)
-
-
-def _enhanced_label(op_id: str, graph: MicroOpGraph) -> str:
-    """Build label with tile shape and resource annotations."""
-    base = _short_label(op_id)
-    op = graph.micro_ops.get(op_id)
-    if not op:
-        return base
-    # Find tile shape from output fragments (fallback to input)
-    shape_str = ""
-    for frag_id in op.output_fragments:
-        frag = graph.fragments.get(frag_id)
-        if frag and frag.shape:
-            shape_str = "[" + ",".join(str(d) for d in frag.shape) + "]"
-            break
-    if not shape_str:
-        for frag_id in op.input_fragments:
-            frag = graph.fragments.get(frag_id)
-            if frag and frag.shape:
-                shape_str = "[" + ",".join(str(d) for d in frag.shape) + "]"
-                break
-    # Resource annotations
-    resources = []
-    for slot in op.required_vmem_slots:
-        resources.append(slot)
-    for reg in op.required_reg_groups:
-        resources.append(reg)
-    res_str = ",".join(resources) if resources else ""
-    parts = [base]
-    if shape_str:
-        parts.append(shape_str)
-    if res_str:
-        parts.append(res_str)
-    return " ".join(parts)
 
 
 def micro_schedule_to_mermaid(
@@ -272,10 +230,10 @@ def micro_schedule_to_mermaid(
     graph: MicroOpGraph,
     max_tiles: int = 3,
 ) -> str:
-    """Render the micro-op schedule as a Mermaid Gantt pipeline diagram."""
+    """Render the micro-op schedule as a resource-centric Mermaid Gantt."""
     if max_tiles < 1:
         raise ValueError("max_tiles must be >= 1")
-    # Determine total tile count
+
     all_tile_indices = set()
     for op_id in schedule.op_timings:
         idx = _tile_index_from_op_id(op_id)
@@ -283,66 +241,79 @@ def micro_schedule_to_mermaid(
             all_tile_indices.add(idx)
     total_tiles = max(all_tile_indices, default=0) + 1 if all_tile_indices else 0
 
-    # Collect step names for title
     step_names = []
     for op in graph.micro_ops.values():
         if op.step_name not in step_names:
             step_names.append(op.step_name)
     title = ", ".join(step_names)
 
-    # Group ops by unit, filtered by tile range
-    unit_ops: dict[str, list[tuple[str, float, float]]] = {}
-    for op_id, timing in schedule.op_timings.items():
-        tile_idx = _tile_index_from_op_id(op_id)
-        if tile_idx is not None and tile_idx >= max_tiles:
-            continue
-        unit = _unit_from_op(graph, op_id)
-        if unit is None:
-            continue
-        unit_ops.setdefault(unit, []).append(
-            (op_id, timing.start_ns, timing.end_ns)
-        )
+    stalls = _detect_op_stalls(schedule, graph)
 
-    # Sort each unit's ops by start time
-    for unit in unit_ops:
-        unit_ops[unit].sort(key=lambda x: (x[1], x[0]))
+    # Collect intervals grouped by resource type
+    vmem_resources: dict[str, list] = {}
+    reg_resources: dict[str, list] = {}
+    for res_id, intervals in schedule.resource_occupancy.items():
+        filtered = []
+        for iv in intervals:
+            tile_idx = _tile_index_from_op_id(iv.op_id)
+            if tile_idx is not None and tile_idx >= max_tiles:
+                continue
+            filtered.append(iv)
+        if not filtered:
+            continue
+        if res_id.startswith("VMEM:"):
+            vmem_resources[res_id] = sorted(filtered, key=lambda iv: iv.start_ns)
+        elif res_id.startswith("REG:"):
+            reg_resources[res_id] = sorted(filtered, key=lambda iv: iv.start_ns)
 
-    # Build Mermaid output
     lines = [
         "```mermaid",
         "gantt",
-        f"    title Tile Pipeline: {title} (ns)",
+        f"    title Resource Occupancy: {title} (ns)",
         "    dateFormat x",
         "    axisFormat %Q",
     ]
 
-    stalls = _detect_op_stalls(schedule, graph)
+    # VMEM section
+    if vmem_resources:
+        lines.append("    section VMEM Slots")
+        for res_id in sorted(vmem_resources):
+            slot_name = res_id.split(":", 1)[1]
+            intervals = vmem_resources[res_id]
+            prev_end = None
+            for iv in intervals:
+                if prev_end is not None and iv.start_ns > prev_end:
+                    wait_reasons = stalls.get(iv.op_id, [])
+                    wait_label = ",".join(wait_reasons) if wait_reasons else "WAIT"
+                    lines.append(f"        {wait_label} :crit, {int(prev_end)}, {int(iv.start_ns)}")
+                label = f"{slot_name} [{_short_label(iv.op_id)}]"
+                lines.append(f"        {label} :{int(iv.start_ns)}, {int(iv.end_ns)}")
+                prev_end = iv.end_ns
 
-    section_order = ["DMA", "MXU", "VPU"]
-    for unit in section_order:
-        ops = unit_ops.get(unit)
-        if not ops:
-            continue
-        lines.append(f"    section {unit}")
-        prev_end = None
-        for op_id, start_ns, end_ns in ops:
-            # Insert stall bar if gap exists
-            if prev_end is not None and start_ns > prev_end:
-                wait_reasons = stalls.get(op_id, [])
-                wait_label = ",".join(wait_reasons) if wait_reasons else "WAIT"
-                lines.append(
-                    f"        {wait_label} :crit, {int(prev_end)}, {int(start_ns)}"
-                )
-            label = _enhanced_label(op_id, graph)
-            lines.append(
-                f"        {label} :{int(start_ns)}, {int(end_ns)}"
-            )
-            prev_end = end_ns
+    # REG section
+    if reg_resources:
+        lines.append("    section REG Groups")
+        for res_id in sorted(reg_resources):
+            reg_name = res_id.split(":", 1)[1]
+            intervals = reg_resources[res_id]
+            prev_end = None
+            for iv in intervals:
+                if prev_end is not None and iv.start_ns > prev_end:
+                    wait_reasons = stalls.get(iv.op_id, [])
+                    wait_label = ",".join(wait_reasons) if wait_reasons else "WAIT"
+                    lines.append(f"        {wait_label} :crit, {int(prev_end)}, {int(iv.start_ns)}")
+                label = f"{reg_name} [{_short_label(iv.op_id)}]"
+                lines.append(f"        {label} :{int(iv.start_ns)}, {int(iv.end_ns)}")
+                prev_end = iv.end_ns
+
+    # Capacity comments
+    peak_vmem = schedule.peak_vmem_slots
+    peak_reg = schedule.peak_reg_groups
+    lines.append(f"    %% Peak VMEM: {peak_vmem} slots")
+    lines.append(f"    %% Peak REG: {peak_reg}/32 groups ({peak_reg * 100 // 32}%)")
 
     if total_tiles > max_tiles:
-        lines.append(
-            f"    %% ... tiles {max_tiles}-{total_tiles - 1} follow steady-state pattern ..."
-        )
+        lines.append(f"    %% ... tiles {max_tiles}-{total_tiles - 1} follow steady-state pattern ...")
 
     lines.append("```")
     return "\n".join(lines) + "\n"
@@ -353,26 +324,21 @@ def _sanitize_node_id(op_id: str) -> str:
     return re.sub(r"[^a-zA-Z0-9_]", "_", op_id)
 
 
-def _flowchart_node_label(op_id: str, graph: MicroOpGraph) -> str:
-    """Build multi-line Mermaid node label with shape, dtype, unit, resources."""
-    op = graph.micro_ops.get(op_id)
-    if not op:
-        return _short_label(op_id)
-    base = _short_label(op_id)
-    parts = [base]
-    for frag_id in op.output_fragments + op.input_fragments:
-        frag = graph.fragments.get(frag_id)
-        if frag and frag.shape:
-            shape_str = "[" + ",".join(str(d) for d in frag.shape) + "] " + frag.dtype
-            parts.append(shape_str)
-            break
-    if op.required_units:
-        parts.append(" | ".join(op.required_units))
-    if op.required_vmem_slots:
-        parts.append(",".join(op.required_vmem_slots))
-    if op.required_reg_groups:
-        parts.append(",".join(op.required_reg_groups))
-    return "<br/>".join(parts)
+def _find_resource_for_fragment(
+    graph: MicroOpGraph,
+    frag_id: str,
+    tile_ops: list[str],
+    resource_type: str,
+) -> str:
+    """Find the VMEM slot or REG group associated with a fragment in tile ops."""
+    for op_id in tile_ops:
+        op = graph.micro_ops[op_id]
+        if frag_id in op.input_fragments or frag_id in op.output_fragments:
+            if resource_type == "vmem" and op.required_vmem_slots:
+                return op.required_vmem_slots[0]
+            if resource_type == "reg" and op.required_reg_groups:
+                return op.required_reg_groups[0]
+    return ""
 
 
 def micro_schedule_to_mermaid_flowchart(
@@ -380,7 +346,7 @@ def micro_schedule_to_mermaid_flowchart(
     graph: MicroOpGraph,
     max_tiles: int = 3,
 ) -> str:
-    """Render per-tile flowcharts showing dependencies and stall edges."""
+    """Render per-tile data flow flowcharts with fragment nodes at each memory level."""
     if max_tiles < 1:
         raise ValueError("max_tiles must be >= 1")
 
@@ -405,30 +371,59 @@ def micro_schedule_to_mermaid_flowchart(
         lines = [
             "```mermaid",
             "flowchart TD",
+            f'    subgraph tile{tile_idx}["Tile {tile_idx}"]',
         ]
 
-        # Define nodes
-        for op_id in tile_ops:
-            node_id = _sanitize_node_id(op_id)
-            label = _flowchart_node_label(op_id, graph)
-            lines.append(f'    {node_id}["{label}"]')
-
-        # Dependency edges (solid for non-stalled, dashed for stalled)
+        # Collect unique fragments referenced by this tile's ops
+        seen_frags = set()
         for op_id in tile_ops:
             op = graph.micro_ops[op_id]
+            for frag_id in op.input_fragments + op.output_fragments:
+                seen_frags.add(frag_id)
+
+        # Define fragment nodes
+        for frag_id in sorted(seen_frags):
+            frag = graph.fragments.get(frag_id)
+            if not frag:
+                continue
+            node_id = _sanitize_node_id(frag_id)
+            shape_str = "[" + ",".join(str(d) for d in frag.shape) + "]" if frag.shape else ""
+            level = frag.home_level
+            if level == "HBM":
+                label = f"HBM: {frag.tensor_name}{shape_str} {frag.dtype}"
+            elif level == "VMEM":
+                slot = _find_resource_for_fragment(graph, frag_id, tile_ops, "vmem")
+                label = f"VMEM {slot}: {frag.tensor_name}{shape_str}"
+            elif level in ("REG", "acc"):
+                reg = _find_resource_for_fragment(graph, frag_id, tile_ops, "reg")
+                label = f"REG {reg}: {frag.tensor_name}{shape_str}"
+            else:
+                label = f"{level}: {frag.tensor_name}{shape_str}"
+            lines.append(f'        {node_id}["{label}"]')
+
+        # Create edges: for each op, connect input frags -> output frags
+        for op_id in tile_ops:
+            op = graph.micro_ops[op_id]
+            timing = schedule.op_timings.get(op_id)
+            latency = f"{int(timing.end_ns - timing.start_ns)}ns" if timing else ""
             reasons = stalls.get(op_id, [])
-            for dep in op.depends_on:
-                if dep in graph.micro_ops and _tile_index_from_op_id(dep) == tile_idx:
+
+            for in_frag in op.input_fragments:
+                if in_frag not in seen_frags:
+                    continue
+                for out_frag in op.output_fragments:
+                    if out_frag not in seen_frags:
+                        continue
+                    src = _sanitize_node_id(in_frag)
+                    dst = _sanitize_node_id(out_frag)
+                    edge_label = f"{op.op_kind} {latency}"
                     if reasons:
                         reason_str = ",".join(reasons)
-                        lines.append(
-                            f"    {_sanitize_node_id(dep)} -.{reason_str}.-> {_sanitize_node_id(op_id)}"
-                        )
+                        lines.append(f'        {src} -."{reason_str} {edge_label}".-> {dst}')
                     else:
-                        lines.append(
-                            f"    {_sanitize_node_id(dep)} --> {_sanitize_node_id(op_id)}"
-                        )
+                        lines.append(f'        {src} -->|"{edge_label}"| {dst}')
 
+        lines.append("    end")
         lines.append("```")
         blocks.append("\n".join(lines))
 
