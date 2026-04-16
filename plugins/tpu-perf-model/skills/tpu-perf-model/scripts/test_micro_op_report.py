@@ -97,40 +97,74 @@ def _sample_mermaid_schedule():
     return schedule, graph
 
 
-class TestMermaidOutput(unittest.TestCase):
-    def test_mermaid_contains_gantt_structure(self):
+class TestResourceGantt(unittest.TestCase):
+    def test_gantt_has_vmem_section(self):
         from micro_op_report import micro_schedule_to_mermaid
-
         schedule, graph = _sample_mermaid_schedule()
         output = micro_schedule_to_mermaid(schedule, graph)
-        self.assertIn("```mermaid", output)
-        self.assertIn("gantt", output)
-        self.assertIn("dateFormat x", output)
-        self.assertIn("axisFormat %Q", output)
-        self.assertIn("(ns)", output)
-        self.assertIn("section DMA", output)
-        self.assertIn("section MXU", output)
-        self.assertIn("```\n", output.split("```mermaid")[1])
+        self.assertIn("section VMEM Slots", output)
 
-    def test_mermaid_filters_tiles_by_max(self):
+    def test_gantt_has_reg_section(self):
         from micro_op_report import micro_schedule_to_mermaid
+        schedule, graph = _sample_mermaid_schedule()
+        output = micro_schedule_to_mermaid(schedule, graph)
+        self.assertIn("section REG Groups", output)
 
+    def test_gantt_has_no_unit_sections(self):
+        from micro_op_report import micro_schedule_to_mermaid
+        schedule, graph = _sample_mermaid_schedule()
+        output = micro_schedule_to_mermaid(schedule, graph)
+        self.assertNotIn("section DMA", output)
+        self.assertNotIn("section MXU", output)
+        self.assertNotIn("section VPU", output)
+
+    def test_gantt_has_capacity_comments(self):
+        from micro_op_report import micro_schedule_to_mermaid
+        schedule, graph = _sample_mermaid_schedule()
+        output = micro_schedule_to_mermaid(schedule, graph)
+        self.assertIn("Peak VMEM", output)
+        self.assertIn("Peak REG", output)
+
+    def test_gantt_contains_slot_names(self):
+        from micro_op_report import micro_schedule_to_mermaid
+        schedule, graph = _sample_mermaid_schedule()
+        output = micro_schedule_to_mermaid(schedule, graph, max_tiles=1)
+        self.assertTrue(
+            "q_slot" in output and "k_slot" in output,
+            f"Expected VMEM slot names in output:\n{output}",
+        )
+
+    def test_gantt_contains_reg_group_names(self):
+        from micro_op_report import micro_schedule_to_mermaid
+        schedule, graph = _sample_mermaid_schedule()
+        output = micro_schedule_to_mermaid(schedule, graph, max_tiles=1)
+        self.assertTrue(
+            "q_reg" in output and "acc_reg" in output,
+            f"Expected REG group names in output:\n{output}",
+        )
+
+    def test_gantt_includes_stall_bars(self):
+        from micro_op_report import micro_schedule_to_mermaid
+        schedule, graph = _sample_mermaid_schedule()
+        output = micro_schedule_to_mermaid(schedule, graph)
+        self.assertIn("crit", output)
+
+    def test_gantt_filters_tiles_by_max(self):
+        from micro_op_report import micro_schedule_to_mermaid
         schedule, graph = _sample_mermaid_schedule()
         output = micro_schedule_to_mermaid(schedule, graph, max_tiles=1)
         self.assertIn("tile0", output)
         self.assertNotIn("tile1", output)
 
-    def test_mermaid_shows_ellipsis_when_truncated(self):
+    def test_gantt_shows_ellipsis_when_truncated(self):
         from micro_op_report import micro_schedule_to_mermaid
-
         schedule, graph = _sample_mermaid_schedule()
         output = micro_schedule_to_mermaid(schedule, graph, max_tiles=1)
         self.assertIn("%%", output)
         self.assertIn("steady-state", output)
 
-    def test_mermaid_rejects_non_positive_max_tiles(self):
+    def test_gantt_rejects_non_positive_max_tiles(self):
         from micro_op_report import micro_schedule_to_mermaid
-
         schedule, graph = _sample_mermaid_schedule()
         with self.assertRaises(ValueError):
             micro_schedule_to_mermaid(schedule, graph, max_tiles=0)
@@ -170,32 +204,6 @@ class TestStallDetection(unittest.TestCase):
         root_ops = graph.root_ops()
         for op_id in root_ops:
             self.assertEqual(stalls.get(op_id, []), [])
-
-
-class TestEnhancedGantt(unittest.TestCase):
-    def test_gantt_labels_include_tile_shape(self):
-        from micro_op_report import micro_schedule_to_mermaid
-
-        schedule, graph = _sample_mermaid_schedule()
-        output = micro_schedule_to_mermaid(schedule, graph, max_tiles=1)
-        self.assertIn("[128,128]", output)
-
-    def test_gantt_labels_include_resource_names(self):
-        from micro_op_report import micro_schedule_to_mermaid
-
-        schedule, graph = _sample_mermaid_schedule()
-        output = micro_schedule_to_mermaid(schedule, graph, max_tiles=1)
-        self.assertTrue(
-            "slot" in output or "reg" in output,
-            f"Expected resource names in output, got:\n{output}",
-        )
-
-    def test_gantt_includes_stall_bars(self):
-        from micro_op_report import micro_schedule_to_mermaid
-
-        schedule, graph = _sample_mermaid_schedule()
-        output = micro_schedule_to_mermaid(schedule, graph, max_tiles=1)
-        self.assertIn("crit", output)
 
 
 class TestFlowchart(unittest.TestCase):

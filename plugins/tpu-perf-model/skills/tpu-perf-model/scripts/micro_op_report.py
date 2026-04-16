@@ -272,10 +272,10 @@ def micro_schedule_to_mermaid(
     graph: MicroOpGraph,
     max_tiles: int = 3,
 ) -> str:
-    """Render the micro-op schedule as a Mermaid Gantt pipeline diagram."""
+    """Render the micro-op schedule as a resource-centric Mermaid Gantt."""
     if max_tiles < 1:
         raise ValueError("max_tiles must be >= 1")
-    # Determine total tile count
+
     all_tile_indices = set()
     for op_id in schedule.op_timings:
         idx = _tile_index_from_op_id(op_id)
@@ -283,66 +283,79 @@ def micro_schedule_to_mermaid(
             all_tile_indices.add(idx)
     total_tiles = max(all_tile_indices, default=0) + 1 if all_tile_indices else 0
 
-    # Collect step names for title
     step_names = []
     for op in graph.micro_ops.values():
         if op.step_name not in step_names:
             step_names.append(op.step_name)
     title = ", ".join(step_names)
 
-    # Group ops by unit, filtered by tile range
-    unit_ops: dict[str, list[tuple[str, float, float]]] = {}
-    for op_id, timing in schedule.op_timings.items():
-        tile_idx = _tile_index_from_op_id(op_id)
-        if tile_idx is not None and tile_idx >= max_tiles:
-            continue
-        unit = _unit_from_op(graph, op_id)
-        if unit is None:
-            continue
-        unit_ops.setdefault(unit, []).append(
-            (op_id, timing.start_ns, timing.end_ns)
-        )
+    stalls = _detect_op_stalls(schedule, graph)
 
-    # Sort each unit's ops by start time
-    for unit in unit_ops:
-        unit_ops[unit].sort(key=lambda x: (x[1], x[0]))
+    # Collect intervals grouped by resource type
+    vmem_resources: dict[str, list] = {}
+    reg_resources: dict[str, list] = {}
+    for res_id, intervals in schedule.resource_occupancy.items():
+        filtered = []
+        for iv in intervals:
+            tile_idx = _tile_index_from_op_id(iv.op_id)
+            if tile_idx is not None and tile_idx >= max_tiles:
+                continue
+            filtered.append(iv)
+        if not filtered:
+            continue
+        if res_id.startswith("VMEM:"):
+            vmem_resources[res_id] = sorted(filtered, key=lambda iv: iv.start_ns)
+        elif res_id.startswith("REG:"):
+            reg_resources[res_id] = sorted(filtered, key=lambda iv: iv.start_ns)
 
-    # Build Mermaid output
     lines = [
         "```mermaid",
         "gantt",
-        f"    title Tile Pipeline: {title} (ns)",
+        f"    title Resource Occupancy: {title} (ns)",
         "    dateFormat x",
         "    axisFormat %Q",
     ]
 
-    stalls = _detect_op_stalls(schedule, graph)
+    # VMEM section
+    if vmem_resources:
+        lines.append("    section VMEM Slots")
+        for res_id in sorted(vmem_resources):
+            slot_name = res_id.split(":", 1)[1]
+            intervals = vmem_resources[res_id]
+            prev_end = None
+            for iv in intervals:
+                if prev_end is not None and iv.start_ns > prev_end:
+                    wait_reasons = stalls.get(iv.op_id, [])
+                    wait_label = ",".join(wait_reasons) if wait_reasons else "WAIT"
+                    lines.append(f"        {wait_label} :crit, {int(prev_end)}, {int(iv.start_ns)}")
+                label = f"{slot_name} [{_short_label(iv.op_id)}]"
+                lines.append(f"        {label} :{int(iv.start_ns)}, {int(iv.end_ns)}")
+                prev_end = iv.end_ns
 
-    section_order = ["DMA", "MXU", "VPU"]
-    for unit in section_order:
-        ops = unit_ops.get(unit)
-        if not ops:
-            continue
-        lines.append(f"    section {unit}")
-        prev_end = None
-        for op_id, start_ns, end_ns in ops:
-            # Insert stall bar if gap exists
-            if prev_end is not None and start_ns > prev_end:
-                wait_reasons = stalls.get(op_id, [])
-                wait_label = ",".join(wait_reasons) if wait_reasons else "WAIT"
-                lines.append(
-                    f"        {wait_label} :crit, {int(prev_end)}, {int(start_ns)}"
-                )
-            label = _enhanced_label(op_id, graph)
-            lines.append(
-                f"        {label} :{int(start_ns)}, {int(end_ns)}"
-            )
-            prev_end = end_ns
+    # REG section
+    if reg_resources:
+        lines.append("    section REG Groups")
+        for res_id in sorted(reg_resources):
+            reg_name = res_id.split(":", 1)[1]
+            intervals = reg_resources[res_id]
+            prev_end = None
+            for iv in intervals:
+                if prev_end is not None and iv.start_ns > prev_end:
+                    wait_reasons = stalls.get(iv.op_id, [])
+                    wait_label = ",".join(wait_reasons) if wait_reasons else "WAIT"
+                    lines.append(f"        {wait_label} :crit, {int(prev_end)}, {int(iv.start_ns)}")
+                label = f"{reg_name} [{_short_label(iv.op_id)}]"
+                lines.append(f"        {label} :{int(iv.start_ns)}, {int(iv.end_ns)}")
+                prev_end = iv.end_ns
+
+    # Capacity comments
+    peak_vmem = getattr(schedule, 'peak_vmem_slots', 0)
+    peak_reg = getattr(schedule, 'peak_reg_groups', 0)
+    lines.append(f"    %% Peak VMEM: {peak_vmem} slots")
+    lines.append(f"    %% Peak REG: {peak_reg}/32 groups ({peak_reg * 100 // 32}%)")
 
     if total_tiles > max_tiles:
-        lines.append(
-            f"    %% ... tiles {max_tiles}-{total_tiles - 1} follow steady-state pattern ..."
-        )
+        lines.append(f"    %% ... tiles {max_tiles}-{total_tiles - 1} follow steady-state pattern ...")
 
     lines.append("```")
     return "\n".join(lines) + "\n"
