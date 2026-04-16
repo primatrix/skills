@@ -341,3 +341,96 @@ def micro_schedule_to_mermaid(
 
     lines.append("```")
     return "\n".join(lines) + "\n"
+
+
+def _sanitize_node_id(op_id: str) -> str:
+    """Make op_id safe for Mermaid node IDs (alphanumeric + underscore)."""
+    return re.sub(r"[^a-zA-Z0-9_]", "_", op_id)
+
+
+def _flowchart_node_label(op_id: str, graph: MicroOpGraph) -> str:
+    """Build multi-line Mermaid node label with shape, dtype, unit, resources."""
+    op = graph.micro_ops.get(op_id)
+    if not op:
+        return _short_label(op_id)
+    base = _short_label(op_id)
+    parts = [base]
+    for frag_id in op.output_fragments + op.input_fragments:
+        frag = graph.fragments.get(frag_id)
+        if frag and frag.shape:
+            shape_str = "[" + ",".join(str(d) for d in frag.shape) + "] " + frag.dtype
+            parts.append(shape_str)
+            break
+    if op.required_units:
+        parts.append(" | ".join(op.required_units))
+    if op.required_vmem_slots:
+        parts.append(",".join(op.required_vmem_slots))
+    if op.required_reg_groups:
+        parts.append(",".join(op.required_reg_groups))
+    return "<br/>".join(parts)
+
+
+def micro_schedule_to_mermaid_flowchart(
+    schedule: ScheduleResult,
+    graph: MicroOpGraph,
+    max_tiles: int = 3,
+) -> str:
+    """Render per-tile flowcharts showing dependencies and stall edges."""
+    if max_tiles < 1:
+        raise ValueError("max_tiles must be >= 1")
+
+    all_tile_indices = set()
+    for op_id in schedule.op_timings:
+        idx = _tile_index_from_op_id(op_id)
+        if idx is not None:
+            all_tile_indices.add(idx)
+    total_tiles = max(all_tile_indices, default=0) + 1 if all_tile_indices else 0
+
+    stalls = _detect_op_stalls(schedule, graph)
+    blocks: list[str] = []
+
+    for tile_idx in range(min(max_tiles, total_tiles)):
+        tile_ops = [
+            op_id for op_id in graph.micro_ops
+            if _tile_index_from_op_id(op_id) == tile_idx
+        ]
+        if not tile_ops:
+            continue
+
+        lines = [
+            "```mermaid",
+            "flowchart TD",
+        ]
+
+        # Define nodes
+        for op_id in tile_ops:
+            node_id = _sanitize_node_id(op_id)
+            label = _flowchart_node_label(op_id, graph)
+            lines.append(f'    {node_id}["{label}"]')
+
+        # Dependency edges (solid)
+        for op_id in tile_ops:
+            op = graph.micro_ops[op_id]
+            for dep in op.depends_on:
+                if dep in graph.micro_ops and _tile_index_from_op_id(dep) == tile_idx:
+                    lines.append(
+                        f"    {_sanitize_node_id(dep)} --> {_sanitize_node_id(op_id)}"
+                    )
+
+        # Stall edges (dashed)
+        for op_id in tile_ops:
+            reasons = stalls.get(op_id, [])
+            if not reasons:
+                continue
+            op = graph.micro_ops[op_id]
+            for dep in op.depends_on:
+                if dep in graph.micro_ops and _tile_index_from_op_id(dep) == tile_idx:
+                    reason_str = ",".join(reasons)
+                    lines.append(
+                        f"    {_sanitize_node_id(dep)} -.{reason_str}.- {_sanitize_node_id(op_id)}"
+                    )
+
+        lines.append("```")
+        blocks.append("\n".join(lines))
+
+    return "\n\n".join(blocks) + "\n"
