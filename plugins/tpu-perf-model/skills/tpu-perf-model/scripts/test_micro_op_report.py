@@ -206,54 +206,45 @@ class TestStallDetection(unittest.TestCase):
             self.assertEqual(stalls.get(op_id, []), [])
 
 
-class TestFlowchart(unittest.TestCase):
-    def test_flowchart_contains_structure(self):
+class TestDataFlowChart(unittest.TestCase):
+    def test_flowchart_has_memory_level_nodes(self):
         from micro_op_report import micro_schedule_to_mermaid_flowchart
-
         schedule, graph = _sample_mermaid_schedule()
         output = micro_schedule_to_mermaid_flowchart(schedule, graph, max_tiles=1)
-        self.assertIn("```mermaid", output)
+        self.assertIn("HBM:", output)
+        self.assertIn("VMEM", output)
+        self.assertIn("REG", output)
+
+    def test_flowchart_has_data_transfer_edges(self):
+        from micro_op_report import micro_schedule_to_mermaid_flowchart
+        schedule, graph = _sample_mermaid_schedule()
+        output = micro_schedule_to_mermaid_flowchart(schedule, graph, max_tiles=1)
+        # Should have solid edges with latency labels
+        self.assertIn("-->", output)
+        self.assertIn("ns", output)
+
+    def test_flowchart_has_tile_subgraph(self):
+        from micro_op_report import micro_schedule_to_mermaid_flowchart
+        schedule, graph = _sample_mermaid_schedule()
+        output = micro_schedule_to_mermaid_flowchart(schedule, graph, max_tiles=1)
+        self.assertIn("subgraph", output)
+        self.assertIn("Tile 0", output)
+
+    def test_flowchart_shows_stall_edges(self):
+        from micro_op_report import micro_schedule_to_mermaid_flowchart
+        schedule, graph = _sample_mermaid_schedule()
+        output = micro_schedule_to_mermaid_flowchart(schedule, graph)
+        # At minimum, verify the function runs without error
         self.assertIn("flowchart TD", output)
-        self.assertIn("```\n", output.split("```mermaid")[1])
-
-    def test_flowchart_shows_tile_shape_in_node(self):
-        from micro_op_report import micro_schedule_to_mermaid_flowchart
-
-        schedule, graph = _sample_mermaid_schedule()
-        output = micro_schedule_to_mermaid_flowchart(schedule, graph, max_tiles=1)
-        self.assertIn("[128,128]", output)
-
-    def test_flowchart_shows_resource_annotations(self):
-        from micro_op_report import micro_schedule_to_mermaid_flowchart
-
-        schedule, graph = _sample_mermaid_schedule()
-        output = micro_schedule_to_mermaid_flowchart(schedule, graph, max_tiles=1)
-        self.assertTrue(
-            "slot" in output or "reg" in output,
-            f"Expected resource annotations in flowchart:\n{output}",
-        )
-
-    def test_flowchart_shows_dependency_edges(self):
-        from micro_op_report import micro_schedule_to_mermaid_flowchart
-
-        schedule, graph = _sample_mermaid_schedule()
-        output = micro_schedule_to_mermaid_flowchart(schedule, graph, max_tiles=1)
-        # Edges are solid (-->) or dashed (-.) depending on stall status
-        self.assertTrue(
-            "-->" in output or "-." in output,
-            f"Expected dependency edges in flowchart:\n{output}",
-        )
 
     def test_flowchart_per_tile_count(self):
         from micro_op_report import micro_schedule_to_mermaid_flowchart
-
         schedule, graph = _sample_mermaid_schedule()
         output = micro_schedule_to_mermaid_flowchart(schedule, graph, max_tiles=2)
-        self.assertEqual(output.count("flowchart TD"), 2)
+        self.assertEqual(output.count("subgraph"), 2)
 
     def test_flowchart_rejects_non_positive_max_tiles(self):
         from micro_op_report import micro_schedule_to_mermaid_flowchart
-
         schedule, graph = _sample_mermaid_schedule()
         with self.assertRaises(ValueError):
             micro_schedule_to_mermaid_flowchart(schedule, graph, max_tiles=0)

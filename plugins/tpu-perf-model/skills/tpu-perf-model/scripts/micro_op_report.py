@@ -388,12 +388,29 @@ def _flowchart_node_label(op_id: str, graph: MicroOpGraph) -> str:
     return "<br/>".join(parts)
 
 
+def _find_resource_for_fragment(
+    graph: MicroOpGraph,
+    frag_id: str,
+    tile_ops: list[str],
+    resource_type: str,
+) -> str:
+    """Find the VMEM slot or REG group associated with a fragment in tile ops."""
+    for op_id in tile_ops:
+        op = graph.micro_ops[op_id]
+        if frag_id in op.input_fragments or frag_id in op.output_fragments:
+            if resource_type == "vmem" and op.required_vmem_slots:
+                return op.required_vmem_slots[0]
+            if resource_type == "reg" and op.required_reg_groups:
+                return op.required_reg_groups[0]
+    return ""
+
+
 def micro_schedule_to_mermaid_flowchart(
     schedule: ScheduleResult,
     graph: MicroOpGraph,
     max_tiles: int = 3,
 ) -> str:
-    """Render per-tile flowcharts showing dependencies and stall edges."""
+    """Render per-tile data flow flowcharts with fragment nodes at each memory level."""
     if max_tiles < 1:
         raise ValueError("max_tiles must be >= 1")
 
@@ -418,30 +435,59 @@ def micro_schedule_to_mermaid_flowchart(
         lines = [
             "```mermaid",
             "flowchart TD",
+            f'    subgraph tile{tile_idx}["Tile {tile_idx}"]',
         ]
 
-        # Define nodes
-        for op_id in tile_ops:
-            node_id = _sanitize_node_id(op_id)
-            label = _flowchart_node_label(op_id, graph)
-            lines.append(f'    {node_id}["{label}"]')
-
-        # Dependency edges (solid for non-stalled, dashed for stalled)
+        # Collect unique fragments referenced by this tile's ops
+        seen_frags = set()
         for op_id in tile_ops:
             op = graph.micro_ops[op_id]
+            for frag_id in op.input_fragments + op.output_fragments:
+                seen_frags.add(frag_id)
+
+        # Define fragment nodes
+        for frag_id in sorted(seen_frags):
+            frag = graph.fragments.get(frag_id)
+            if not frag:
+                continue
+            node_id = _sanitize_node_id(frag_id)
+            shape_str = "[" + ",".join(str(d) for d in frag.shape) + "]" if frag.shape else ""
+            level = frag.home_level
+            if level == "HBM":
+                label = f"HBM: {frag.tensor_name}{shape_str} {frag.dtype}"
+            elif level == "VMEM":
+                slot = _find_resource_for_fragment(graph, frag_id, tile_ops, "vmem")
+                label = f"VMEM {slot}: {frag.tensor_name}{shape_str}"
+            elif level in ("REG", "acc"):
+                reg = _find_resource_for_fragment(graph, frag_id, tile_ops, "reg")
+                label = f"REG {reg}: {frag.tensor_name}{shape_str}"
+            else:
+                label = f"{level}: {frag.tensor_name}{shape_str}"
+            lines.append(f'        {node_id}["{label}"]')
+
+        # Create edges: for each op, connect input frags -> output frags
+        for op_id in tile_ops:
+            op = graph.micro_ops[op_id]
+            timing = schedule.op_timings.get(op_id)
+            latency = f"{int(timing.end_ns - timing.start_ns)}ns" if timing else ""
             reasons = stalls.get(op_id, [])
-            for dep in op.depends_on:
-                if dep in graph.micro_ops and _tile_index_from_op_id(dep) == tile_idx:
+
+            for in_frag in op.input_fragments:
+                if in_frag not in seen_frags:
+                    continue
+                for out_frag in op.output_fragments:
+                    if out_frag not in seen_frags:
+                        continue
+                    src = _sanitize_node_id(in_frag)
+                    dst = _sanitize_node_id(out_frag)
+                    edge_label = f"{op.op_kind} {latency}"
                     if reasons:
                         reason_str = ",".join(reasons)
-                        lines.append(
-                            f"    {_sanitize_node_id(dep)} -.{reason_str}.-> {_sanitize_node_id(op_id)}"
-                        )
+                        lines.append(f'        {src} -."{reason_str} {edge_label}".-> {dst}')
                     else:
-                        lines.append(
-                            f"    {_sanitize_node_id(dep)} --> {_sanitize_node_id(op_id)}"
-                        )
+                        lines.append(f'        {src} -->|"{edge_label}"| {dst}')
 
+        lines.append("    end")
         lines.append("```")
         blocks.append("\n".join(lines))
 
