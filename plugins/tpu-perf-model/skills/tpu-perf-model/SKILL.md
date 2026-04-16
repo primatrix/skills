@@ -194,18 +194,38 @@ When writing analysis conclusions, use **Chinese** for all narrative text:
 
 ## Pipeline Diagram
 
-When using micro-op analysis, ALWAYS include the Mermaid pipeline diagram by adding `--mermaid` to the CLI command:
+When using micro-op analysis, ALWAYS include the Mermaid pipeline diagrams by adding `--mermaid` to the CLI command:
 
 ```bash
 python scripts/cli.py --steps steps.json --analysis-level micro --mermaid
 ```
 
-Include the generated Mermaid Gantt block in your output. The diagram shows the first 3 tiles by default (startup + steady-state overlap). Use `--max-tiles N` to adjust.
+Include the generated Mermaid blocks in your output. The `--mermaid` flag produces two complementary diagrams:
+
+### Gantt Timeline (enhanced)
+
+Shows the first 3 tiles by default (startup + steady-state overlap). Use `--max-tiles N` to adjust.
+
+Each bar label includes:
+- **Tile dimensions**: `[M,N]` from the fragment shape
+- **Resource names**: VMEM slots (`q_slot0`) and REG groups (`acc_reg0`)
+- **Stall bars**: Red `crit` bars between ops where a gap exists, labeled with wait reason (`WAIT_DATA`, `WAIT_UNIT`, `WAIT_VMEM`, `WAIT_REG`)
 
 The diagram groups micro-ops by execution unit (DMA / MXU / VPU) and visually shows:
 - Which operations overlap across different units (pipeline parallelism)
-- Where stalls create gaps between bars
+- Where stalls create gaps between bars (red bars with reason labels)
 - How double-buffering enables tile overlap
+- Which resources each operation occupies
+
+### Per-Tile Flowchart
+
+One flowchart per tile showing the dataflow graph:
+
+- **Nodes**: Multi-line labels with op name, tile shape + dtype, execution unit, VMEM slot, and REG group
+- **Solid edges** (`-->`): Normal data dependencies from `depends_on`
+- **Dashed edges** (`-. .-->`): Stall/wait relationships labeled with reason (`WAIT_DATA`, `WAIT_UNIT`, `WAIT_REG`, `WAIT_VMEM`)
+
+Use the flowchart to trace dependency chains and identify which resource constraints cause stalls.
 
 ## Render Mermaid to Image
 
