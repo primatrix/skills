@@ -204,6 +204,7 @@ def _build_matmul_graph(step: ComputeStep, tile: TileConfig, step_idx: int | Non
             (),
             (q_slot,),
             (q_reg_group,),
+            required_vpr_count=q_vpr,
         )
         _add_micro_op(
             micro_ops,
@@ -216,6 +217,7 @@ def _build_matmul_graph(step: ComputeStep, tile: TileConfig, step_idx: int | Non
             (),
             (k_slot,),
             (k_reg_group,),
+            required_vpr_count=k_vpr,
         )
         _add_micro_op(
             micro_ops,
@@ -254,6 +256,7 @@ def _build_matmul_graph(step: ComputeStep, tile: TileConfig, step_idx: int | Non
             (),
             (out_slot,),
             (acc_reg_group,),
+            required_vpr_count=result_vpr,
         )
         _add_micro_op(
             micro_ops,
