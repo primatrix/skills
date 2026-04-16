@@ -356,6 +356,81 @@ class TestMicroOpBuilder(unittest.TestCase):
         for op in mxu_ops:
             self.assertEqual(op.required_vpr_count, 16)
 
+    def test_vpu_fragments_have_vpr_counts(self):
+        from compute_step import ComputeStep, TensorRef
+        from micro_op_builder import build_micro_op_graph_for_step
+        from pipeline_simulator import TileConfig
+
+        step = ComputeStep(
+            name="scale", op_type="elementwise",
+            inputs=[TensorRef("S", (128, 128), "bf16")],
+            outputs=[TensorRef("S2", (128, 128), "bf16")],
+            flops_formula="M*N", flops_vars={"M": 128, "N": 128},
+            compute_unit="VPU", fusable_with_prev=False,
+        )
+        tile = TileConfig(
+            block_dims={"dim0": 16384}, num_tiles=1,
+            tile_input_bytes=16384*2, tile_output_bytes=16384*2,
+            double_buffer=False, vmem_usage_bytes=16384*2*2,
+        )
+        graph = build_micro_op_graph_for_step(step, tile)
+        reg_frags = [f for f in graph.fragments.values() if f.home_level == "REG"]
+        for frag in reg_frags:
+            self.assertGreater(frag.vpr_count, 0)
+
+    def test_vpu_compute_vpr_count_is_in_plus_out(self):
+        from compute_step import ComputeStep, TensorRef
+        from micro_op_builder import build_micro_op_graph_for_step
+        from pipeline_simulator import TileConfig
+
+        step = ComputeStep(
+            name="scale", op_type="elementwise",
+            inputs=[TensorRef("S", (128, 128), "bf16")],
+            outputs=[TensorRef("S2", (128, 128), "bf16")],
+            flops_formula="M*N", flops_vars={"M": 128, "N": 128},
+            compute_unit="VPU", fusable_with_prev=False,
+        )
+        tile = TileConfig(
+            block_dims={"dim0": 16384}, num_tiles=1,
+            tile_input_bytes=16384*2, tile_output_bytes=16384*2,
+            double_buffer=False, vmem_usage_bytes=16384*2*2,
+        )
+        graph = build_micro_op_graph_for_step(step, tile)
+        vpu_ops = [op for op in graph.micro_ops.values() if op.op_kind == "vpu_compute"]
+        # 16384 elements * 2B = 32768 bytes / 4096 = 8 VPRs per tensor
+        for op in vpu_ops:
+            self.assertEqual(op.required_vpr_count, 16)  # in(8) + out(8)
+
+    def test_fused_vpu_has_vpr_counts(self):
+        from compute_step import ComputeStep, TensorRef
+        from micro_op_builder import build_micro_op_graph_for_pipeline
+        from pipeline_simulator import TileConfig
+
+        matmul = ComputeStep(
+            name="qk_matmul", op_type="matmul",
+            inputs=[TensorRef("Q", (128, 128), "bf16"), TensorRef("K", (128, 128), "bf16")],
+            outputs=[TensorRef("S", (128, 128), "bf16")],
+            flops_formula="2*M*N*K", flops_vars={"M": 128, "N": 128, "K": 128},
+            compute_unit="MXU", fusable_with_prev=False,
+        )
+        scale = ComputeStep(
+            name="scale", op_type="elementwise",
+            inputs=[TensorRef("S", (128, 128), "bf16")],
+            outputs=[TensorRef("S2", (128, 128), "bf16")],
+            flops_formula="M*N", flops_vars={"M": 128, "N": 128},
+            compute_unit="VPU", fusable_with_prev=True,
+        )
+        tile = TileConfig(
+            block_dims={"M": 128, "N": 128, "K": 128}, num_tiles=1,
+            tile_input_bytes=128*128*2*2, tile_output_bytes=128*128*2,
+            double_buffer=False, vmem_usage_bytes=128*128*2*3,
+        )
+        graph = build_micro_op_graph_for_pipeline([matmul, scale], [tile, tile])
+        fused_vpu_ops = [op for op in graph.micro_ops.values()
+                         if op.op_kind == "vpu_compute" and op.step_name == "scale"]
+        for op in fused_vpu_ops:
+            self.assertGreater(op.required_vpr_count, 0)
+
     def test_calc_vpr_count_bf16_128x128(self):
         from micro_op_builder import _calc_vpr_count
         from hw_params import TPU_V7X
