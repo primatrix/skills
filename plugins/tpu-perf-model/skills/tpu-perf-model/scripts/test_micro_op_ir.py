@@ -36,6 +36,33 @@ class TestMicroOpIR(unittest.TestCase):
         self.assertEqual(graph.root_ops(), ["load_q"])
         self.assertEqual(graph.leaf_ops(), ["load_q"])
 
+    def test_tensor_fragment_has_vpr_count(self):
+        from micro_op_ir import TensorFragment
+        frag = TensorFragment(
+            fragment_id="q_tile0_reg",
+            tensor_name="Q",
+            step_name="matmul",
+            shape=(128, 128),
+            dtype="bf16",
+            size_bytes=128 * 128 * 2,
+            home_level="REG",
+            vpr_count=8,
+        )
+        self.assertEqual(frag.vpr_count, 8)
+
+    def test_tensor_fragment_vpr_count_defaults_to_zero(self):
+        from micro_op_ir import TensorFragment
+        frag = TensorFragment(
+            fragment_id="q_hbm",
+            tensor_name="Q",
+            step_name="matmul",
+            shape=(128, 128),
+            dtype="bf16",
+            size_bytes=128 * 128 * 2,
+            home_level="HBM",
+        )
+        self.assertEqual(frag.vpr_count, 0)
+
 
 if __name__ == "__main__":
     unittest.main()

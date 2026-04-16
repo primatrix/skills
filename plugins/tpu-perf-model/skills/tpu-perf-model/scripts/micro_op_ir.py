@@ -16,6 +16,7 @@ class TensorFragment:
     home_level: str
     producer_op: str | None = None
     consumer_ops: tuple[str, ...] = ()
+    vpr_count: int = 0
 
 
 @dataclass
