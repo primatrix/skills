@@ -20,6 +20,14 @@ def _candidate_dims(max_val: int, alignment: int) -> list[int]:
     return candidates
 
 
+def _matmul_tile_vpr_count(bm: int, bn: int, bk: int, dtype_b: int, hw: TPUParams) -> int:
+    """Count VPRs needed for a matmul tile (peak of input + output registers)."""
+    q_vpr = math.ceil(bm * bk * dtype_b / hw.vpr_size_bytes)
+    k_vpr = math.ceil(bk * bn * dtype_b / hw.vpr_size_bytes)
+    result_vpr = math.ceil(bm * bn * dtype_b / hw.vpr_size_bytes)
+    return max(q_vpr + k_vpr, result_vpr)
+
+
 def _matmul_tile_vmem(bm: int, bn: int, bk: int, dtype_b: int, double_buffer: bool) -> int:
     """Compute VMEM usage for a matmul tile."""
     tile_a = bm * bk * dtype_b
@@ -101,6 +109,10 @@ def _find_matmul_tiling(step: ComputeStep, hw: TPUParams) -> TileConfig:
     for bm in bm_candidates:
         for bn in bn_candidates:
             for bk in bk_candidates:
+                vpr_count = _matmul_tile_vpr_count(bm, bn, bk, dtype_b, hw)
+                if vpr_count > hw.vpr_count:
+                    continue
+
                 # Try double buffer first
                 vmem_db = _matmul_tile_vmem(bm, bn, bk, dtype_b, double_buffer=True)
                 num_m = math.ceil(M / bm)
@@ -170,6 +182,10 @@ def _find_elementwise_tiling(step: ComputeStep, hw: TPUParams) -> TileConfig:
         tile_out = tile_size * dtype_b * n_out
         vmem = 2 * tile_in + tile_out
         if vmem <= hw.vmem_capacity_bytes:
+            in_vpr = math.ceil(tile_in / hw.vpr_size_bytes)
+            out_vpr = math.ceil(tile_out / hw.vpr_size_bytes)
+            if in_vpr + out_vpr > hw.vpr_count:
+                continue
             best_tile = tile_size
 
     tile_in = best_tile * dtype_b * n_in

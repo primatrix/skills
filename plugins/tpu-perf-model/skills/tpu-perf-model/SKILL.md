@@ -160,6 +160,15 @@ For each step, the report shows:
 | Fusion savings > 0 | Verify fusion is implemented in actual kernel |
 | Low efficiency vs peak | Multiple optimization opportunities exist |
 
+### VPR Pressure Analysis
+
+| Observation | Action |
+|-------------|--------|
+| Peak VPR > 24/32 (75%) | Approaching register limit, consider smaller tiles |
+| Peak VPR = 32/32 | At register limit, no room for fusion |
+| Spill count > 0 | Register spills detected — reduce tile size or unfuse ops |
+| VPR per tile > 16 | Large tiles — verify MXU utilization justifies the VPR cost |
+
 ### Micro-Op Analysis
 
 When using micro-op mode, interpret the report as a fragment-level execution plan:
@@ -181,7 +190,8 @@ When you answer with the micro-op model, use these sections in order:
 3. Residency Timeline
 4. Dependency Graph
 5. Critical Path
-6. Optimality Argument Under VMEM Constraint
+6. VPR Register Map — shows per-VPR allocation timeline across tiles
+7. Optimality Argument Under VMEM Constraint
 
 Do not collapse this into a generic summary. The point is to make the dataflow explicit enough that the user can see which fragments, units, and constraints control performance.
 

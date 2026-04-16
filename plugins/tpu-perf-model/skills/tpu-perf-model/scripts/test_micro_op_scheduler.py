@@ -243,6 +243,48 @@ class TestPeakResources(unittest.TestCase):
         result = schedule_micro_op_graph(graph, TPU_V7X)
         self.assertLessEqual(result.peak_reg_groups, TPU_V7X.reg_group_count)
 
+    def test_schedule_result_has_spill_fields(self):
+        from hw_params import TPU_V7X
+        from micro_op_ir import MicroOp, MicroOpGraph
+        from micro_op_scheduler import schedule_micro_op_graph
+
+        graph = MicroOpGraph(
+            fragments={},
+            micro_ops={
+                "load_q": MicroOp(
+                    op_id="load_q", step_name="matmul",
+                    op_kind="dma_load_hbm_to_vmem", depends_on=[],
+                    input_fragments=[], output_fragments=["q_vmem"],
+                    required_units=("DMA",), required_vmem_slots=("q_slot",),
+                    required_reg_groups=(), latency_ns=10.0,
+                ),
+            },
+        )
+        result = schedule_micro_op_graph(graph, TPU_V7X)
+        self.assertEqual(result.spill_count, 0)
+        self.assertEqual(result.spill_cost_ns, 0.0)
+
+    def test_schedule_result_has_peak_vpr_count(self):
+        from hw_params import TPU_V7X
+        from micro_op_ir import MicroOp, MicroOpGraph
+        from micro_op_scheduler import schedule_micro_op_graph
+
+        graph = MicroOpGraph(
+            fragments={},
+            micro_ops={
+                "move_q": MicroOp(
+                    op_id="move_q", step_name="matmul",
+                    op_kind="vmem_to_reg", depends_on=[],
+                    input_fragments=["q_vmem"], output_fragments=["q_reg"],
+                    required_units=(), required_vmem_slots=("q_slot",),
+                    required_reg_groups=("q_reg0",), latency_ns=1.0,
+                    required_vpr_count=8,
+                ),
+            },
+        )
+        result = schedule_micro_op_graph(graph, TPU_V7X)
+        self.assertEqual(result.peak_vpr_count, 8)
+
 
 if __name__ == "__main__":
     unittest.main()

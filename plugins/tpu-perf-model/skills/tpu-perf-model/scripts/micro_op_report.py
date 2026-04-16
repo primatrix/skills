@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import re
 
+from hw_params import TPU_V7X
 from micro_op_ir import MicroOpGraph
 from micro_op_scheduler import ScheduleResult
 from report import _format_ns
@@ -148,7 +149,68 @@ def _optimization_hints(schedule: ScheduleResult) -> list[str]:
     return [hints[dominant]]
 
 
-def micro_schedule_to_json(schedule: ScheduleResult, step_results: list[dict]) -> str:
+def _vpr_register_map(schedule: ScheduleResult, graph: MicroOpGraph) -> list[str]:
+    """Build VPR register allocation timeline lines."""
+    events: list[tuple[float, str]] = []
+    vpr_offset = 0
+
+    for frag_id, frag in graph.fragments.items():
+        if frag.home_level != "REG" or frag.vpr_count <= 0:
+            continue
+
+        # Find producer op (op that outputs this fragment)
+        producer_op_id = None
+        for op_id, op in graph.micro_ops.items():
+            if frag_id in op.output_fragments:
+                producer_op_id = op_id
+                break
+
+        # Find last consumer op
+        consumer_op_ids = [
+            op_id for op_id, op in graph.micro_ops.items()
+            if frag_id in op.input_fragments
+        ]
+
+        if producer_op_id and producer_op_id in schedule.op_timings:
+            alloc_time = schedule.op_timings[producer_op_id].start_ns
+            producer_kind = graph.micro_ops[producer_op_id].op_kind
+        else:
+            continue
+
+        free_time = None
+        free_kind = None
+        if consumer_op_ids:
+            last_consumer = max(
+                consumer_op_ids,
+                key=lambda oid: schedule.op_timings[oid].end_ns if oid in schedule.op_timings else 0,
+            )
+            if last_consumer in schedule.op_timings:
+                free_time = schedule.op_timings[last_consumer].end_ns
+                free_kind = graph.micro_ops[last_consumer].op_kind
+
+        vpr_start = vpr_offset
+        vpr_end = vpr_offset + frag.vpr_count - 1
+        vpr_offset += frag.vpr_count
+
+        shape_str = "[" + ",".join(str(d) for d in frag.shape) + "]"
+        events.append((alloc_time, f"VPR[{vpr_start:2d}..{vpr_end:2d}] <- {frag.tensor_name}{shape_str} {frag.dtype} ({producer_kind})"))
+        if free_time is not None:
+            events.append((free_time, f"VPR[{vpr_start:2d}..{vpr_end:2d}] -> freed ({free_kind})"))
+
+    events.sort(key=lambda e: e[0])
+
+    lines = ["=== VPR Register Map ==="]
+    for time_ns, desc in events:
+        lines.append(f"Time {time_ns:7.2f} ns: {desc}")
+    lines.append(
+        f"Peak: {schedule.peak_vpr_count}/{TPU_V7X.vpr_count} VPRs "
+        f"({schedule.peak_vpr_count * 100.0 / TPU_V7X.vpr_count:.1f}%), "
+        f"Spills: {schedule.spill_count} ({schedule.spill_cost_ns:.2f} ns)"
+    )
+    return lines
+
+
+def micro_schedule_to_json(schedule: ScheduleResult, step_results: list[dict], graph: MicroOpGraph | None = None) -> str:
     payload = {
         "summary": {
             "total_time_ns": schedule.total_time_ns,
@@ -163,11 +225,18 @@ def micro_schedule_to_json(schedule: ScheduleResult, step_results: list[dict]) -
         "critical_path": schedule.critical_path,
         "stall_breakdown": schedule.stall_breakdown,
         "optimization_hints": _optimization_hints(schedule),
+        "vpr_pressure": {
+            "peak_vpr_count": schedule.peak_vpr_count,
+            "vpr_capacity": TPU_V7X.vpr_count,
+            "utilization_pct": round(schedule.peak_vpr_count * 100.0 / TPU_V7X.vpr_count, 1),
+            "spill_count": schedule.spill_count,
+            "spill_cost_ns": schedule.spill_cost_ns,
+        },
     }
     return json.dumps(payload, indent=2)
 
 
-def micro_schedule_to_text(schedule: ScheduleResult, step_results: list[dict]) -> str:
+def micro_schedule_to_text(schedule: ScheduleResult, step_results: list[dict], graph: MicroOpGraph | None = None) -> str:
     lines = ["=== Macro Summary ==="]
     lines.append(f"Total schedule time: {_format_ns(schedule.total_time_ns)}")
     lines.append(f"Micro-ops: {len(schedule.op_timings)}")
@@ -211,6 +280,10 @@ def micro_schedule_to_text(schedule: ScheduleResult, step_results: list[dict]) -
     for hint in _optimization_hints(schedule):
         lines.append(f"- {hint}")
 
+    if graph is not None:
+        lines.append("")
+        lines.extend(_vpr_register_map(schedule, graph))
+
     return "\n".join(lines)
 
 
@@ -251,7 +324,6 @@ def micro_schedule_to_mermaid(
 
     # Collect intervals grouped by resource type
     vmem_resources: dict[str, list] = {}
-    reg_resources: dict[str, list] = {}
     for res_id, intervals in schedule.resource_occupancy.items():
         filtered = []
         for iv in intervals:
@@ -263,8 +335,6 @@ def micro_schedule_to_mermaid(
             continue
         if res_id.startswith("VMEM:"):
             vmem_resources[res_id] = sorted(filtered, key=lambda iv: iv.start_ns)
-        elif res_id.startswith("REG:"):
-            reg_resources[res_id] = sorted(filtered, key=lambda iv: iv.start_ns)
 
     lines = [
         "```mermaid",
@@ -290,27 +360,62 @@ def micro_schedule_to_mermaid(
                 lines.append(f"        {label} :{int(iv.start_ns)}, {int(iv.end_ns)}")
                 prev_end = iv.end_ns
 
-    # REG section
-    if reg_resources:
-        lines.append("    section REG Groups")
-        for res_id in sorted(reg_resources):
-            reg_name = res_id.split(":", 1)[1]
-            intervals = reg_resources[res_id]
-            prev_end = None
-            for iv in intervals:
-                if prev_end is not None and iv.start_ns > prev_end:
-                    wait_reasons = stalls.get(iv.op_id, [])
-                    wait_label = ",".join(wait_reasons) if wait_reasons else "WAIT"
-                    lines.append(f"        {wait_label} :crit, {int(prev_end)}, {int(iv.start_ns)}")
-                label = f"{reg_name} [{_short_label(iv.op_id)}]"
-                lines.append(f"        {label} :{int(iv.start_ns)}, {int(iv.end_ns)}")
-                prev_end = iv.end_ns
+    # VPR Registers section (replacing REG Groups)
+    if graph:
+        vpr_ranges: dict[str, list[tuple[float, float, str]]] = {}
+        vpr_offset = 0
+
+        for frag_id, frag in graph.fragments.items():
+            if frag.home_level != "REG" or frag.vpr_count <= 0:
+                continue
+            tile_idx = _tile_index_from_op_id(frag_id)
+            if tile_idx is not None and tile_idx >= max_tiles:
+                continue
+
+            # Find producer op
+            producer_op_id = None
+            for op_id, op in graph.micro_ops.items():
+                if frag_id in op.output_fragments:
+                    producer_op_id = op_id
+                    break
+            if not producer_op_id or producer_op_id not in schedule.op_timings:
+                continue
+
+            # Find last consumer
+            consumers = [oid for oid, op in graph.micro_ops.items() if frag_id in op.input_fragments]
+
+            alloc_time = schedule.op_timings[producer_op_id].start_ns
+            free_time = schedule.op_timings[producer_op_id].end_ns
+            if consumers:
+                last = max(consumers, key=lambda oid: schedule.op_timings.get(oid, schedule.op_timings[producer_op_id]).end_ns)
+                free_time = schedule.op_timings[last].end_ns
+
+            vpr_start = vpr_offset
+            vpr_end = vpr_offset + frag.vpr_count - 1
+            vpr_offset += frag.vpr_count
+
+            range_label = f"VPR {vpr_start}-{vpr_end}"
+            shape_str = "[" + ",".join(str(d) for d in frag.shape) + "]"
+            bar_label = f"{frag.tensor_name}{shape_str} {frag.dtype}"
+
+            if range_label not in vpr_ranges:
+                vpr_ranges[range_label] = []
+            vpr_ranges[range_label].append((alloc_time, free_time, bar_label))
+
+        if vpr_ranges:
+            lines.append("    section VPR Registers")
+            for range_label in sorted(vpr_ranges.keys(), key=lambda k: int(k.split()[1].split("-")[0])):
+                for start, end, label in vpr_ranges[range_label]:
+                    bar_text = f"{range_label}: {label}"
+                    lines.append(f"        {bar_text} :{int(start)}, {int(end)}")
 
     # Capacity comments
+    from hw_params import TPU_V7X
     peak_vmem = schedule.peak_vmem_slots
     peak_reg = schedule.peak_reg_groups
     lines.append(f"    %% Peak VMEM: {peak_vmem} slots")
     lines.append(f"    %% Peak REG: {peak_reg}/32 groups ({peak_reg * 100 // 32}%)")
+    lines.append(f"    %% Peak VPR: {schedule.peak_vpr_count}/{TPU_V7X.vpr_count} ({schedule.peak_vpr_count * 100 // TPU_V7X.vpr_count}%)")
 
     if total_tiles > max_tiles:
         lines.append(f"    %% ... tiles {max_tiles}-{total_tiles - 1} follow steady-state pattern ...")
@@ -395,8 +500,11 @@ def micro_schedule_to_mermaid_flowchart(
                 slot = _find_resource_for_fragment(graph, frag_id, tile_ops, "vmem")
                 label = f"VMEM {slot}: {frag.tensor_name}{shape_str}"
             elif level in ("REG", "acc"):
-                reg = _find_resource_for_fragment(graph, frag_id, tile_ops, "reg")
-                label = f"REG {reg}: {frag.tensor_name}{shape_str}"
+                if frag.vpr_count > 0:
+                    label = f"REG VPR[{frag.vpr_count}]: {frag.tensor_name}{shape_str} {frag.dtype}"
+                else:
+                    reg = _find_resource_for_fragment(graph, frag_id, tile_ops, "reg")
+                    label = f"REG {reg}: {frag.tensor_name}{shape_str}"
             else:
                 label = f"{level}: {frag.tensor_name}{shape_str}"
             lines.append(f'        {node_id}["{label}"]')

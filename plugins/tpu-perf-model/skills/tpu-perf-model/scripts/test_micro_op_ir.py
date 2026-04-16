@@ -36,6 +36,66 @@ class TestMicroOpIR(unittest.TestCase):
         self.assertEqual(graph.root_ops(), ["load_q"])
         self.assertEqual(graph.leaf_ops(), ["load_q"])
 
+    def test_tensor_fragment_has_vpr_count(self):
+        from micro_op_ir import TensorFragment
+        frag = TensorFragment(
+            fragment_id="q_tile0_reg",
+            tensor_name="Q",
+            step_name="matmul",
+            shape=(128, 128),
+            dtype="bf16",
+            size_bytes=128 * 128 * 2,
+            home_level="REG",
+            vpr_count=8,
+        )
+        self.assertEqual(frag.vpr_count, 8)
+
+    def test_tensor_fragment_vpr_count_defaults_to_zero(self):
+        from micro_op_ir import TensorFragment
+        frag = TensorFragment(
+            fragment_id="q_hbm",
+            tensor_name="Q",
+            step_name="matmul",
+            shape=(128, 128),
+            dtype="bf16",
+            size_bytes=128 * 128 * 2,
+            home_level="HBM",
+        )
+        self.assertEqual(frag.vpr_count, 0)
+
+    def test_micro_op_has_required_vpr_count(self):
+        from micro_op_ir import MicroOp
+        op = MicroOp(
+            op_id="mxu_tile0",
+            step_name="matmul",
+            op_kind="mxu_compute",
+            depends_on=[],
+            input_fragments=["q_reg", "k_reg"],
+            output_fragments=["acc_reg"],
+            required_units=("MXU",),
+            required_vmem_slots=(),
+            required_reg_groups=("q_reg0", "k_reg0"),
+            latency_ns=20.0,
+            required_vpr_count=16,
+        )
+        self.assertEqual(op.required_vpr_count, 16)
+
+    def test_micro_op_vpr_count_defaults_to_zero(self):
+        from micro_op_ir import MicroOp
+        op = MicroOp(
+            op_id="load_q",
+            step_name="matmul",
+            op_kind="dma_load",
+            depends_on=[],
+            input_fragments=[],
+            output_fragments=["q_vmem"],
+            required_units=("DMA",),
+            required_vmem_slots=("q_slot",),
+            required_reg_groups=(),
+            latency_ns=10.0,
+        )
+        self.assertEqual(op.required_vpr_count, 0)
+
 
 if __name__ == "__main__":
     unittest.main()

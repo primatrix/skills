@@ -114,6 +114,23 @@ class TestFlashAttentionE2E(unittest.TestCase):
         finally:
             os.unlink(tmp_path)
 
+    def test_cli_micro_mode_json_has_vpr_pressure(self):
+        scripts_dir = os.path.dirname(__file__)
+        example_path = os.path.join(scripts_dir, "examples", "flash_attention.json")
+        result = subprocess.run(
+            [
+                "python", os.path.join(scripts_dir, "cli.py"),
+                "--steps", example_path,
+                "--analysis-level", "micro",
+                "--format", "json",
+            ],
+            capture_output=True, text=True, cwd=scripts_dir,
+        )
+        self.assertEqual(result.returncode, 0, f"CLI failed: {result.stderr}")
+        data = json.loads(result.stdout)
+        self.assertIn("vpr_pressure", data)
+        self.assertLessEqual(data["vpr_pressure"]["peak_vpr_count"], 32)
+
 
 if __name__ == "__main__":
     unittest.main()
