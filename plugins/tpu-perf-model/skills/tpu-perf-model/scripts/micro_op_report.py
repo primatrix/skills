@@ -39,6 +39,11 @@ def _detect_op_stalls(
             schedule.op_timings[dep].end_ns for dep in op.depends_on
         )
 
+        # No stall if op starts exactly when deps are ready (no execution gap)
+        if timing.start_ns <= dep_ready:
+            stalls[op_id] = []
+            continue
+
         # Determine unit readiness from resource occupancy
         unit_ready = dep_ready
         for unit in op.required_units:
@@ -417,7 +422,7 @@ def micro_schedule_to_mermaid_flowchart(
                     if reasons:
                         reason_str = ",".join(reasons)
                         lines.append(
-                            f"    {_sanitize_node_id(dep)} -.{reason_str}.- {_sanitize_node_id(op_id)}"
+                            f"    {_sanitize_node_id(dep)} -.{reason_str}.-> {_sanitize_node_id(op_id)}"
                         )
                     else:
                         lines.append(

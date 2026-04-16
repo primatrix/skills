@@ -137,14 +137,30 @@ class TestMermaidOutput(unittest.TestCase):
 
 
 class TestStallDetection(unittest.TestCase):
-    def test_detect_op_stalls_returns_wait_reasons(self):
+    def test_detect_op_stalls_returns_dict(self):
         from micro_op_report import _detect_op_stalls
 
         schedule, graph = _sample_mermaid_schedule()
         stalls = _detect_op_stalls(schedule, graph)
         self.assertIsInstance(stalls, dict)
-        has_stall = any(reasons for reasons in stalls.values())
-        self.assertTrue(has_stall)
+        # All ops should be classified
+        self.assertEqual(len(stalls), len(graph.micro_ops))
+
+    def test_detect_op_stalls_no_stall_when_no_gap(self):
+        from micro_op_report import _detect_op_stalls
+
+        schedule, graph = _sample_mermaid_schedule()
+        stalls = _detect_op_stalls(schedule, graph)
+        # In a perfectly pipelined 2-tile matmul, ops start exactly
+        # when deps are ready — no execution gap means no stall.
+        for op_id, reasons in stalls.items():
+            op = graph.micro_ops[op_id]
+            if not op.depends_on:
+                continue
+            dep_ready = max(schedule.op_timings[d].end_ns for d in op.depends_on)
+            gap = schedule.op_timings[op_id].start_ns - dep_ready
+            if gap <= 0:
+                self.assertEqual(reasons, [], f"{op_id} has gap={gap} but reasons={reasons}")
 
     def test_detect_op_stalls_root_ops_have_no_stalls(self):
         from micro_op_report import _detect_op_stalls
