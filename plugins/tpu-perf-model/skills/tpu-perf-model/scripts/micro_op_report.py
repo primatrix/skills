@@ -324,7 +324,6 @@ def micro_schedule_to_mermaid(
 
     # Collect intervals grouped by resource type
     vmem_resources: dict[str, list] = {}
-    reg_resources: dict[str, list] = {}
     for res_id, intervals in schedule.resource_occupancy.items():
         filtered = []
         for iv in intervals:
@@ -336,8 +335,6 @@ def micro_schedule_to_mermaid(
             continue
         if res_id.startswith("VMEM:"):
             vmem_resources[res_id] = sorted(filtered, key=lambda iv: iv.start_ns)
-        elif res_id.startswith("REG:"):
-            reg_resources[res_id] = sorted(filtered, key=lambda iv: iv.start_ns)
 
     lines = [
         "```mermaid",
@@ -363,27 +360,62 @@ def micro_schedule_to_mermaid(
                 lines.append(f"        {label} :{int(iv.start_ns)}, {int(iv.end_ns)}")
                 prev_end = iv.end_ns
 
-    # REG section
-    if reg_resources:
-        lines.append("    section REG Groups")
-        for res_id in sorted(reg_resources):
-            reg_name = res_id.split(":", 1)[1]
-            intervals = reg_resources[res_id]
-            prev_end = None
-            for iv in intervals:
-                if prev_end is not None and iv.start_ns > prev_end:
-                    wait_reasons = stalls.get(iv.op_id, [])
-                    wait_label = ",".join(wait_reasons) if wait_reasons else "WAIT"
-                    lines.append(f"        {wait_label} :crit, {int(prev_end)}, {int(iv.start_ns)}")
-                label = f"{reg_name} [{_short_label(iv.op_id)}]"
-                lines.append(f"        {label} :{int(iv.start_ns)}, {int(iv.end_ns)}")
-                prev_end = iv.end_ns
+    # VPR Registers section (replacing REG Groups)
+    if graph:
+        vpr_ranges: dict[str, list[tuple[float, float, str]]] = {}
+        vpr_offset = 0
+
+        for frag_id, frag in graph.fragments.items():
+            if frag.home_level != "REG" or frag.vpr_count <= 0:
+                continue
+            tile_idx = _tile_index_from_op_id(frag_id)
+            if tile_idx is not None and tile_idx >= max_tiles:
+                continue
+
+            # Find producer op
+            producer_op_id = None
+            for op_id, op in graph.micro_ops.items():
+                if frag_id in op.output_fragments:
+                    producer_op_id = op_id
+                    break
+            if not producer_op_id or producer_op_id not in schedule.op_timings:
+                continue
+
+            # Find last consumer
+            consumers = [oid for oid, op in graph.micro_ops.items() if frag_id in op.input_fragments]
+
+            alloc_time = schedule.op_timings[producer_op_id].start_ns
+            free_time = schedule.op_timings[producer_op_id].end_ns
+            if consumers:
+                last = max(consumers, key=lambda oid: schedule.op_timings.get(oid, schedule.op_timings[producer_op_id]).end_ns)
+                free_time = schedule.op_timings[last].end_ns
+
+            vpr_start = vpr_offset
+            vpr_end = vpr_offset + frag.vpr_count - 1
+            vpr_offset += frag.vpr_count
+
+            range_label = f"VPR {vpr_start}-{vpr_end}"
+            shape_str = "[" + ",".join(str(d) for d in frag.shape) + "]"
+            bar_label = f"{frag.tensor_name}{shape_str} {frag.dtype}"
+
+            if range_label not in vpr_ranges:
+                vpr_ranges[range_label] = []
+            vpr_ranges[range_label].append((alloc_time, free_time, bar_label))
+
+        if vpr_ranges:
+            lines.append("    section VPR Registers")
+            for range_label in sorted(vpr_ranges.keys(), key=lambda k: int(k.split()[1].split("-")[0])):
+                for start, end, label in vpr_ranges[range_label]:
+                    bar_text = f"{range_label}: {label}"
+                    lines.append(f"        {bar_text} :{int(start)}, {int(end)}")
 
     # Capacity comments
+    from hw_params import TPU_V7X
     peak_vmem = schedule.peak_vmem_slots
     peak_reg = schedule.peak_reg_groups
     lines.append(f"    %% Peak VMEM: {peak_vmem} slots")
     lines.append(f"    %% Peak REG: {peak_reg}/32 groups ({peak_reg * 100 // 32}%)")
+    lines.append(f"    %% Peak VPR: {schedule.peak_vpr_count}/{TPU_V7X.vpr_count} ({schedule.peak_vpr_count * 100 // TPU_V7X.vpr_count}%)")
 
     if total_tiles > max_tiles:
         lines.append(f"    %% ... tiles {max_tiles}-{total_tiles - 1} follow steady-state pattern ...")
