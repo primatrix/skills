@@ -10,7 +10,7 @@ import sys
 from compute_step import load_steps, load_steps_from_file
 from hw_params import TPU_V7X
 from micro_op_builder import build_micro_op_graph_for_pipeline
-from micro_op_report import micro_schedule_to_json, micro_schedule_to_mermaid, micro_schedule_to_text
+from micro_op_report import micro_schedule_to_json, micro_schedule_to_mermaid, micro_schedule_to_mermaid_flowchart, micro_schedule_to_text
 from micro_op_scheduler import schedule_micro_op_graph
 from pipeline_simulator import simulate_steps
 from tiling_optimizer import find_optimal_tiling, find_optimal_tiling_with_analysis
@@ -53,6 +53,8 @@ def main():
         if args.mermaid:
             print()
             print(micro_schedule_to_mermaid(schedule, graph, max_tiles=args.max_tiles))
+            print()
+            print(micro_schedule_to_mermaid_flowchart(schedule, graph, max_tiles=args.max_tiles))
     else:
         if args.format == "json":
             print(pipeline_report_to_json(report))
