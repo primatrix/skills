@@ -267,5 +267,29 @@ class TestMicroOpBuilder(unittest.TestCase):
         self.assertIn("s1_rhs_store_tile0", graph.micro_ops["s2_combine_load_k_tile0"].depends_on)
 
 
+    def test_calc_vpr_count_bf16_128x128(self):
+        from micro_op_builder import _calc_vpr_count
+        from hw_params import TPU_V7X
+        # 128*128*2 = 32768 bytes / 4096 = 8 VPRs
+        self.assertEqual(_calc_vpr_count(128 * 128 * 2, TPU_V7X), 8)
+
+    def test_calc_vpr_count_f32_128x128(self):
+        from micro_op_builder import _calc_vpr_count
+        from hw_params import TPU_V7X
+        # 128*128*4 = 65536 bytes / 4096 = 16 VPRs
+        self.assertEqual(_calc_vpr_count(128 * 128 * 4, TPU_V7X), 16)
+
+    def test_calc_vpr_count_rounds_up(self):
+        from micro_op_builder import _calc_vpr_count
+        from hw_params import TPU_V7X
+        # 4097 bytes -> ceil(4097/4096) = 2 VPRs
+        self.assertEqual(_calc_vpr_count(4097, TPU_V7X), 2)
+
+    def test_calc_vpr_count_zero_bytes(self):
+        from micro_op_builder import _calc_vpr_count
+        from hw_params import TPU_V7X
+        self.assertEqual(_calc_vpr_count(0, TPU_V7X), 0)
+
+
 if __name__ == "__main__":
     unittest.main()

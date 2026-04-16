@@ -2,10 +2,18 @@
 """Expand tiled compute steps into fragment-level micro-op graphs."""
 from __future__ import annotations
 
+import math
+
 from compute_step import ComputeStep
-from hw_params import dtype_bytes
+from hw_params import TPUParams, dtype_bytes
 from micro_op_ir import MicroOp, MicroOpGraph, TensorFragment
 from pipeline_simulator import TileConfig
+
+
+def _calc_vpr_count(size_bytes: int, hw: TPUParams) -> int:
+    if size_bytes == 0:
+        return 0
+    return math.ceil(size_bytes / hw.vpr_size_bytes)
 
 
 def _tile_suffix(tile_idx: int) -> str:
@@ -42,6 +50,7 @@ def _add_fragment(
     size_bytes: int,
     home_level: str,
     producer_op: str | None = None,
+    vpr_count: int = 0,
 ) -> None:
     fragments[fragment_id] = TensorFragment(
         fragment_id=fragment_id,
@@ -52,6 +61,7 @@ def _add_fragment(
         size_bytes=size_bytes,
         home_level=home_level,
         producer_op=producer_op,
+        vpr_count=vpr_count,
     )
 
 
