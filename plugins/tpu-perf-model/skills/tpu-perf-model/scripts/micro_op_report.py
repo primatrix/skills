@@ -349,8 +349,8 @@ def micro_schedule_to_mermaid(
                 prev_end = iv.end_ns
 
     # Capacity comments
-    peak_vmem = getattr(schedule, 'peak_vmem_slots', 0)
-    peak_reg = getattr(schedule, 'peak_reg_groups', 0)
+    peak_vmem = schedule.peak_vmem_slots
+    peak_reg = schedule.peak_reg_groups
     lines.append(f"    %% Peak VMEM: {peak_vmem} slots")
     lines.append(f"    %% Peak REG: {peak_reg}/32 groups ({peak_reg * 100 // 32}%)")
 
