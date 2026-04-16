@@ -61,5 +61,78 @@ class TestMicroOpReport(unittest.TestCase):
         self.assertIn("Critical Path and Optimization Hints", text)
 
 
+def _sample_mermaid_schedule():
+    """Build a 2-tile matmul schedule for Mermaid testing."""
+    from compute_step import ComputeStep, TensorRef
+    from hw_params import TPU_V7X
+    from micro_op_builder import build_micro_op_graph_for_step
+    from micro_op_scheduler import schedule_micro_op_graph
+    from pipeline_simulator import TileConfig
+
+    step = ComputeStep(
+        name="qk_matmul",
+        op_type="matmul",
+        inputs=[
+            TensorRef(name="Q", shape=(256, 128), dtype="bf16"),
+            TensorRef(name="K", shape=(128, 256), dtype="bf16"),
+        ],
+        outputs=[
+            TensorRef(name="S", shape=(256, 256), dtype="bf16"),
+        ],
+        flops_formula="2*M*N*K",
+        flops_vars={"M": 256, "N": 256, "K": 128},
+        compute_unit="MXU",
+        fusable_with_prev=False,
+    )
+    tile = TileConfig(
+        block_dims={"M": 128, "N": 128, "K": 128},
+        num_tiles=2,
+        double_buffer=True,
+        tile_input_bytes=65536,
+        tile_output_bytes=32768,
+        vmem_usage_bytes=196608,
+    )
+    graph = build_micro_op_graph_for_step(step, tile, step_idx=0)
+    schedule = schedule_micro_op_graph(graph, TPU_V7X)
+    return schedule, graph
+
+
+class TestMermaidOutput(unittest.TestCase):
+    def test_mermaid_contains_gantt_structure(self):
+        from micro_op_report import micro_schedule_to_mermaid
+
+        schedule, graph = _sample_mermaid_schedule()
+        output = micro_schedule_to_mermaid(schedule, graph)
+        self.assertIn("```mermaid", output)
+        self.assertIn("gantt", output)
+        self.assertIn("dateFormat x", output)
+        self.assertIn("section DMA", output)
+        self.assertIn("section MXU", output)
+        self.assertIn("```\n", output.split("```mermaid")[1])
+
+    def test_mermaid_filters_tiles_by_max(self):
+        from micro_op_report import micro_schedule_to_mermaid
+
+        schedule, graph = _sample_mermaid_schedule()
+        output = micro_schedule_to_mermaid(schedule, graph, max_tiles=1)
+        self.assertIn("tile0", output)
+        self.assertNotIn("tile1", output)
+
+    def test_mermaid_shows_ellipsis_when_truncated(self):
+        from micro_op_report import micro_schedule_to_mermaid
+
+        schedule, graph = _sample_mermaid_schedule()
+        output = micro_schedule_to_mermaid(schedule, graph, max_tiles=1)
+        self.assertIn("%%", output)
+        self.assertIn("steady-state", output)
+
+    def test_mermaid_rejects_non_positive_max_tiles(self):
+        from micro_op_report import micro_schedule_to_mermaid
+
+        schedule, graph = _sample_mermaid_schedule()
+        with self.assertRaises(ValueError):
+            micro_schedule_to_mermaid(schedule, graph, max_tiles=0)
+
+
 if __name__ == "__main__":
     unittest.main()
