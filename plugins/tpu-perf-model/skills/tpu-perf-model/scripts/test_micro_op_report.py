@@ -51,6 +51,18 @@ class TestMicroOpReport(unittest.TestCase):
         self.assertIn("fragment_residency", payload)
         self.assertIn("critical_path", payload)
 
+    def test_json_contains_vpr_pressure(self):
+        from micro_op_report import micro_schedule_to_json
+        import json
+        payload = json.loads(micro_schedule_to_json(_sample_schedule_result(), []))
+        self.assertIn("vpr_pressure", payload)
+        vpr = payload["vpr_pressure"]
+        self.assertIn("peak_vpr_count", vpr)
+        self.assertIn("vpr_capacity", vpr)
+        self.assertIn("utilization_pct", vpr)
+        self.assertIn("spill_count", vpr)
+        self.assertIn("spill_cost_ns", vpr)
+
     def test_micro_report_text_contains_human_sections(self):
         from micro_op_report import micro_schedule_to_text
 

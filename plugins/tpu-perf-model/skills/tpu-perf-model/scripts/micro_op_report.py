@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import re
 
+from hw_params import TPU_V7X
 from micro_op_ir import MicroOpGraph
 from micro_op_scheduler import ScheduleResult
 from report import _format_ns
@@ -163,6 +164,13 @@ def micro_schedule_to_json(schedule: ScheduleResult, step_results: list[dict]) -
         "critical_path": schedule.critical_path,
         "stall_breakdown": schedule.stall_breakdown,
         "optimization_hints": _optimization_hints(schedule),
+        "vpr_pressure": {
+            "peak_vpr_count": schedule.peak_vpr_count,
+            "vpr_capacity": TPU_V7X.vpr_count,
+            "utilization_pct": round(schedule.peak_vpr_count * 100.0 / TPU_V7X.vpr_count, 1),
+            "spill_count": schedule.spill_count,
+            "spill_cost_ns": schedule.spill_cost_ns,
+        },
     }
     return json.dumps(payload, indent=2)
 
