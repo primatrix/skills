@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 
 from compute_step import ComputeStep
-from hw_params import TPUParams, dtype_bytes
+from hw_params import TPUParams, TPU_V7X, dtype_bytes
 from micro_op_ir import MicroOp, MicroOpGraph, TensorFragment
 from pipeline_simulator import TileConfig
 
@@ -77,6 +77,7 @@ def _add_micro_op(
     required_vmem_slots: tuple[str, ...],
     required_reg_groups: tuple[str, ...],
     latency_ns: float = 1.0,
+    required_vpr_count: int = 0,
 ) -> None:
     micro_ops[op_id] = MicroOp(
         op_id=op_id,
@@ -89,6 +90,7 @@ def _add_micro_op(
         required_vmem_slots=required_vmem_slots,
         required_reg_groups=required_reg_groups,
         latency_ns=latency_ns,
+        required_vpr_count=required_vpr_count,
     )
 
 
@@ -109,6 +111,7 @@ def _build_matmul_graph(step: ComputeStep, tile: TileConfig, step_idx: int | Non
     fragments: dict[str, TensorFragment] = {}
     micro_ops: dict[str, MicroOp] = {}
     step_token = _step_token(step, step_idx)
+    hw = TPU_V7X
 
     bm = tile.block_dims.get("M", 1)
     bn = tile.block_dims.get("N", 1)
@@ -118,6 +121,10 @@ def _build_matmul_graph(step: ComputeStep, tile: TileConfig, step_idx: int | Non
     bytes_per_input = bm * bk * dtype_b
     bytes_per_weight = bk * bn * dtype_b
     bytes_per_output = bm * bn * dtype_b
+
+    q_vpr = _calc_vpr_count(bytes_per_input, hw)
+    k_vpr = _calc_vpr_count(bytes_per_weight, hw)
+    result_vpr = _calc_vpr_count(bytes_per_output, hw)
 
     for tile_idx in range(tile.num_tiles):
         suffix = _tile_suffix(tile_idx)
@@ -130,19 +137,19 @@ def _build_matmul_graph(step: ComputeStep, tile: TileConfig, step_idx: int | Non
         k_vmem = _fragment_id(step_token, step.inputs[1].name, suffix, "vmem")
         k_reg = _fragment_id(step_token, step.inputs[1].name, suffix, "reg")
 
-        acc_reg = _fragment_id(step_token, step.outputs[0].name, suffix, "acc")
+        result_reg = _fragment_id(step_token, step.outputs[0].name, suffix, "reg")
         out_vmem = _fragment_id(step_token, step.outputs[0].name, suffix, "vmem")
         out_hbm = _fragment_id(step_token, step.outputs[0].name, suffix, "hbm")
 
         _add_fragment(fragments, q_hbm, step.inputs[0].name, step.name, (bm, bk), dtype, bytes_per_input, "HBM")
         _add_fragment(fragments, q_vmem, step.inputs[0].name, step.name, (bm, bk), dtype, bytes_per_input, "VMEM")
-        _add_fragment(fragments, q_reg, step.inputs[0].name, step.name, (bm, bk), dtype, bytes_per_input, "REG")
+        _add_fragment(fragments, q_reg, step.inputs[0].name, step.name, (bm, bk), dtype, bytes_per_input, "REG", vpr_count=q_vpr)
 
         _add_fragment(fragments, k_hbm, step.inputs[1].name, step.name, (bk, bn), dtype, bytes_per_weight, "HBM")
         _add_fragment(fragments, k_vmem, step.inputs[1].name, step.name, (bk, bn), dtype, bytes_per_weight, "VMEM")
-        _add_fragment(fragments, k_reg, step.inputs[1].name, step.name, (bk, bn), dtype, bytes_per_weight, "REG")
+        _add_fragment(fragments, k_reg, step.inputs[1].name, step.name, (bk, bn), dtype, bytes_per_weight, "REG", vpr_count=k_vpr)
 
-        _add_fragment(fragments, acc_reg, step.outputs[0].name, step.name, (bm, bn), dtype, bytes_per_output, "REG")
+        _add_fragment(fragments, result_reg, step.outputs[0].name, step.name, (bm, bn), dtype, bytes_per_output, "REG", vpr_count=result_vpr)
         _add_fragment(fragments, out_vmem, step.outputs[0].name, step.name, (bm, bn), dtype, bytes_per_output, "VMEM")
         _add_fragment(fragments, out_hbm, step.outputs[0].name, step.name, (bm, bn), dtype, bytes_per_output, "HBM")
 
@@ -158,6 +165,7 @@ def _build_matmul_graph(step: ComputeStep, tile: TileConfig, step_idx: int | Non
         move_q = f"{step_token}_vmem_to_reg_q_{suffix}"
         move_k = f"{step_token}_vmem_to_reg_k_{suffix}"
         mxu = f"{step_token}_mxu_{suffix}"
+        writeback = f"{step_token}_mxu_writeback_{suffix}"
         spill = f"{step_token}_reg_to_vmem_{suffix}"
         store = f"{step_token}_store_{suffix}"
 
@@ -216,18 +224,32 @@ def _build_matmul_graph(step: ComputeStep, tile: TileConfig, step_idx: int | Non
             "mxu_compute",
             [move_q, move_k],
             [q_reg, k_reg],
-            [acc_reg],
+            [],
             ("MXU",),
             (),
-            (q_reg_group, k_reg_group, acc_reg_group),
+            (q_reg_group, k_reg_group),
+            required_vpr_count=q_vpr + k_vpr,
+        )
+        _add_micro_op(
+            micro_ops,
+            writeback,
+            step.name,
+            "mxu_writeback",
+            [mxu],
+            [],
+            [result_reg],
+            (),
+            (),
+            (acc_reg_group,),
+            required_vpr_count=result_vpr,
         )
         _add_micro_op(
             micro_ops,
             spill,
             step.name,
             "reg_to_vmem",
-            [mxu],
-            [acc_reg],
+            [writeback],
+            [result_reg],
             [out_vmem],
             (),
             (out_slot,),

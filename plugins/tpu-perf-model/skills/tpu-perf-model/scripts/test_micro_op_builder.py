@@ -267,6 +267,95 @@ class TestMicroOpBuilder(unittest.TestCase):
         self.assertIn("s1_rhs_store_tile0", graph.micro_ops["s2_combine_load_k_tile0"].depends_on)
 
 
+    def test_matmul_graph_has_mxu_writeback_op(self):
+        from compute_step import ComputeStep, TensorRef
+        from micro_op_builder import build_micro_op_graph_for_step
+        from pipeline_simulator import TileConfig
+
+        step = ComputeStep(
+            name="qk_matmul", op_type="matmul",
+            inputs=[TensorRef("Q", (128, 128), "bf16"), TensorRef("K", (128, 128), "bf16")],
+            outputs=[TensorRef("S", (128, 128), "bf16")],
+            flops_formula="2*M*N*K", flops_vars={"M": 128, "N": 128, "K": 128},
+            compute_unit="MXU", fusable_with_prev=False,
+        )
+        tile = TileConfig(
+            block_dims={"M": 128, "N": 128, "K": 128}, num_tiles=1,
+            tile_input_bytes=128*128*2*2, tile_output_bytes=128*128*2,
+            double_buffer=False, vmem_usage_bytes=128*128*2*3,
+        )
+        graph = build_micro_op_graph_for_step(step, tile)
+        op_kinds = [op.op_kind for op in graph.micro_ops.values()]
+        self.assertIn("mxu_writeback", op_kinds)
+
+    def test_matmul_mxu_compute_does_not_hold_acc_reg(self):
+        from compute_step import ComputeStep, TensorRef
+        from micro_op_builder import build_micro_op_graph_for_step
+        from pipeline_simulator import TileConfig
+
+        step = ComputeStep(
+            name="qk_matmul", op_type="matmul",
+            inputs=[TensorRef("Q", (128, 128), "bf16"), TensorRef("K", (128, 128), "bf16")],
+            outputs=[TensorRef("S", (128, 128), "bf16")],
+            flops_formula="2*M*N*K", flops_vars={"M": 128, "N": 128, "K": 128},
+            compute_unit="MXU", fusable_with_prev=False,
+        )
+        tile = TileConfig(
+            block_dims={"M": 128, "N": 128, "K": 128}, num_tiles=1,
+            tile_input_bytes=128*128*2*2, tile_output_bytes=128*128*2,
+            double_buffer=False, vmem_usage_bytes=128*128*2*3,
+        )
+        graph = build_micro_op_graph_for_step(step, tile)
+        mxu_ops = [op for op in graph.micro_ops.values() if op.op_kind == "mxu_compute"]
+        for op in mxu_ops:
+            self.assertNotIn("acc_reg0", op.required_reg_groups)
+            self.assertNotIn("acc_reg1", op.required_reg_groups)
+
+    def test_matmul_fragments_have_vpr_counts(self):
+        from compute_step import ComputeStep, TensorRef
+        from micro_op_builder import build_micro_op_graph_for_step
+        from pipeline_simulator import TileConfig
+
+        step = ComputeStep(
+            name="qk_matmul", op_type="matmul",
+            inputs=[TensorRef("Q", (128, 128), "bf16"), TensorRef("K", (128, 128), "bf16")],
+            outputs=[TensorRef("S", (128, 128), "bf16")],
+            flops_formula="2*M*N*K", flops_vars={"M": 128, "N": 128, "K": 128},
+            compute_unit="MXU", fusable_with_prev=False,
+        )
+        tile = TileConfig(
+            block_dims={"M": 128, "N": 128, "K": 128}, num_tiles=1,
+            tile_input_bytes=128*128*2*2, tile_output_bytes=128*128*2,
+            double_buffer=False, vmem_usage_bytes=128*128*2*3,
+        )
+        graph = build_micro_op_graph_for_step(step, tile)
+        reg_frags = [f for f in graph.fragments.values() if f.home_level == "REG"]
+        for frag in reg_frags:
+            self.assertGreater(frag.vpr_count, 0, f"{frag.fragment_id} has vpr_count=0")
+
+    def test_matmul_mxu_compute_vpr_count_is_q_plus_k(self):
+        from compute_step import ComputeStep, TensorRef
+        from micro_op_builder import build_micro_op_graph_for_step
+        from pipeline_simulator import TileConfig
+
+        step = ComputeStep(
+            name="qk_matmul", op_type="matmul",
+            inputs=[TensorRef("Q", (128, 128), "bf16"), TensorRef("K", (128, 128), "bf16")],
+            outputs=[TensorRef("S", (128, 128), "bf16")],
+            flops_formula="2*M*N*K", flops_vars={"M": 128, "N": 128, "K": 128},
+            compute_unit="MXU", fusable_with_prev=False,
+        )
+        tile = TileConfig(
+            block_dims={"M": 128, "N": 128, "K": 128}, num_tiles=1,
+            tile_input_bytes=128*128*2*2, tile_output_bytes=128*128*2,
+            double_buffer=False, vmem_usage_bytes=128*128*2*3,
+        )
+        graph = build_micro_op_graph_for_step(step, tile)
+        mxu_ops = [op for op in graph.micro_ops.values() if op.op_kind == "mxu_compute"]
+        # Q=8 VPRs + K=8 VPRs = 16
+        for op in mxu_ops:
+            self.assertEqual(op.required_vpr_count, 16)
+
     def test_calc_vpr_count_bf16_128x128(self):
         from micro_op_builder import _calc_vpr_count
         from hw_params import TPU_V7X
