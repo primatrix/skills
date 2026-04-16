@@ -207,6 +207,25 @@ The diagram groups micro-ops by execution unit (DMA / MXU / VPU) and visually sh
 - Where stalls create gaps between bars
 - How double-buffering enables tile overlap
 
+## Render Mermaid to Image
+
+After generating the Mermaid pipeline diagram, render it to a PNG and open it for visual inspection:
+
+1. Extract the Mermaid source (content between ` ```mermaid ` and ` ``` ` fences) and save to a `.mmd` file
+2. Render with `mmdc` and open:
+
+```bash
+# Save Mermaid source (without fences) to file
+cat > pipeline.mmd << 'EOF'
+<paste mermaid content here>
+EOF
+
+# Render to PNG and open
+npx -y @mermaid-js/mermaid-cli mmdc -i pipeline.mmd -o pipeline.png && open pipeline.png
+```
+
+The timeline x-axis displays values in nanoseconds (`axisFormat %Q` renders the raw numeric timestamps). The title suffix `(ns)` confirms the unit.
+
 ## Gap Analysis (Optional)
 
 When comparing against `eval_result.json` from pallas-evolve profiling:
