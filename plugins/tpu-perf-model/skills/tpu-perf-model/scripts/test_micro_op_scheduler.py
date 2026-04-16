@@ -183,5 +183,66 @@ class TestMicroOpScheduler(unittest.TestCase):
         self.assertIn("mxu_main", result.critical_path)
 
 
+class TestPeakResources(unittest.TestCase):
+    def test_schedule_result_has_peak_fields(self):
+        from compute_step import ComputeStep, TensorRef
+        from micro_op_builder import build_micro_op_graph_for_step
+        from pipeline_simulator import TileConfig
+        from hw_params import TPU_V7X
+        from micro_op_scheduler import schedule_micro_op_graph
+
+        step = ComputeStep(
+            name="qk_matmul", op_type="matmul",
+            inputs=[
+                TensorRef(name="Q", shape=(256, 128), dtype="bf16"),
+                TensorRef(name="K", shape=(128, 256), dtype="bf16"),
+            ],
+            outputs=[TensorRef(name="S", shape=(256, 256), dtype="bf16")],
+            flops_formula="2*M*N*K",
+            flops_vars={"M": 256, "N": 256, "K": 128},
+            compute_unit="MXU", fusable_with_prev=False,
+        )
+        tile = TileConfig(
+            block_dims={"M": 128, "N": 128, "K": 128},
+            num_tiles=2, double_buffer=True,
+            tile_input_bytes=65536, tile_output_bytes=32768,
+            vmem_usage_bytes=196608,
+        )
+        graph = build_micro_op_graph_for_step(step, tile, step_idx=0)
+        result = schedule_micro_op_graph(graph, TPU_V7X)
+        self.assertIsInstance(result.peak_vmem_slots, int)
+        self.assertIsInstance(result.peak_reg_groups, int)
+        self.assertGreater(result.peak_vmem_slots, 0)
+        self.assertGreater(result.peak_reg_groups, 0)
+
+    def test_peak_reg_groups_within_hardware_limit(self):
+        from compute_step import ComputeStep, TensorRef
+        from micro_op_builder import build_micro_op_graph_for_step
+        from pipeline_simulator import TileConfig
+        from hw_params import TPU_V7X
+        from micro_op_scheduler import schedule_micro_op_graph
+
+        step = ComputeStep(
+            name="qk_matmul", op_type="matmul",
+            inputs=[
+                TensorRef(name="Q", shape=(256, 128), dtype="bf16"),
+                TensorRef(name="K", shape=(128, 256), dtype="bf16"),
+            ],
+            outputs=[TensorRef(name="S", shape=(256, 256), dtype="bf16")],
+            flops_formula="2*M*N*K",
+            flops_vars={"M": 256, "N": 256, "K": 128},
+            compute_unit="MXU", fusable_with_prev=False,
+        )
+        tile = TileConfig(
+            block_dims={"M": 128, "N": 128, "K": 128},
+            num_tiles=2, double_buffer=True,
+            tile_input_bytes=65536, tile_output_bytes=32768,
+            vmem_usage_bytes=196608,
+        )
+        graph = build_micro_op_graph_for_step(step, tile, step_idx=0)
+        result = schedule_micro_op_graph(graph, TPU_V7X)
+        self.assertLessEqual(result.peak_reg_groups, TPU_V7X.reg_group_count)
+
+
 if __name__ == "__main__":
     unittest.main()

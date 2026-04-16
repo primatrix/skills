@@ -31,6 +31,8 @@ class ScheduleResult:
     stall_breakdown: dict[str, int]
     critical_path: list[str]
     total_time_ns: float
+    peak_vmem_slots: int
+    peak_reg_groups: int
 
 
 def _resource_capacity(hw: TPUParams) -> dict[str, int]:
@@ -220,6 +222,31 @@ def schedule_micro_op_graph(graph: MicroOpGraph, hw: TPUParams) -> ScheduleResul
         raise ValueError("Micro-op graph contains unresolved dependencies or unsupported resource constraints")
 
     total_time_ns = max((timing.end_ns for timing in op_timings.values()), default=0.0)
+
+    # Compute peak concurrent resource usage via event-based sweep
+    all_events: list[tuple[float, int, str]] = []  # (time, +1/-1, type)
+    for resource_id, intervals in resource_occupancy.items():
+        if resource_id.startswith("VMEM:"):
+            for iv in intervals:
+                all_events.append((iv.start_ns, +1, "vmem"))
+                all_events.append((iv.end_ns, -1, "vmem"))
+        elif resource_id.startswith("REG:"):
+            for iv in intervals:
+                all_events.append((iv.start_ns, +1, "reg"))
+                all_events.append((iv.end_ns, -1, "reg"))
+    all_events.sort(key=lambda e: (e[0], e[1]))
+    peak_vmem = 0
+    peak_reg = 0
+    cur_vmem = 0
+    cur_reg = 0
+    for _, delta, rtype in all_events:
+        if rtype == "vmem":
+            cur_vmem += delta
+            peak_vmem = max(peak_vmem, cur_vmem)
+        else:
+            cur_reg += delta
+            peak_reg = max(peak_reg, cur_reg)
+
     return ScheduleResult(
         op_timings=op_timings,
         resource_occupancy=resource_occupancy,
@@ -227,4 +254,6 @@ def schedule_micro_op_graph(graph: MicroOpGraph, hw: TPUParams) -> ScheduleResul
         stall_breakdown=stall_breakdown,
         critical_path=_critical_path(graph),
         total_time_ns=total_time_ns,
+        peak_vmem_slots=peak_vmem,
+        peak_reg_groups=peak_reg,
     )
