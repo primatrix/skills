@@ -161,6 +161,8 @@ def micro_schedule_to_mermaid(
     max_tiles: int = 3,
 ) -> str:
     """Render the micro-op schedule as a Mermaid Gantt pipeline diagram."""
+    if max_tiles < 1:
+        raise ValueError("max_tiles must be >= 1")
     # Determine total tile count
     all_tile_indices = set()
     for op_id in schedule.op_timings:
@@ -199,7 +201,6 @@ def micro_schedule_to_mermaid(
         "gantt",
         f"    title Tile Pipeline: {title}",
         "    dateFormat x",
-        "    axisFormat %s ns",
     ]
 
     section_order = ["DMA", "MXU", "VPU"]

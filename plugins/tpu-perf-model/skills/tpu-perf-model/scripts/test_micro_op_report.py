@@ -126,6 +126,13 @@ class TestMermaidOutput(unittest.TestCase):
         self.assertIn("%%", output)
         self.assertIn("steady-state", output)
 
+    def test_mermaid_rejects_non_positive_max_tiles(self):
+        from micro_op_report import micro_schedule_to_mermaid
+
+        schedule, graph = _sample_mermaid_schedule()
+        with self.assertRaises(ValueError):
+            micro_schedule_to_mermaid(schedule, graph, max_tiles=0)
+
 
 if __name__ == "__main__":
     unittest.main()

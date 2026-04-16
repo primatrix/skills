@@ -39,6 +39,8 @@ def main():
 
     if args.mermaid and args.analysis_level != "micro":
         parser.error("--mermaid requires --analysis-level micro")
+    if args.mermaid and args.format == "json":
+        parser.error("--mermaid is only supported with --format text")
 
     if args.analysis_level == "micro":
         tile_configs = [find_optimal_tiling(step, TPU_V7X) for step in steps]
