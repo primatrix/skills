@@ -500,8 +500,11 @@ def micro_schedule_to_mermaid_flowchart(
                 slot = _find_resource_for_fragment(graph, frag_id, tile_ops, "vmem")
                 label = f"VMEM {slot}: {frag.tensor_name}{shape_str}"
             elif level in ("REG", "acc"):
-                reg = _find_resource_for_fragment(graph, frag_id, tile_ops, "reg")
-                label = f"REG {reg}: {frag.tensor_name}{shape_str}"
+                if frag.vpr_count > 0:
+                    label = f"REG VPR[{frag.vpr_count}]: {frag.tensor_name}{shape_str} {frag.dtype}"
+                else:
+                    reg = _find_resource_for_fragment(graph, frag_id, tile_ops, "reg")
+                    label = f"REG {reg}: {frag.tensor_name}{shape_str}"
             else:
                 label = f"{level}: {frag.tensor_name}{shape_str}"
             lines.append(f'        {node_id}["{label}"]')

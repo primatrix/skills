@@ -290,6 +290,13 @@ class TestDataFlowChart(unittest.TestCase):
         with self.assertRaises(ValueError):
             micro_schedule_to_mermaid_flowchart(schedule, graph, max_tiles=0)
 
+    def test_flowchart_shows_vpr_numbers(self):
+        from micro_op_report import micro_schedule_to_mermaid_flowchart
+        schedule, graph = _sample_mermaid_schedule()
+        output = micro_schedule_to_mermaid_flowchart(schedule, graph, max_tiles=1)
+        # REG nodes should show VPR[x] format
+        self.assertIn("VPR[", output)
+
 
 if __name__ == "__main__":
     unittest.main()
