@@ -10,6 +10,84 @@ from micro_op_scheduler import ScheduleResult
 from report import _format_ns
 
 
+def _detect_op_stalls(
+    schedule: ScheduleResult,
+    graph: MicroOpGraph,
+) -> dict[str, list[str]]:
+    """Re-derive per-op wait reasons from schedule timings.
+
+    Approximate re-derivation for diagram annotation (not scheduling).
+    Mirrors the scheduler's _classify_wait logic but works post-hoc from
+    resource_occupancy intervals rather than the internal *_busy_until
+    maps.  The unit-slot scan is an approximation since ScheduleResult
+    does not record which specific slot was chosen per op.
+
+    Categories: WAIT_DATA, WAIT_UNIT, WAIT_VMEM, WAIT_REG.
+    Root ops (no dependencies) always get an empty list.
+    """
+    # Build per-unit busy-until timeline from resource occupancy.
+    # For each op, find the latest end time of any resource occupancy
+    # interval that ends at or before the op's start time.
+    stalls: dict[str, list[str]] = {}
+    for op_id, op in graph.micro_ops.items():
+        if not op.depends_on:
+            stalls[op_id] = []
+            continue
+
+        timing = schedule.op_timings[op_id]
+        dep_ready = max(
+            schedule.op_timings[dep].end_ns for dep in op.depends_on
+        )
+
+        # No stall if op starts exactly when deps are ready (no execution gap)
+        if timing.start_ns <= dep_ready:
+            stalls[op_id] = []
+            continue
+
+        # Determine unit readiness from resource occupancy
+        unit_ready = dep_ready
+        for unit in op.required_units:
+            for res_id, intervals in schedule.resource_occupancy.items():
+                if not res_id.startswith(unit + ":"):
+                    continue
+                for iv in intervals:
+                    if iv.op_id != op_id and iv.end_ns <= timing.start_ns and iv.end_ns > unit_ready:
+                        unit_ready = iv.end_ns
+
+        # Determine VMEM slot readiness
+        vmem_ready = dep_ready
+        for slot in op.required_vmem_slots:
+            res_id = f"VMEM:{slot}"
+            for iv in schedule.resource_occupancy.get(res_id, []):
+                if iv.op_id != op_id and iv.end_ns <= timing.start_ns and iv.end_ns > vmem_ready:
+                    vmem_ready = iv.end_ns
+
+        # Determine register group readiness
+        reg_ready = dep_ready
+        for reg in op.required_reg_groups:
+            res_id = f"REG:{reg}"
+            for iv in schedule.resource_occupancy.get(res_id, []):
+                if iv.op_id != op_id and iv.end_ns <= timing.start_ns and iv.end_ns > reg_ready:
+                    reg_ready = iv.end_ns
+
+        # Find the binding constraint (latest ready time)
+        binding = max(dep_ready, unit_ready, vmem_ready, reg_ready)
+        if binding == dep_ready:
+            stalls[op_id] = ["WAIT_DATA"]
+        else:
+            reasons: list[str] = []
+            if unit_ready == binding and op.required_units:
+                reasons.append("WAIT_UNIT")
+            if vmem_ready == binding and op.required_vmem_slots:
+                reasons.append("WAIT_VMEM")
+            if reg_ready == binding and op.required_reg_groups:
+                reasons.append("WAIT_REG")
+            if not reasons:
+                reasons.append("WAIT_DATA")
+            stalls[op_id] = reasons
+    return stalls
+
+
 def _micro_op_rows(schedule: ScheduleResult) -> list[dict]:
     rows = []
     for op_id, timing in sorted(schedule.op_timings.items(), key=lambda item: (item[1].start_ns, item[0])):
@@ -155,6 +233,40 @@ def _short_label(op_id: str) -> str:
     return re.sub(r"^s\d+_", "", op_id)
 
 
+def _enhanced_label(op_id: str, graph: MicroOpGraph) -> str:
+    """Build label with tile shape and resource annotations."""
+    base = _short_label(op_id)
+    op = graph.micro_ops.get(op_id)
+    if not op:
+        return base
+    # Find tile shape from output fragments (fallback to input)
+    shape_str = ""
+    for frag_id in op.output_fragments:
+        frag = graph.fragments.get(frag_id)
+        if frag and frag.shape:
+            shape_str = "[" + ",".join(str(d) for d in frag.shape) + "]"
+            break
+    if not shape_str:
+        for frag_id in op.input_fragments:
+            frag = graph.fragments.get(frag_id)
+            if frag and frag.shape:
+                shape_str = "[" + ",".join(str(d) for d in frag.shape) + "]"
+                break
+    # Resource annotations
+    resources = []
+    for slot in op.required_vmem_slots:
+        resources.append(slot)
+    for reg in op.required_reg_groups:
+        resources.append(reg)
+    res_str = ",".join(resources) if resources else ""
+    parts = [base]
+    if shape_str:
+        parts.append(shape_str)
+    if res_str:
+        parts.append(res_str)
+    return " ".join(parts)
+
+
 def micro_schedule_to_mermaid(
     schedule: ScheduleResult,
     graph: MicroOpGraph,
@@ -204,17 +316,28 @@ def micro_schedule_to_mermaid(
         "    axisFormat %Q",
     ]
 
+    stalls = _detect_op_stalls(schedule, graph)
+
     section_order = ["DMA", "MXU", "VPU"]
     for unit in section_order:
         ops = unit_ops.get(unit)
         if not ops:
             continue
         lines.append(f"    section {unit}")
+        prev_end = None
         for op_id, start_ns, end_ns in ops:
-            label = _short_label(op_id)
+            # Insert stall bar if gap exists
+            if prev_end is not None and start_ns > prev_end:
+                wait_reasons = stalls.get(op_id, [])
+                wait_label = ",".join(wait_reasons) if wait_reasons else "WAIT"
+                lines.append(
+                    f"        {wait_label} :crit, {int(prev_end)}, {int(start_ns)}"
+                )
+            label = _enhanced_label(op_id, graph)
             lines.append(
                 f"        {label} :{int(start_ns)}, {int(end_ns)}"
             )
+            prev_end = end_ns
 
     if total_tiles > max_tiles:
         lines.append(
@@ -223,3 +346,90 @@ def micro_schedule_to_mermaid(
 
     lines.append("```")
     return "\n".join(lines) + "\n"
+
+
+def _sanitize_node_id(op_id: str) -> str:
+    """Make op_id safe for Mermaid node IDs (alphanumeric + underscore)."""
+    return re.sub(r"[^a-zA-Z0-9_]", "_", op_id)
+
+
+def _flowchart_node_label(op_id: str, graph: MicroOpGraph) -> str:
+    """Build multi-line Mermaid node label with shape, dtype, unit, resources."""
+    op = graph.micro_ops.get(op_id)
+    if not op:
+        return _short_label(op_id)
+    base = _short_label(op_id)
+    parts = [base]
+    for frag_id in op.output_fragments + op.input_fragments:
+        frag = graph.fragments.get(frag_id)
+        if frag and frag.shape:
+            shape_str = "[" + ",".join(str(d) for d in frag.shape) + "] " + frag.dtype
+            parts.append(shape_str)
+            break
+    if op.required_units:
+        parts.append(" | ".join(op.required_units))
+    if op.required_vmem_slots:
+        parts.append(",".join(op.required_vmem_slots))
+    if op.required_reg_groups:
+        parts.append(",".join(op.required_reg_groups))
+    return "<br/>".join(parts)
+
+
+def micro_schedule_to_mermaid_flowchart(
+    schedule: ScheduleResult,
+    graph: MicroOpGraph,
+    max_tiles: int = 3,
+) -> str:
+    """Render per-tile flowcharts showing dependencies and stall edges."""
+    if max_tiles < 1:
+        raise ValueError("max_tiles must be >= 1")
+
+    all_tile_indices = set()
+    for op_id in schedule.op_timings:
+        idx = _tile_index_from_op_id(op_id)
+        if idx is not None:
+            all_tile_indices.add(idx)
+    total_tiles = max(all_tile_indices, default=0) + 1 if all_tile_indices else 0
+
+    stalls = _detect_op_stalls(schedule, graph)
+    blocks: list[str] = []
+
+    for tile_idx in range(min(max_tiles, total_tiles)):
+        tile_ops = [
+            op_id for op_id in graph.micro_ops
+            if _tile_index_from_op_id(op_id) == tile_idx
+        ]
+        if not tile_ops:
+            continue
+
+        lines = [
+            "```mermaid",
+            "flowchart TD",
+        ]
+
+        # Define nodes
+        for op_id in tile_ops:
+            node_id = _sanitize_node_id(op_id)
+            label = _flowchart_node_label(op_id, graph)
+            lines.append(f'    {node_id}["{label}"]')
+
+        # Dependency edges (solid for non-stalled, dashed for stalled)
+        for op_id in tile_ops:
+            op = graph.micro_ops[op_id]
+            reasons = stalls.get(op_id, [])
+            for dep in op.depends_on:
+                if dep in graph.micro_ops and _tile_index_from_op_id(dep) == tile_idx:
+                    if reasons:
+                        reason_str = ",".join(reasons)
+                        lines.append(
+                            f"    {_sanitize_node_id(dep)} -.{reason_str}.-> {_sanitize_node_id(op_id)}"
+                        )
+                    else:
+                        lines.append(
+                            f"    {_sanitize_node_id(dep)} --> {_sanitize_node_id(op_id)}"
+                        )
+
+        lines.append("```")
+        blocks.append("\n".join(lines))
+
+    return "\n\n".join(blocks) + "\n"

@@ -136,5 +136,120 @@ class TestMermaidOutput(unittest.TestCase):
             micro_schedule_to_mermaid(schedule, graph, max_tiles=0)
 
 
+class TestStallDetection(unittest.TestCase):
+    def test_detect_op_stalls_returns_dict(self):
+        from micro_op_report import _detect_op_stalls
+
+        schedule, graph = _sample_mermaid_schedule()
+        stalls = _detect_op_stalls(schedule, graph)
+        self.assertIsInstance(stalls, dict)
+        # All ops should be classified
+        self.assertEqual(len(stalls), len(graph.micro_ops))
+
+    def test_detect_op_stalls_no_stall_when_no_gap(self):
+        from micro_op_report import _detect_op_stalls
+
+        schedule, graph = _sample_mermaid_schedule()
+        stalls = _detect_op_stalls(schedule, graph)
+        # In a perfectly pipelined 2-tile matmul, ops start exactly
+        # when deps are ready — no execution gap means no stall.
+        for op_id, reasons in stalls.items():
+            op = graph.micro_ops[op_id]
+            if not op.depends_on:
+                continue
+            dep_ready = max(schedule.op_timings[d].end_ns for d in op.depends_on)
+            gap = schedule.op_timings[op_id].start_ns - dep_ready
+            if gap <= 0:
+                self.assertEqual(reasons, [], f"{op_id} has gap={gap} but reasons={reasons}")
+
+    def test_detect_op_stalls_root_ops_have_no_stalls(self):
+        from micro_op_report import _detect_op_stalls
+
+        schedule, graph = _sample_mermaid_schedule()
+        stalls = _detect_op_stalls(schedule, graph)
+        root_ops = graph.root_ops()
+        for op_id in root_ops:
+            self.assertEqual(stalls.get(op_id, []), [])
+
+
+class TestEnhancedGantt(unittest.TestCase):
+    def test_gantt_labels_include_tile_shape(self):
+        from micro_op_report import micro_schedule_to_mermaid
+
+        schedule, graph = _sample_mermaid_schedule()
+        output = micro_schedule_to_mermaid(schedule, graph, max_tiles=1)
+        self.assertIn("[128,128]", output)
+
+    def test_gantt_labels_include_resource_names(self):
+        from micro_op_report import micro_schedule_to_mermaid
+
+        schedule, graph = _sample_mermaid_schedule()
+        output = micro_schedule_to_mermaid(schedule, graph, max_tiles=1)
+        self.assertTrue(
+            "slot" in output or "reg" in output,
+            f"Expected resource names in output, got:\n{output}",
+        )
+
+    def test_gantt_includes_stall_bars(self):
+        from micro_op_report import micro_schedule_to_mermaid
+
+        schedule, graph = _sample_mermaid_schedule()
+        output = micro_schedule_to_mermaid(schedule, graph, max_tiles=1)
+        self.assertIn("crit", output)
+
+
+class TestFlowchart(unittest.TestCase):
+    def test_flowchart_contains_structure(self):
+        from micro_op_report import micro_schedule_to_mermaid_flowchart
+
+        schedule, graph = _sample_mermaid_schedule()
+        output = micro_schedule_to_mermaid_flowchart(schedule, graph, max_tiles=1)
+        self.assertIn("```mermaid", output)
+        self.assertIn("flowchart TD", output)
+        self.assertIn("```\n", output.split("```mermaid")[1])
+
+    def test_flowchart_shows_tile_shape_in_node(self):
+        from micro_op_report import micro_schedule_to_mermaid_flowchart
+
+        schedule, graph = _sample_mermaid_schedule()
+        output = micro_schedule_to_mermaid_flowchart(schedule, graph, max_tiles=1)
+        self.assertIn("[128,128]", output)
+
+    def test_flowchart_shows_resource_annotations(self):
+        from micro_op_report import micro_schedule_to_mermaid_flowchart
+
+        schedule, graph = _sample_mermaid_schedule()
+        output = micro_schedule_to_mermaid_flowchart(schedule, graph, max_tiles=1)
+        self.assertTrue(
+            "slot" in output or "reg" in output,
+            f"Expected resource annotations in flowchart:\n{output}",
+        )
+
+    def test_flowchart_shows_dependency_edges(self):
+        from micro_op_report import micro_schedule_to_mermaid_flowchart
+
+        schedule, graph = _sample_mermaid_schedule()
+        output = micro_schedule_to_mermaid_flowchart(schedule, graph, max_tiles=1)
+        # Edges are solid (-->) or dashed (-.) depending on stall status
+        self.assertTrue(
+            "-->" in output or "-." in output,
+            f"Expected dependency edges in flowchart:\n{output}",
+        )
+
+    def test_flowchart_per_tile_count(self):
+        from micro_op_report import micro_schedule_to_mermaid_flowchart
+
+        schedule, graph = _sample_mermaid_schedule()
+        output = micro_schedule_to_mermaid_flowchart(schedule, graph, max_tiles=2)
+        self.assertEqual(output.count("flowchart TD"), 2)
+
+    def test_flowchart_rejects_non_positive_max_tiles(self):
+        from micro_op_report import micro_schedule_to_mermaid_flowchart
+
+        schedule, graph = _sample_mermaid_schedule()
+        with self.assertRaises(ValueError):
+            micro_schedule_to_mermaid_flowchart(schedule, graph, max_tiles=0)
+
+
 if __name__ == "__main__":
     unittest.main()
