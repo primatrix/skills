@@ -33,6 +33,9 @@ class ScheduleResult:
     total_time_ns: float
     peak_vmem_slots: int
     peak_reg_groups: int
+    peak_vpr_count: int = 0
+    spill_count: int = 0
+    spill_cost_ns: float = 0.0
 
 
 def _resource_capacity(hw: TPUParams) -> dict[str, int]:
@@ -247,6 +250,12 @@ def schedule_micro_op_graph(graph: MicroOpGraph, hw: TPUParams) -> ScheduleResul
             cur_reg += delta
             peak_reg = max(peak_reg, cur_reg)
 
+    # Track peak VPR count from required_vpr_count on each op
+    peak_vpr = 0
+    for op in graph.micro_ops.values():
+        if op.required_vpr_count > peak_vpr:
+            peak_vpr = op.required_vpr_count
+
     return ScheduleResult(
         op_timings=op_timings,
         resource_occupancy=resource_occupancy,
@@ -256,4 +265,5 @@ def schedule_micro_op_graph(graph: MicroOpGraph, hw: TPUParams) -> ScheduleResul
         total_time_ns=total_time_ns,
         peak_vmem_slots=peak_vmem,
         peak_reg_groups=peak_reg,
+        peak_vpr_count=peak_vpr,
     )
