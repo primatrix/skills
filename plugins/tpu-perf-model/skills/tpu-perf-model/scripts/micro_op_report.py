@@ -10,6 +10,79 @@ from micro_op_scheduler import ScheduleResult
 from report import _format_ns
 
 
+def _detect_op_stalls(
+    schedule: ScheduleResult,
+    graph: MicroOpGraph,
+) -> dict[str, list[str]]:
+    """Re-derive per-op wait reasons from schedule timings.
+
+    Approximate re-derivation for diagram annotation (not scheduling).
+    Mirrors the scheduler's _classify_wait logic but works post-hoc from
+    resource_occupancy intervals rather than the internal *_busy_until
+    maps.  The unit-slot scan is an approximation since ScheduleResult
+    does not record which specific slot was chosen per op.
+
+    Categories: WAIT_DATA, WAIT_UNIT, WAIT_VMEM, WAIT_REG.
+    Root ops (no dependencies) always get an empty list.
+    """
+    # Build per-unit busy-until timeline from resource occupancy.
+    # For each op, find the latest end time of any resource occupancy
+    # interval that ends at or before the op's start time.
+    stalls: dict[str, list[str]] = {}
+    for op_id, op in graph.micro_ops.items():
+        if not op.depends_on:
+            stalls[op_id] = []
+            continue
+
+        timing = schedule.op_timings[op_id]
+        dep_ready = max(
+            schedule.op_timings[dep].end_ns for dep in op.depends_on
+        )
+
+        # Determine unit readiness from resource occupancy
+        unit_ready = dep_ready
+        for unit in op.required_units:
+            for res_id, intervals in schedule.resource_occupancy.items():
+                if not res_id.startswith(unit + ":"):
+                    continue
+                for iv in intervals:
+                    if iv.op_id != op_id and iv.end_ns <= timing.start_ns and iv.end_ns > unit_ready:
+                        unit_ready = iv.end_ns
+
+        # Determine VMEM slot readiness
+        vmem_ready = dep_ready
+        for slot in op.required_vmem_slots:
+            res_id = f"VMEM:{slot}"
+            for iv in schedule.resource_occupancy.get(res_id, []):
+                if iv.op_id != op_id and iv.end_ns <= timing.start_ns and iv.end_ns > vmem_ready:
+                    vmem_ready = iv.end_ns
+
+        # Determine register group readiness
+        reg_ready = dep_ready
+        for reg in op.required_reg_groups:
+            res_id = f"REG:{reg}"
+            for iv in schedule.resource_occupancy.get(res_id, []):
+                if iv.op_id != op_id and iv.end_ns <= timing.start_ns and iv.end_ns > reg_ready:
+                    reg_ready = iv.end_ns
+
+        # Find the binding constraint (latest ready time)
+        binding = max(dep_ready, unit_ready, vmem_ready, reg_ready)
+        if binding == dep_ready:
+            stalls[op_id] = ["WAIT_DATA"]
+        else:
+            reasons: list[str] = []
+            if unit_ready == binding and op.required_units:
+                reasons.append("WAIT_UNIT")
+            if vmem_ready == binding and op.required_vmem_slots:
+                reasons.append("WAIT_VMEM")
+            if reg_ready == binding and op.required_reg_groups:
+                reasons.append("WAIT_REG")
+            if not reasons:
+                reasons.append("WAIT_DATA")
+            stalls[op_id] = reasons
+    return stalls
+
+
 def _micro_op_rows(schedule: ScheduleResult) -> list[dict]:
     rows = []
     for op_id, timing in sorted(schedule.op_timings.items(), key=lambda item: (item[1].start_ns, item[0])):

@@ -136,5 +136,25 @@ class TestMermaidOutput(unittest.TestCase):
             micro_schedule_to_mermaid(schedule, graph, max_tiles=0)
 
 
+class TestStallDetection(unittest.TestCase):
+    def test_detect_op_stalls_returns_wait_reasons(self):
+        from micro_op_report import _detect_op_stalls
+
+        schedule, graph = _sample_mermaid_schedule()
+        stalls = _detect_op_stalls(schedule, graph)
+        self.assertIsInstance(stalls, dict)
+        has_stall = any(reasons for reasons in stalls.values())
+        self.assertTrue(has_stall)
+
+    def test_detect_op_stalls_root_ops_have_no_stalls(self):
+        from micro_op_report import _detect_op_stalls
+
+        schedule, graph = _sample_mermaid_schedule()
+        stalls = _detect_op_stalls(schedule, graph)
+        root_ops = graph.root_ops()
+        for op_id in root_ops:
+            self.assertEqual(stalls.get(op_id, []), [])
+
+
 if __name__ == "__main__":
     unittest.main()
