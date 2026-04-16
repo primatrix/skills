@@ -149,7 +149,68 @@ def _optimization_hints(schedule: ScheduleResult) -> list[str]:
     return [hints[dominant]]
 
 
-def micro_schedule_to_json(schedule: ScheduleResult, step_results: list[dict]) -> str:
+def _vpr_register_map(schedule: ScheduleResult, graph: MicroOpGraph) -> list[str]:
+    """Build VPR register allocation timeline lines."""
+    events: list[tuple[float, str]] = []
+    vpr_offset = 0
+
+    for frag_id, frag in graph.fragments.items():
+        if frag.home_level != "REG" or frag.vpr_count <= 0:
+            continue
+
+        # Find producer op (op that outputs this fragment)
+        producer_op_id = None
+        for op_id, op in graph.micro_ops.items():
+            if frag_id in op.output_fragments:
+                producer_op_id = op_id
+                break
+
+        # Find last consumer op
+        consumer_op_ids = [
+            op_id for op_id, op in graph.micro_ops.items()
+            if frag_id in op.input_fragments
+        ]
+
+        if producer_op_id and producer_op_id in schedule.op_timings:
+            alloc_time = schedule.op_timings[producer_op_id].start_ns
+            producer_kind = graph.micro_ops[producer_op_id].op_kind
+        else:
+            continue
+
+        free_time = None
+        free_kind = None
+        if consumer_op_ids:
+            last_consumer = max(
+                consumer_op_ids,
+                key=lambda oid: schedule.op_timings[oid].end_ns if oid in schedule.op_timings else 0,
+            )
+            if last_consumer in schedule.op_timings:
+                free_time = schedule.op_timings[last_consumer].end_ns
+                free_kind = graph.micro_ops[last_consumer].op_kind
+
+        vpr_start = vpr_offset
+        vpr_end = vpr_offset + frag.vpr_count - 1
+        vpr_offset += frag.vpr_count
+
+        shape_str = "[" + ",".join(str(d) for d in frag.shape) + "]"
+        events.append((alloc_time, f"VPR[{vpr_start:2d}..{vpr_end:2d}] <- {frag.tensor_name}{shape_str} {frag.dtype} ({producer_kind})"))
+        if free_time is not None:
+            events.append((free_time, f"VPR[{vpr_start:2d}..{vpr_end:2d}] -> freed ({free_kind})"))
+
+    events.sort(key=lambda e: e[0])
+
+    lines = ["=== VPR Register Map ==="]
+    for time_ns, desc in events:
+        lines.append(f"Time {time_ns:7.2f} ns: {desc}")
+    lines.append(
+        f"Peak: {schedule.peak_vpr_count}/{TPU_V7X.vpr_count} VPRs "
+        f"({schedule.peak_vpr_count * 100.0 / TPU_V7X.vpr_count:.1f}%), "
+        f"Spills: {schedule.spill_count} ({schedule.spill_cost_ns:.2f} ns)"
+    )
+    return lines
+
+
+def micro_schedule_to_json(schedule: ScheduleResult, step_results: list[dict], graph: MicroOpGraph | None = None) -> str:
     payload = {
         "summary": {
             "total_time_ns": schedule.total_time_ns,
@@ -175,7 +236,7 @@ def micro_schedule_to_json(schedule: ScheduleResult, step_results: list[dict]) -
     return json.dumps(payload, indent=2)
 
 
-def micro_schedule_to_text(schedule: ScheduleResult, step_results: list[dict]) -> str:
+def micro_schedule_to_text(schedule: ScheduleResult, step_results: list[dict], graph: MicroOpGraph | None = None) -> str:
     lines = ["=== Macro Summary ==="]
     lines.append(f"Total schedule time: {_format_ns(schedule.total_time_ns)}")
     lines.append(f"Micro-ops: {len(schedule.op_timings)}")
@@ -218,6 +279,10 @@ def micro_schedule_to_text(schedule: ScheduleResult, step_results: list[dict]) -
     lines.append(f"Stalls: {schedule.stall_breakdown}")
     for hint in _optimization_hints(schedule):
         lines.append(f"- {hint}")
+
+    if graph is not None:
+        lines.append("")
+        lines.extend(_vpr_register_map(schedule, graph))
 
     return "\n".join(lines)
 

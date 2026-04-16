@@ -218,6 +218,21 @@ class TestStallDetection(unittest.TestCase):
             self.assertEqual(stalls.get(op_id, []), [])
 
 
+class TestVPRRegisterMap(unittest.TestCase):
+    def test_text_report_contains_vpr_register_map(self):
+        from micro_op_report import micro_schedule_to_text
+        schedule, graph = _sample_mermaid_schedule()
+        text = micro_schedule_to_text(schedule, [], graph=graph)
+        self.assertIn("VPR Register Map", text)
+        self.assertIn("VPR[", text)
+
+    def test_text_report_without_graph_has_no_vpr_map(self):
+        from micro_op_report import micro_schedule_to_text
+        schedule, _graph = _sample_mermaid_schedule()
+        text = micro_schedule_to_text(schedule, [])
+        self.assertNotIn("VPR Register Map", text)
+
+
 class TestDataFlowChart(unittest.TestCase):
     def test_flowchart_has_memory_level_nodes(self):
         from micro_op_report import micro_schedule_to_mermaid_flowchart

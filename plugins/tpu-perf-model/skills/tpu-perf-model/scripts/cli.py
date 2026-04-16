@@ -47,9 +47,9 @@ def main():
         graph = build_micro_op_graph_for_pipeline(steps, tile_configs)
         schedule = schedule_micro_op_graph(graph, TPU_V7X)
         if args.format == "json":
-            print(micro_schedule_to_json(schedule, step_results))
+            print(micro_schedule_to_json(schedule, step_results, graph=graph))
         else:
-            print(micro_schedule_to_text(schedule, step_results))
+            print(micro_schedule_to_text(schedule, step_results, graph=graph))
         if args.mermaid:
             print()
             print(micro_schedule_to_mermaid(schedule, graph, max_tiles=args.max_tiles))
