@@ -106,6 +106,8 @@ class TestMermaidOutput(unittest.TestCase):
         self.assertIn("```mermaid", output)
         self.assertIn("gantt", output)
         self.assertIn("dateFormat x", output)
+        self.assertIn("axisFormat %Q", output)
+        self.assertIn("(ns)", output)
         self.assertIn("section DMA", output)
         self.assertIn("section MXU", output)
         self.assertIn("```\n", output.split("```mermaid")[1])

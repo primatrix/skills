@@ -199,8 +199,9 @@ def micro_schedule_to_mermaid(
     lines = [
         "```mermaid",
         "gantt",
-        f"    title Tile Pipeline: {title}",
+        f"    title Tile Pipeline: {title} (ns)",
         "    dateFormat x",
+        "    axisFormat %Q",
     ]
 
     section_order = ["DMA", "MXU", "VPU"]
