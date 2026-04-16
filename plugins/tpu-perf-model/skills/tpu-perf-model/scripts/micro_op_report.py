@@ -228,6 +228,40 @@ def _short_label(op_id: str) -> str:
     return re.sub(r"^s\d+_", "", op_id)
 
 
+def _enhanced_label(op_id: str, graph: MicroOpGraph) -> str:
+    """Build label with tile shape and resource annotations."""
+    base = _short_label(op_id)
+    op = graph.micro_ops.get(op_id)
+    if not op:
+        return base
+    # Find tile shape from output fragments (fallback to input)
+    shape_str = ""
+    for frag_id in op.output_fragments:
+        frag = graph.fragments.get(frag_id)
+        if frag and frag.shape:
+            shape_str = "[" + ",".join(str(d) for d in frag.shape) + "]"
+            break
+    if not shape_str:
+        for frag_id in op.input_fragments:
+            frag = graph.fragments.get(frag_id)
+            if frag and frag.shape:
+                shape_str = "[" + ",".join(str(d) for d in frag.shape) + "]"
+                break
+    # Resource annotations
+    resources = []
+    for slot in op.required_vmem_slots:
+        resources.append(slot)
+    for reg in op.required_reg_groups:
+        resources.append(reg)
+    res_str = ",".join(resources) if resources else ""
+    parts = [base]
+    if shape_str:
+        parts.append(shape_str)
+    if res_str:
+        parts.append(res_str)
+    return " ".join(parts)
+
+
 def micro_schedule_to_mermaid(
     schedule: ScheduleResult,
     graph: MicroOpGraph,
@@ -277,17 +311,28 @@ def micro_schedule_to_mermaid(
         "    axisFormat %Q",
     ]
 
+    stalls = _detect_op_stalls(schedule, graph)
+
     section_order = ["DMA", "MXU", "VPU"]
     for unit in section_order:
         ops = unit_ops.get(unit)
         if not ops:
             continue
         lines.append(f"    section {unit}")
+        prev_end = None
         for op_id, start_ns, end_ns in ops:
-            label = _short_label(op_id)
+            # Insert stall bar if gap exists
+            if prev_end is not None and start_ns > prev_end:
+                wait_reasons = stalls.get(op_id, [])
+                wait_label = ",".join(wait_reasons) if wait_reasons else "WAIT"
+                lines.append(
+                    f"        {wait_label} :crit, {int(prev_end)}, {int(start_ns)}"
+                )
+            label = _enhanced_label(op_id, graph)
             lines.append(
                 f"        {label} :{int(start_ns)}, {int(end_ns)}"
             )
+            prev_end = end_ns
 
     if total_tiles > max_tiles:
         lines.append(

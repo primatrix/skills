@@ -156,5 +156,31 @@ class TestStallDetection(unittest.TestCase):
             self.assertEqual(stalls.get(op_id, []), [])
 
 
+class TestEnhancedGantt(unittest.TestCase):
+    def test_gantt_labels_include_tile_shape(self):
+        from micro_op_report import micro_schedule_to_mermaid
+
+        schedule, graph = _sample_mermaid_schedule()
+        output = micro_schedule_to_mermaid(schedule, graph, max_tiles=1)
+        self.assertIn("[128,128]", output)
+
+    def test_gantt_labels_include_resource_names(self):
+        from micro_op_report import micro_schedule_to_mermaid
+
+        schedule, graph = _sample_mermaid_schedule()
+        output = micro_schedule_to_mermaid(schedule, graph, max_tiles=1)
+        self.assertTrue(
+            "slot" in output or "reg" in output,
+            f"Expected resource names in output, got:\n{output}",
+        )
+
+    def test_gantt_includes_stall_bars(self):
+        from micro_op_report import micro_schedule_to_mermaid
+
+        schedule, graph = _sample_mermaid_schedule()
+        output = micro_schedule_to_mermaid(schedule, graph, max_tiles=1)
+        self.assertIn("crit", output)
+
+
 if __name__ == "__main__":
     unittest.main()
