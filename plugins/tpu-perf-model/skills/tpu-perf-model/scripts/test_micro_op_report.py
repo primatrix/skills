@@ -214,7 +214,11 @@ class TestFlowchart(unittest.TestCase):
 
         schedule, graph = _sample_mermaid_schedule()
         output = micro_schedule_to_mermaid_flowchart(schedule, graph, max_tiles=1)
-        self.assertIn("-->", output)
+        # Edges are solid (-->) or dashed (-.) depending on stall status
+        self.assertTrue(
+            "-->" in output or "-." in output,
+            f"Expected dependency edges in flowchart:\n{output}",
+        )
 
     def test_flowchart_per_tile_count(self):
         from micro_op_report import micro_schedule_to_mermaid_flowchart

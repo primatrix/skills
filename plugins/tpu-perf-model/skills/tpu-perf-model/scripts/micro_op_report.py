@@ -408,27 +408,21 @@ def micro_schedule_to_mermaid_flowchart(
             label = _flowchart_node_label(op_id, graph)
             lines.append(f'    {node_id}["{label}"]')
 
-        # Dependency edges (solid)
+        # Dependency edges (solid for non-stalled, dashed for stalled)
         for op_id in tile_ops:
             op = graph.micro_ops[op_id]
-            for dep in op.depends_on:
-                if dep in graph.micro_ops and _tile_index_from_op_id(dep) == tile_idx:
-                    lines.append(
-                        f"    {_sanitize_node_id(dep)} --> {_sanitize_node_id(op_id)}"
-                    )
-
-        # Stall edges (dashed)
-        for op_id in tile_ops:
             reasons = stalls.get(op_id, [])
-            if not reasons:
-                continue
-            op = graph.micro_ops[op_id]
             for dep in op.depends_on:
                 if dep in graph.micro_ops and _tile_index_from_op_id(dep) == tile_idx:
-                    reason_str = ",".join(reasons)
-                    lines.append(
-                        f"    {_sanitize_node_id(dep)} -.{reason_str}.- {_sanitize_node_id(op_id)}"
-                    )
+                    if reasons:
+                        reason_str = ",".join(reasons)
+                        lines.append(
+                            f"    {_sanitize_node_id(dep)} -.{reason_str}.- {_sanitize_node_id(op_id)}"
+                        )
+                    else:
+                        lines.append(
+                            f"    {_sanitize_node_id(dep)} --> {_sanitize_node_id(op_id)}"
+                        )
 
         lines.append("```")
         blocks.append("\n".join(lines))
