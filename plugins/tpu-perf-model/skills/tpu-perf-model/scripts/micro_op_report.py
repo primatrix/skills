@@ -220,51 +220,9 @@ def _tile_index_from_op_id(op_id: str) -> int | None:
     return int(match.group(1)) if match else None
 
 
-def _unit_from_op(graph: MicroOpGraph, op_id: str) -> str | None:
-    """Return the primary execution unit (DMA, MXU, VPU) for a micro-op."""
-    op = graph.micro_ops.get(op_id)
-    if not op or not op.required_units:
-        return None
-    return op.required_units[0]
-
-
 def _short_label(op_id: str) -> str:
     """Shorten op_id for Mermaid bar labels. Strip step prefix like 's0_'."""
     return re.sub(r"^s\d+_", "", op_id)
-
-
-def _enhanced_label(op_id: str, graph: MicroOpGraph) -> str:
-    """Build label with tile shape and resource annotations."""
-    base = _short_label(op_id)
-    op = graph.micro_ops.get(op_id)
-    if not op:
-        return base
-    # Find tile shape from output fragments (fallback to input)
-    shape_str = ""
-    for frag_id in op.output_fragments:
-        frag = graph.fragments.get(frag_id)
-        if frag and frag.shape:
-            shape_str = "[" + ",".join(str(d) for d in frag.shape) + "]"
-            break
-    if not shape_str:
-        for frag_id in op.input_fragments:
-            frag = graph.fragments.get(frag_id)
-            if frag and frag.shape:
-                shape_str = "[" + ",".join(str(d) for d in frag.shape) + "]"
-                break
-    # Resource annotations
-    resources = []
-    for slot in op.required_vmem_slots:
-        resources.append(slot)
-    for reg in op.required_reg_groups:
-        resources.append(reg)
-    res_str = ",".join(resources) if resources else ""
-    parts = [base]
-    if shape_str:
-        parts.append(shape_str)
-    if res_str:
-        parts.append(res_str)
-    return " ".join(parts)
 
 
 def micro_schedule_to_mermaid(
@@ -364,28 +322,6 @@ def micro_schedule_to_mermaid(
 def _sanitize_node_id(op_id: str) -> str:
     """Make op_id safe for Mermaid node IDs (alphanumeric + underscore)."""
     return re.sub(r"[^a-zA-Z0-9_]", "_", op_id)
-
-
-def _flowchart_node_label(op_id: str, graph: MicroOpGraph) -> str:
-    """Build multi-line Mermaid node label with shape, dtype, unit, resources."""
-    op = graph.micro_ops.get(op_id)
-    if not op:
-        return _short_label(op_id)
-    base = _short_label(op_id)
-    parts = [base]
-    for frag_id in op.output_fragments + op.input_fragments:
-        frag = graph.fragments.get(frag_id)
-        if frag and frag.shape:
-            shape_str = "[" + ",".join(str(d) for d in frag.shape) + "] " + frag.dtype
-            parts.append(shape_str)
-            break
-    if op.required_units:
-        parts.append(" | ".join(op.required_units))
-    if op.required_vmem_slots:
-        parts.append(",".join(op.required_vmem_slots))
-    if op.required_reg_groups:
-        parts.append(",".join(op.required_reg_groups))
-    return "<br/>".join(parts)
 
 
 def _find_resource_for_fragment(
