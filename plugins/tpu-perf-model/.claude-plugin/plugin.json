@@ -1,5 +1,6 @@
 {
   "name": "tpu-perf-model",
   "description": "Theoretical TPU v7x performance modeling via Register/VMEM/HBM data flow simulation",
-  "version": "1.0.0"
+  "version": "1.1.0",
+  "skills": ["tpu-perf-model", "tpu-pipeline-scheduler"]
 }
