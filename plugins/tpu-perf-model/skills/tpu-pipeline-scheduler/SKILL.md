@@ -32,11 +32,14 @@ The input is a JSON file describing a sequence of hardware instructions with exp
       "op_kind": "DMA_LOAD | DMA_STORE | MXU | VPU | VMEM_TO_REG | REG_TO_VMEM",
       "input_vprs": [0, 1, 2, 3],
       "output_vprs": [4, 5, 6, 7],
+      "weight_vprs": [0, 1],
+      "data_vprs": [2, 3],
       "input_vmem": ["slot_name"],
       "output_vmem": ["slot_name"],
       "latency_ns": 500,
       "unit": "DMA | MXU | VPU",
-      "label": "Human-readable description"
+      "label": "Human-readable description",
+      "pseudocode": "S = Q @ K.T"
     }
   ]
 }
@@ -48,13 +51,16 @@ The input is a JSON file describing a sequence of hardware instructions with exp
 |-------|-------------|
 | `op_id` | Unique instruction identifier |
 | `op_kind` | Instruction type (DMA_LOAD, DMA_STORE, MXU, VPU, VMEM_TO_REG, REG_TO_VMEM) |
-| `input_vprs` | VPR numbers read (0-31) |
+| `input_vprs` | VPR numbers read (0-31). For MXU ops, auto-computed from `weight_vprs + data_vprs` if omitted |
 | `output_vprs` | VPR numbers written (0-31) |
+| `weight_vprs` | (MXU only) VPRs loaded during MXU weight phase |
+| `data_vprs` | (MXU only) VPRs used during MXU data/compute phase |
 | `input_vmem` | VMEM slot names read |
 | `output_vmem` | VMEM slot names written |
 | `latency_ns` | Instruction latency in nanoseconds |
 | `unit` | Execution unit (DMA, MXU, VPU) |
 | `label` | Optional human-readable description |
+| `pseudocode` | Optional short pseudocode (shown in animation panel) |
 
 ### TPU v7x Hardware Reference
 
@@ -62,6 +68,14 @@ The input is a JSON file describing a sequence of hardware instructions with exp
 - 3 execution units: DMA, MXU, VPU — each runs one instruction at a time
 - Dual MXU at 2307 TFLOPS BF16
 - 64 MiB VMEM, 192 GB HBM at 3690 GB/s
+
+#### Dual MXU Pipeline Model
+
+Each MXU op is split into two phases on separate sub-units:
+- **MXU_W (weight loading)**: loads weight VPRs into the systolic array. ~10% of total latency.
+- **MXU_D (data computation)**: streams data VPRs through the array and writes output. ~90% of total latency.
+
+This enables pipelining: the next MXU op's weight phase can overlap with the current op's data phase, as long as the weight VPRs are ready. Specify `weight_vprs` and `data_vprs` separately to enable this optimization.
 
 ## CLI Usage
 
@@ -86,6 +100,12 @@ python scripts/pipeline_ir_cli.py --pipeline kernel.json --plot
 
 # Custom output path
 python scripts/pipeline_ir_cli.py --pipeline kernel.json --plot --plot-output my_chart.png
+
+# Interactive HTML animation
+python scripts/pipeline_ir_cli.py --pipeline kernel.json --animate
+
+# Animation with custom output path
+python scripts/pipeline_ir_cli.py --pipeline kernel.json --animate --animate-output my_animation.html
 ```
 
 ### CLI Options
@@ -98,6 +118,8 @@ python scripts/pipeline_ir_cli.py --pipeline kernel.json --plot --plot-output my
 | `--mermaid` | flag | Include Mermaid diagrams (text format only) |
 | `--plot` | flag | Generate VPR timeline heatmap as PNG image |
 | `--plot-output` | path | Output path for plot (default: `<name>_vpr_timeline.png`) |
+| `--animate` | flag | Generate interactive HTML animation |
+| `--animate-output` | path | Output path for animation (default: `<name>_pipeline.html`) |
 
 ## Output Sections
 
@@ -152,10 +174,20 @@ Matplotlib-rendered 2D heatmap with:
 
 Requires `matplotlib` (`pip install matplotlib`).
 
+### 6. HTML Interactive Animation
+
+Self-contained HTML file with animated pipeline playback:
+
+- **Layout**: Gantt chart (top), VPR heatmap (center), pseudocode panel (right side), playback controls (bottom)
+- **Playback controls**: Play/pause button, time scrubber, speed selector (0.5x-4x)
+- **Color scheme**: DMA=blue, MXU=red, VPU=green; intensity varies by access state (write/read/live)
+- **Fusion effects**: Fused op groups flash with a glow effect during playback
+- **Pseudocode panel**: Highlights the active op's pseudocode line in real time
+
 ## Workflow
 
 1. **Decompose** your kernel tile into Pipeline IR instructions
-2. **Assign VPRs** explicitly — this is where the design happens
+2. **Assign VPRs** explicitly, or use VPR auto-allocation (set VPR numbers to placeholder values and let the allocator assign optimal registers)
 3. **Run analysis** to identify hazards, stalls, and pressure points
 4. **Iterate** on VPR assignments and instruction ordering
 5. **Validate** that peak VPR pressure stays within hardware limits (32 VPRs)

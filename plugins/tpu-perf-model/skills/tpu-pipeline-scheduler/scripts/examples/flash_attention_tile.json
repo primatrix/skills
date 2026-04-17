@@ -11,7 +11,8 @@
       "output_vmem": ["q_buf"],
       "latency_ns": 200,
       "unit": "DMA",
-      "label": "Load Q tile [128,128] from HBM"
+      "label": "Load Q tile [128,128] from HBM",
+      "pseudocode": "load Q[128,128]"
     },
     {
       "op_id": "load_k",
@@ -22,7 +23,8 @@
       "output_vmem": ["k_buf"],
       "latency_ns": 200,
       "unit": "DMA",
-      "label": "Load K tile [128,128] from HBM"
+      "label": "Load K tile [128,128] from HBM",
+      "pseudocode": "load K[128,128]"
     },
     {
       "op_id": "q_to_reg",
@@ -33,7 +35,8 @@
       "output_vmem": [],
       "latency_ns": 10,
       "unit": "VPU",
-      "label": "Q buf -> VPR[0:3]"
+      "label": "Q buf -> VPR[0:3]",
+      "pseudocode": "Q \u2192 VPR[0:3]"
     },
     {
       "op_id": "k_to_reg",
@@ -44,18 +47,21 @@
       "output_vmem": [],
       "latency_ns": 10,
       "unit": "VPU",
-      "label": "K buf -> VPR[4:7]"
+      "label": "K buf -> VPR[4:7]",
+      "pseudocode": "K \u2192 VPR[4:7]"
     },
     {
       "op_id": "mxu_qk",
       "op_kind": "MXU",
-      "input_vprs": [0, 1, 2, 3, 4, 5, 6, 7],
+      "weight_vprs": [4, 5, 6, 7],
+      "data_vprs": [0, 1, 2, 3],
       "output_vprs": [8, 9, 10, 11],
       "input_vmem": [],
       "output_vmem": [],
       "latency_ns": 500,
       "unit": "MXU",
-      "label": "QK^T matmul -> VPR[8:11]"
+      "label": "QK^T matmul -> VPR[8:11]",
+      "pseudocode": "S = Q @ K.T"
     },
     {
       "op_id": "softmax",
@@ -66,7 +72,8 @@
       "output_vmem": [],
       "latency_ns": 150,
       "unit": "VPU",
-      "label": "softmax(QK^T) -> VPR[12:15]"
+      "label": "softmax(QK^T) -> VPR[12:15]",
+      "pseudocode": "P = softmax(S)"
     },
     {
       "op_id": "load_v",
@@ -77,7 +84,8 @@
       "output_vmem": ["v_buf"],
       "latency_ns": 200,
       "unit": "DMA",
-      "label": "Load V tile [128,128] from HBM"
+      "label": "Load V tile [128,128] from HBM",
+      "pseudocode": "load V[128,128]"
     },
     {
       "op_id": "v_to_reg",
@@ -88,18 +96,21 @@
       "output_vmem": [],
       "latency_ns": 10,
       "unit": "VPU",
-      "label": "V buf -> VPR[16:19]"
+      "label": "V buf -> VPR[16:19]",
+      "pseudocode": "V \u2192 VPR[16:19]"
     },
     {
       "op_id": "mxu_sv",
       "op_kind": "MXU",
-      "input_vprs": [12, 13, 14, 15, 16, 17, 18, 19],
+      "weight_vprs": [16, 17, 18, 19],
+      "data_vprs": [12, 13, 14, 15],
       "output_vprs": [20, 21, 22, 23],
       "input_vmem": [],
       "output_vmem": [],
       "latency_ns": 500,
       "unit": "MXU",
-      "label": "softmax(QK^T) @ V -> VPR[20:23]"
+      "label": "softmax(QK^T) @ V -> VPR[20:23]",
+      "pseudocode": "O = softmax(S) @ V"
     },
     {
       "op_id": "result_to_vmem",
@@ -110,7 +121,8 @@
       "output_vmem": ["out_buf"],
       "latency_ns": 10,
       "unit": "VPU",
-      "label": "VPR[20:23] -> out buf"
+      "label": "VPR[20:23] -> out buf",
+      "pseudocode": "O \u2192 VMEM"
     },
     {
       "op_id": "store_out",
@@ -121,7 +133,8 @@
       "output_vmem": [],
       "latency_ns": 200,
       "unit": "DMA",
-      "label": "Store output tile to HBM"
+      "label": "Store output tile to HBM",
+      "pseudocode": "store O[128,128]"
     }
   ]
 }
