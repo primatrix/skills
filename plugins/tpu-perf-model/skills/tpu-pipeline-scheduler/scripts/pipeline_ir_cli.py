@@ -38,6 +38,14 @@ def main():
         "--mermaid", action="store_true",
         help="Include Mermaid diagram output (text format only)",
     )
+    parser.add_argument(
+        "--plot", action="store_true",
+        help="Generate VPR timeline plot as PNG image",
+    )
+    parser.add_argument(
+        "--plot-output",
+        help="Output path for plot (default: <spec_name>_vpr_timeline.png)",
+    )
     args = parser.parse_args()
 
     sections = set(args.show.split(","))
@@ -79,6 +87,12 @@ def main():
             output_parts.append(suggest_to_json(spec.ops))
         else:
             output_parts.append(suggest_to_text(spec.ops))
+
+    if args.plot:
+        from pipeline_plot import plot_vpr_timeline
+        plot_path = args.plot_output or f"{spec.name}_vpr_timeline.png"
+        plot_vpr_timeline(spec.ops, sched, graph, plot_path, title=spec.name)
+        print(f"Plot saved to: {plot_path}")
 
     print("\n\n".join(output_parts))
 
