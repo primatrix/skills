@@ -35,7 +35,7 @@ Collect one at a time:
 1. **Level**: Goal / Task / SubTask
 2. **Parent issue** (Task/SubTask only): list project items, filter by parent level, let user pick
 3. **Title**: concise issue title
-4. **Description**: structured as Objective and Acceptance Criteria
+4. **Description**: structured as 目标 (Objective) and 验收标准 (Acceptance Criteria), written in Chinese
 5. **Type label** (`type/`): feat / bug / refactor / docs / chore
 6. **Priority label** (`p/`): choose one: `p0/blocker` / `p1/urgent` / `p2/high` / `p3/normal`
 
@@ -143,24 +143,24 @@ Print: issue URL, title, assigned user, new status.
 
 ### Goal
 ```
-## Objective
+## 目标
 
-{objective}
+{objective_in_chinese}
 
-## Acceptance Criteria
+## 验收标准
 
-{acceptance_criteria}
+{acceptance_criteria_in_chinese}
 ```
 
 ### Task / SubTask
 ```
-## Objective
+## 目标
 
-{objective}
+{objective_in_chinese}
 
-## Acceptance Criteria
+## 验收标准
 
-{acceptance_criteria}
+{acceptance_criteria_in_chinese}
 
 <!-- beaver-tracking
 repos:
