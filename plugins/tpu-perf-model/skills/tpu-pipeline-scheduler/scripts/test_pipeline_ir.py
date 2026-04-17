@@ -194,5 +194,82 @@ class TestPipelineSpec(unittest.TestCase):
             load_spec(data)
 
 
+class TestPipelineOpMXU(unittest.TestCase):
+    def test_mxu_op_with_weight_and_data_vprs(self):
+        from pipeline_ir import PipelineOp
+        op = PipelineOp(
+            op_id="mxu_qk", op_kind="MXU",
+            weight_vprs=[0, 1, 2, 3], data_vprs=[4, 5, 6, 7],
+            input_vprs=[], output_vprs=[8, 9, 10, 11],
+            input_vmem=[], output_vmem=[],
+            latency_ns=500.0, unit="MXU",
+        )
+        self.assertEqual(op.weight_vprs, [0, 1, 2, 3])
+        self.assertEqual(op.data_vprs, [4, 5, 6, 7])
+        self.assertEqual(op.input_vprs, [0, 1, 2, 3, 4, 5, 6, 7])
+
+    def test_non_mxu_op_weight_data_default_empty(self):
+        from pipeline_ir import PipelineOp
+        op = PipelineOp(
+            op_id="vpu_op", op_kind="VPU",
+            input_vprs=[0, 1], output_vprs=[2],
+            input_vmem=[], output_vmem=[],
+            latency_ns=50.0, unit="VPU",
+        )
+        self.assertEqual(op.weight_vprs, [])
+        self.assertEqual(op.data_vprs, [])
+
+    def test_pseudocode_field(self):
+        from pipeline_ir import PipelineOp
+        op = PipelineOp(
+            op_id="mxu", op_kind="MXU",
+            weight_vprs=[0], data_vprs=[1], input_vprs=[],
+            output_vprs=[2], input_vmem=[], output_vmem=[],
+            latency_ns=500.0, unit="MXU",
+            pseudocode="S = Q @ K.T",
+        )
+        self.assertEqual(op.pseudocode, "S = Q @ K.T")
+
+    def test_pseudocode_defaults_empty(self):
+        from pipeline_ir import PipelineOp
+        op = PipelineOp(
+            op_id="x", op_kind="VPU", input_vprs=[], output_vprs=[0],
+            input_vmem=[], output_vmem=[], latency_ns=10.0, unit="VPU",
+        )
+        self.assertEqual(op.pseudocode, "")
+
+    def test_load_spec_parses_mxu_fields(self):
+        from pipeline_ir import load_spec
+        data = {
+            "name": "test", "hw": "v7x",
+            "ops": [{
+                "op_id": "mxu_qk", "op_kind": "MXU",
+                "weight_vprs": [0, 1], "data_vprs": [2, 3],
+                "output_vprs": [4, 5],
+                "latency_ns": 500, "unit": "MXU",
+                "pseudocode": "S = Q @ K.T",
+            }],
+        }
+        spec = load_spec(data)
+        op = spec.ops[0]
+        self.assertEqual(op.weight_vprs, [0, 1])
+        self.assertEqual(op.data_vprs, [2, 3])
+        self.assertEqual(op.input_vprs, [0, 1, 2, 3])
+        self.assertEqual(op.pseudocode, "S = Q @ K.T")
+
+    def test_load_spec_backward_compat_no_weight_data(self):
+        from pipeline_ir import load_spec
+        data = {
+            "name": "test", "hw": "v7x",
+            "ops": [{
+                "op_id": "vpu", "op_kind": "VPU",
+                "input_vprs": [0], "output_vprs": [1],
+                "latency_ns": 10, "unit": "VPU",
+            }],
+        }
+        spec = load_spec(data)
+        self.assertEqual(spec.ops[0].input_vprs, [0])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -109,7 +109,10 @@ _COLORS = {
     ("VPU", "live"):  "#d5f5e3",
 }
 
-_UNIT_COLORS = {"DMA": "#2980b9", "MXU": "#c0392b", "VPU": "#27ae60"}
+_UNIT_COLORS = {
+    "DMA": "#2980b9", "MXU": "#c0392b", "VPU": "#27ae60",
+    "MXU_W": "#c0392b", "MXU_D": "#e74c3c",
+}
 
 _HAZARD_STYLES = {
     "RAW": {"linestyle": "-",  "color": "#333333"},
@@ -157,16 +160,43 @@ def plot_vpr_timeline(
     fig.subplots_adjust(hspace=0.08)
 
     # === Gantt strips ===
-    unit_order = ["DMA", "MXU", "VPU"]
+    unit_order = ["DMA", "MXU_W", "MXU_D", "VPU"]
     for u_idx, unit in enumerate(unit_order):
         for entry in sched.entries:
-            if entry.unit == unit:
+            if entry.unit == "MXU" and entry.phases:
+                for ph in entry.phases:
+                    if ph.unit_slot == unit:
+                        ax_gantt.barh(
+                            u_idx, ph.end_ns - ph.start_ns, left=ph.start_ns,
+                            height=0.7, color=_UNIT_COLORS[unit], alpha=0.85,
+                            edgecolor="white", linewidth=0.5,
+                        )
+                        width = ph.end_ns - ph.start_ns
+                        if width / total_ns > 0.08:
+                            ax_gantt.text(
+                                ph.start_ns + width / 2, u_idx,
+                                entry.op_id, ha="center", va="center",
+                                fontsize=7, color="white", fontweight="bold",
+                            )
+            elif entry.unit == "MXU" and unit == "MXU_W":
                 ax_gantt.barh(
                     u_idx, entry.end_ns - entry.start_ns, left=entry.start_ns,
                     height=0.7, color=_UNIT_COLORS[unit], alpha=0.85,
                     edgecolor="white", linewidth=0.5,
                 )
-                # Label ops with op_id if wide enough
+                width = entry.end_ns - entry.start_ns
+                if width / total_ns > 0.08:
+                    ax_gantt.text(
+                        entry.start_ns + width / 2, u_idx,
+                        entry.op_id, ha="center", va="center",
+                        fontsize=7, color="white", fontweight="bold",
+                    )
+            elif entry.unit == unit:
+                ax_gantt.barh(
+                    u_idx, entry.end_ns - entry.start_ns, left=entry.start_ns,
+                    height=0.7, color=_UNIT_COLORS[unit], alpha=0.85,
+                    edgecolor="white", linewidth=0.5,
+                )
                 width = entry.end_ns - entry.start_ns
                 if width / total_ns > 0.08:
                     ax_gantt.text(
@@ -243,7 +273,7 @@ def plot_vpr_timeline(
 
     # === Legend ===
     legend_handles = []
-    for unit in unit_order:
+    for unit in ["DMA", "MXU", "VPU"]:
         for access, label in [("write", "Write"), ("read", "Read"), ("live", "Live")]:
             c = _COLORS[(unit, access)]
             legend_handles.append(mpatches.Patch(color=c, label=f"{unit} {label}"))

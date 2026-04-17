@@ -60,39 +60,65 @@ def deps_to_mermaid(graph: DependencyGraph) -> str:
     return "\n".join(lines)
 
 
+def _build_unit_spans(sched: ScheduleResult) -> dict[str, list[tuple[float, float, str]]]:
+    """Build time spans per unit row: DMA, MXU_W, MXU_D, VPU.
+
+    For MXU entries with phases, split into MXU_W and MXU_D rows.
+    For MXU entries without phases, place entire span on MXU_W.
+    Returns {unit_row: [(start, end, op_id), ...]}.
+    """
+    spans: dict[str, list[tuple[float, float, str]]] = {
+        "DMA": [], "MXU_W": [], "MXU_D": [], "VPU": [],
+    }
+    for e in sched.entries:
+        if e.unit == "MXU" and e.phases:
+            for ph in e.phases:
+                spans[ph.unit_slot].append((ph.start_ns, ph.end_ns, e.op_id))
+        elif e.unit == "MXU":
+            spans["MXU_W"].append((e.start_ns, e.end_ns, e.op_id))
+        else:
+            spans.setdefault(e.unit, []).append((e.start_ns, e.end_ns, e.op_id))
+    return spans
+
+
 def gantt_to_text(sched: ScheduleResult) -> str:
     lines: list[str] = []
     lines.append("=== Pipeline Gantt ===")
     lines.append("")
     total = sched.total_latency_ns
-    by_unit: dict[str, list] = {"DMA": [], "MXU": [], "VPU": []}
-    for e in sched.entries:
-        by_unit.setdefault(e.unit, []).append(e)
+    spans = _build_unit_spans(sched)
 
     width = 60
-    for unit in ["DMA", "MXU", "VPU"]:
-        entries = by_unit.get(unit, [])
-        if not entries:
+    for unit in ["DMA", "MXU_W", "MXU_D", "VPU"]:
+        row_spans = spans.get(unit, [])
+        if not row_spans:
             bar = "·" * width
         else:
             bar = list("·" * width)
-            for e in entries:
-                s = int(e.start_ns / total * width) if total > 0 else 0
-                f = max(s + 1, int(e.end_ns / total * width) if total > 0 else 1)
+            for s_ns, e_ns, _ in row_spans:
+                s = int(s_ns / total * width) if total > 0 else 0
+                f = max(s + 1, int(e_ns / total * width) if total > 0 else 1)
                 for i in range(s, min(f, width)):
                     bar[i] = "█"
             bar = "".join(bar)
-        lines.append(f"{unit:>4} |{bar}| {total:.0f}ns")
+        lines.append(f"{unit:>5} |{bar}| {total:.0f}ns")
 
     lines.append("")
     lines.append(f"{'Op':<15} {'Unit':<5} {'Start':>8} {'End':>8} "
                  f"{'Stall':>8} {'Wait'}")
     lines.append("-" * 65)
     for e in sched.entries:
-        lines.append(
-            f"{e.op_id:<15} {e.unit:<5} {e.start_ns:>8.0f} {e.end_ns:>8.0f} "
-            f"{e.stall_ns:>8.0f} {e.wait_reason}"
-        )
+        if e.unit == "MXU" and e.phases:
+            for ph in e.phases:
+                lines.append(
+                    f"{e.op_id:<15} {ph.unit_slot:<5} {ph.start_ns:>8.0f} "
+                    f"{ph.end_ns:>8.0f} {e.stall_ns:>8.0f} {e.wait_reason}"
+                )
+        else:
+            lines.append(
+                f"{e.op_id:<15} {e.unit:<5} {e.start_ns:>8.0f} {e.end_ns:>8.0f} "
+                f"{e.stall_ns:>8.0f} {e.wait_reason}"
+            )
     lines.append("")
     lines.append(f"Total latency: {total:.0f}ns  "
                  f"Total stall: {sched.stall_total_ns:.0f}ns")
@@ -104,15 +130,19 @@ def gantt_to_mermaid(sched: ScheduleResult) -> str:
     lines.append("gantt")
     lines.append("    dateFormat X")
     lines.append("    axisFormat %s ns")
-    for unit in ["DMA", "MXU", "VPU"]:
-        entries = [e for e in sched.entries if e.unit == unit]
-        if not entries:
+    spans = _build_unit_spans(sched)
+    for unit in ["DMA", "MXU_W", "MXU_D", "VPU"]:
+        row_spans = spans.get(unit, [])
+        if not row_spans:
             continue
         lines.append(f"    section {unit}")
-        for e in entries:
-            crit = "crit, " if e.stall_ns > 0 else ""
+        # Look up stall info from original entries
+        entry_map = {e.op_id: e for e in sched.entries}
+        for s_ns, e_ns, op_id in row_spans:
+            entry = entry_map.get(op_id)
+            crit = "crit, " if entry and entry.stall_ns > 0 else ""
             lines.append(
-                f"    {e.op_id} :{crit}{int(e.start_ns)}, {int(e.end_ns)}"
+                f"    {op_id} :{crit}{int(s_ns)}, {int(e_ns)}"
             )
     return "\n".join(lines)
 

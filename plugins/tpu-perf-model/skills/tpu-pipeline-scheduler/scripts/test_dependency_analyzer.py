@@ -121,5 +121,64 @@ class TestDependencyAnalyzer(unittest.TestCase):
         self.assertEqual(length, 350.0)
 
 
+class TestFusionDetection(unittest.TestCase):
+    def _make_op(self, **kwargs):
+        from pipeline_ir import PipelineOp
+
+        defaults = dict(
+            op_id="op", op_kind="VPU", input_vprs=[], output_vprs=[],
+            weight_vprs=[], data_vprs=[],
+            input_vmem=[], output_vmem=[], latency_ns=10.0, unit="VPU",
+        )
+        defaults.update(kwargs)
+        return PipelineOp(**defaults)
+
+    def test_detects_cross_unit_fusion(self):
+        """MXU writes VPR[0:3], VPU reads them immediately — fusion pair."""
+        from dependency_analyzer import analyze_dependencies
+
+        ops = [
+            self._make_op(op_id="mxu", unit="MXU", op_kind="MXU",
+                          output_vprs=[0, 1, 2, 3], latency_ns=500.0),
+            self._make_op(op_id="vpu", unit="VPU", op_kind="VPU",
+                          input_vprs=[0, 1, 2, 3], output_vprs=[4, 5],
+                          latency_ns=100.0),
+        ]
+        graph = analyze_dependencies(ops)
+        self.assertIn(("mxu", "vpu"), graph.fusion_pairs)
+
+    def test_no_fusion_same_unit(self):
+        """Same unit RAW dependency is NOT fusion."""
+        from dependency_analyzer import analyze_dependencies
+
+        ops = [
+            self._make_op(op_id="a", unit="VPU", output_vprs=[0],
+                          latency_ns=100.0),
+            self._make_op(op_id="b", unit="VPU", input_vprs=[0],
+                          latency_ns=50.0),
+        ]
+        graph = analyze_dependencies(ops)
+        self.assertEqual(graph.fusion_pairs, [])
+
+    def test_no_fusion_with_intermediate_op(self):
+        """If an intermediate op also reads/writes the VPR, no fusion for
+        indirect successor."""
+        from dependency_analyzer import analyze_dependencies
+
+        ops = [
+            self._make_op(op_id="mxu", unit="MXU", op_kind="MXU",
+                          output_vprs=[0], latency_ns=500.0),
+            self._make_op(op_id="mid", unit="VPU", input_vprs=[0],
+                          output_vprs=[1], latency_ns=10.0),
+            self._make_op(op_id="vpu2", unit="DMA", op_kind="DMA_STORE",
+                          input_vprs=[0], latency_ns=50.0),
+        ]
+        graph = analyze_dependencies(ops)
+        self.assertIn(("mxu", "mid"), graph.fusion_pairs)
+        # vpu2 also reads VPR[0] from mxu, but mid reads it first, so
+        # mxu->vpu2 is NOT fusion (mid is between them for VPR[0])
+        self.assertNotIn(("mxu", "vpu2"), graph.fusion_pairs)
+
+
 if __name__ == "__main__":
     unittest.main()

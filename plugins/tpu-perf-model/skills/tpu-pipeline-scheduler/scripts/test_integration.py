@@ -122,6 +122,28 @@ class TestPipelineSchedulerE2E(unittest.TestCase):
         finally:
             os.unlink(out_path)
 
+    def test_cli_animate_output(self):
+        import tempfile
+        scripts_dir = self._scripts_dir()
+        with tempfile.NamedTemporaryFile(suffix=".html", delete=False) as f:
+            out_path = f.name
+        try:
+            result = subprocess.run(
+                [
+                    "python", "pipeline_ir_cli.py",
+                    "--pipeline", self._example_path(),
+                    "--animate",
+                    "--animate-output", out_path,
+                ],
+                capture_output=True, text=True, cwd=scripts_dir,
+            )
+            self.assertEqual(result.returncode, 0, f"CLI failed: {result.stderr}")
+            with open(out_path) as f:
+                content = f.read()
+            self.assertIn("<!DOCTYPE html>", content)
+        finally:
+            os.unlink(out_path)
+
     def test_cli_plot_default_name(self):
         """--plot without --plot-output uses <spec_name>_vpr_timeline.png"""
         scripts_dir = self._scripts_dir()

@@ -21,6 +21,7 @@ class Dependency:
 class DependencyGraph:
     ops: list[PipelineOp]
     edges: list[Dependency]
+    fusion_pairs: list[tuple[str, str]] = field(default_factory=list)
 
     def topo_sort(self) -> list[str]:
         adj: dict[str, list[str]] = defaultdict(list)
@@ -137,8 +138,49 @@ def _transitive_reduction(
     return reduced
 
 
+def _detect_fusion_pairs(
+    ops: list[PipelineOp], edges: list[Dependency]
+) -> list[tuple[str, str]]:
+    """Identify cross-unit register-level fusion pairs.
+
+    A fusion pair (A, B) exists when A writes a VPR that B reads (RAW on VPR),
+    A and B are on different units, and B is the *direct* successor of A for
+    that VPR (no intermediate op reads or writes the same VPR).
+    """
+    op_map = {op.op_id: op for op in ops}
+    op_index = {op.op_id: i for i, op in enumerate(ops)}
+
+    # For each VPR, find the ordered list of ops that touch it (read or write).
+    vpr_ops: dict[int, list[str]] = defaultdict(list)
+    for op in ops:
+        for v in set(op.input_vprs + op.output_vprs):
+            vpr_ops[v].append(op.op_id)
+
+    pairs: set[tuple[str, str]] = set()
+
+    for e in edges:
+        if e.hazard_type != "RAW" or e.resource_type != "VPR":
+            continue
+        from_op = op_map[e.from_op]
+        to_op = op_map[e.to_op]
+        if from_op.unit == to_op.unit:
+            continue
+
+        # Extract VPR id from resource_id like "VPR[3]"
+        vpr_id = int(e.resource_id[4:-1])
+
+        # Check if to_op is the direct successor of from_op for this VPR.
+        op_list = vpr_ops[vpr_id]
+        from_idx = op_list.index(e.from_op)
+        if from_idx + 1 < len(op_list) and op_list[from_idx + 1] == e.to_op:
+            pairs.add((e.from_op, e.to_op))
+
+    return sorted(pairs, key=lambda p: (op_index[p[0]], op_index[p[1]]))
+
+
 def analyze_dependencies(ops: list[PipelineOp]) -> DependencyGraph:
     edges = _find_hazards(ops)
     edges = _deduplicate_edges(edges)
     edges = _transitive_reduction(ops, edges)
-    return DependencyGraph(ops=ops, edges=edges)
+    fusion_pairs = _detect_fusion_pairs(ops, edges)
+    return DependencyGraph(ops=ops, edges=edges, fusion_pairs=fusion_pairs)
