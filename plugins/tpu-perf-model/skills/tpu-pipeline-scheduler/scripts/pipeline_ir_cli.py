@@ -46,6 +46,14 @@ def main():
         "--plot-output",
         help="Output path for plot (default: <spec_name>_vpr_timeline.png)",
     )
+    parser.add_argument(
+        "--animate", action="store_true",
+        help="Generate HTML animation of the pipeline schedule",
+    )
+    parser.add_argument(
+        "--animate-output",
+        help="Output path for animation (default: <spec_name>_pipeline.html)",
+    )
     args = parser.parse_args()
 
     sections = set(args.show.split(","))
@@ -93,6 +101,12 @@ def main():
         plot_path = args.plot_output or f"{spec.name}_vpr_timeline.png"
         plot_vpr_timeline(spec.ops, sched, graph, plot_path, title=spec.name)
         print(f"Plot saved to: {plot_path}")
+
+    if args.animate:
+        from pipeline_animate import generate_animation
+        anim_path = args.animate_output or f"{spec.name}_pipeline.html"
+        generate_animation(spec.ops, sched, graph, anim_path, title=spec.name)
+        print(f"Animation saved to: {anim_path}")
 
     print("\n\n".join(output_parts))
 
