@@ -100,5 +100,49 @@ class TestPipelineSchedulerE2E(unittest.TestCase):
         self.assertNotIn("Gantt", result.stdout)
 
 
+    def test_cli_plot_output(self):
+        import tempfile
+        scripts_dir = self._scripts_dir()
+        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
+            out_path = f.name
+        try:
+            result = subprocess.run(
+                [
+                    "python", "pipeline_ir_cli.py",
+                    "--pipeline", self._example_path(),
+                    "--plot",
+                    "--plot-output", out_path,
+                ],
+                capture_output=True, text=True, cwd=scripts_dir,
+            )
+            self.assertEqual(result.returncode, 0, f"CLI failed: {result.stderr}")
+            with open(out_path, "rb") as f:
+                header = f.read(4)
+            self.assertEqual(header, b"\x89PNG")
+        finally:
+            os.unlink(out_path)
+
+    def test_cli_plot_default_name(self):
+        """--plot without --plot-output uses <spec_name>_vpr_timeline.png"""
+        scripts_dir = self._scripts_dir()
+        expected_name = "flash_attention_tile_vpr_timeline.png"
+        expected_path = os.path.join(scripts_dir, expected_name)
+        try:
+            result = subprocess.run(
+                [
+                    "python", "pipeline_ir_cli.py",
+                    "--pipeline", self._example_path(),
+                    "--plot",
+                ],
+                capture_output=True, text=True, cwd=scripts_dir,
+            )
+            self.assertEqual(result.returncode, 0, f"CLI failed: {result.stderr}")
+            self.assertTrue(os.path.exists(expected_path),
+                            f"Expected {expected_path} to be created")
+        finally:
+            if os.path.exists(expected_path):
+                os.unlink(expected_path)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -80,6 +80,12 @@ python scripts/pipeline_ir_cli.py --pipeline kernel.json --format text --show vp
 
 # Reorder suggestion
 python scripts/pipeline_ir_cli.py --pipeline kernel.json --format text --show suggest
+
+# VPR timeline plot (PNG)
+python scripts/pipeline_ir_cli.py --pipeline kernel.json --plot
+
+# Custom output path
+python scripts/pipeline_ir_cli.py --pipeline kernel.json --plot --plot-output my_chart.png
 ```
 
 ### CLI Options
@@ -90,6 +96,8 @@ python scripts/pipeline_ir_cli.py --pipeline kernel.json --format text --show su
 | `--format` | text, json | Output format (default: text) |
 | `--show` | deps, gantt, vpr, suggest, all | Sections to show (comma-separated, default: all) |
 | `--mermaid` | flag | Include Mermaid diagrams (text format only) |
+| `--plot` | flag | Generate VPR timeline heatmap as PNG image |
+| `--plot-output` | path | Output path for plot (default: `<name>_vpr_timeline.png`) |
 
 ## Output Sections
 
@@ -127,6 +135,22 @@ Compares original instruction ordering against analysis:
 - Critical path identification and latency
 - Parallelism efficiency (critical path / total latency)
 - Stall breakdown
+
+### 5. VPR Timeline Plot (PNG)
+
+Matplotlib-rendered 2D heatmap with:
+- **X-axis**: Time (ns), continuous scale
+- **Y-axis**: VPR registers, one row per used VPR
+- **Cell color**: 3-state × 3-unit color matrix
+  - Write (deep): op is actively writing this VPR
+  - Read (mid): op is actively reading this VPR
+  - Live (light): VPR holds data but no op is accessing it
+  - Colors: DMA=blue, MXU=red, VPU=green
+- **Top band**: Gantt strips showing DMA/MXU/VPU unit utilization
+- **Dependency arrows**: Arc arrows between VPR rows (RAW=solid, WAR=dashed, WAW=dotted)
+- **Title bar**: Kernel name, total latency, peak VPR count, stall time
+
+Requires `matplotlib` (`pip install matplotlib`).
 
 ## Workflow
 
