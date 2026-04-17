@@ -91,6 +91,35 @@ class TestGanttReport(unittest.TestCase):
         self.assertIn("DMA", mermaid)
 
 
+    def test_gantt_text_mxu_phases(self):
+        """Gantt text shows MXU_W and MXU_D rows for dual-phase MXU ops."""
+        from pipeline_scheduler import schedule
+        from pipeline_report import gantt_to_text
+        ops = [
+            self._make_op(op_id="mxu1", unit="MXU", op_kind="MXU",
+                          weight_vprs=[0], data_vprs=[1], output_vprs=[2],
+                          latency_ns=300.0),
+        ]
+        sched = schedule(ops)
+        text = gantt_to_text(sched)
+        self.assertIn("MXU_W", text)
+        self.assertIn("MXU_D", text)
+
+    def test_gantt_mermaid_mxu_phases(self):
+        """Gantt mermaid shows MXU_W and MXU_D sections for dual-phase MXU ops."""
+        from pipeline_scheduler import schedule
+        from pipeline_report import gantt_to_mermaid
+        ops = [
+            self._make_op(op_id="mxu1", unit="MXU", op_kind="MXU",
+                          weight_vprs=[0], data_vprs=[1], output_vprs=[2],
+                          latency_ns=300.0),
+        ]
+        sched = schedule(ops)
+        mermaid = gantt_to_mermaid(sched)
+        self.assertIn("section MXU_W", mermaid)
+        self.assertIn("section MXU_D", mermaid)
+
+
 class TestVPRReport(unittest.TestCase):
     def _make_op(self, **kwargs):
         from pipeline_ir import PipelineOp
