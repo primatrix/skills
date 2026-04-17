@@ -24,6 +24,13 @@ class PipelineOp:
     latency_ns: float
     unit: str
     label: str = ""
+    weight_vprs: list[int] = field(default_factory=list)
+    data_vprs: list[int] = field(default_factory=list)
+    pseudocode: str = ""
+
+    def __post_init__(self):
+        if self.op_kind == "MXU" and not self.input_vprs and (self.weight_vprs or self.data_vprs):
+            self.input_vprs = self.weight_vprs + self.data_vprs
 
     @property
     def all_vprs(self) -> list[int]:
@@ -47,7 +54,7 @@ def _validate_spec(spec: PipelineSpec) -> None:
         if op.op_id in seen_ids:
             raise ValueError(f"Duplicate op_id: {op.op_id}")
         seen_ids.add(op.op_id)
-        for v in op.input_vprs + op.output_vprs:
+        for v in op.input_vprs + op.output_vprs + op.weight_vprs + op.data_vprs:
             if v < 0 or v > _MAX_VPR:
                 raise ValueError(
                     f"VPR {v} in op {op.op_id} out of range 0-{_MAX_VPR}"
@@ -70,6 +77,9 @@ def _parse_op(d: dict) -> PipelineOp:
         latency_ns=float(d["latency_ns"]),
         unit=d["unit"],
         label=d.get("label", ""),
+        weight_vprs=d.get("weight_vprs", []),
+        data_vprs=d.get("data_vprs", []),
+        pseudocode=d.get("pseudocode", ""),
     )
 
 
