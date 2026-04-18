@@ -317,3 +317,70 @@ If no: stop; remind user they can run it manually later.
 If parent was a `Task`: skip the audit prompt entirely (`beaver-audit` only targets size/L parents).
 
 ---
+
+## Issue Body Templates
+
+### Goal → Task child
+
+```markdown
+## 目标
+
+{从 design doc 提炼的该 Task 的目标 — 完整一段}
+
+## 验收标准
+
+- {可验收要点 1}
+- {可验收要点 2}
+- ...
+
+## 设计参考
+
+- Parent: #{parent_number}
+- Design Doc: {design_doc_url}
+- 相关章节: {design doc 中与本 Task 对应的章节标题}
+
+<!-- beaver-tracking
+repos:
+  - {repo}
+paths:
+  - {path1}
+keywords:
+  - {keyword1}
+-->
+```
+
+### Task → SubTask child
+
+```markdown
+## 目标
+
+{该 SubTask 完整的功能描述 — 输入、行为、输出}
+
+## 验收标准
+
+- {可验收要点 1}
+- {可验收要点 2}
+
+## 端到端测试方案
+
+- 测试路径: {输入 → 执行 → 期望输出}
+- 测试框架/命令: {pytest / go test / ...}
+- 测试文件位置: {path/to/test_file}
+
+## 设计参考
+
+- Parent: #{parent_number}
+- Design Doc: {design_doc_url}
+- 相关章节: {对应章节}
+
+<!-- beaver-tracking
+repos:
+  - {repo}
+paths:
+  - {path1}
+keywords:
+  - {keyword1}
+-->
+```
+
+---
