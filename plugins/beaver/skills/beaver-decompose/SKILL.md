@@ -209,3 +209,79 @@ Ask: "Create these {N} sub-issues now? (yes/no)"
 If user says no: stop without creating anything. If yes: proceed to Phase 5.
 
 ---
+
+## Phase 5: Create Sub-issues
+
+For each confirmed child, sequentially execute:
+
+### Step 1: Write body to temp file
+
+```bash
+BODY_FILE=$(mktemp)
+cat > "$BODY_FILE" << 'BEAVEREOF'
+{rendered_body}
+BEAVEREOF
+```
+
+### Step 2: Create the issue
+
+```bash
+CHILD_URL=$(gh api repos/{owner}/{repo}/issues --method POST \
+  -H "X-GitHub-Api-Version: 2026-03-10" \
+  -f title="{child_title}" -F body=@"$BODY_FILE" \
+  -f type="{Task|SubTask}" \
+  -f "labels[]=Control-By-Beaver" \
+  -f "labels[]=type/{type}" \
+  -f "labels[]=size/{L|S}" \
+  -f "labels[]={priority}" \
+  -f "labels[]=status/triage" \
+  --jq '.html_url')
+```
+
+If issue type API fails, retry without `-f type`.
+
+### Step 3: Capture child id and link to parent
+
+```bash
+CHILD_NUMBER=$(echo "$CHILD_URL" | awk -F/ '{print $NF}')
+CHILD_ID=$(gh api repos/{owner}/{repo}/issues/$CHILD_NUMBER --jq '.id')
+
+gh api repos/{owner}/{repo}/issues/{parent_number}/sub_issues \
+  --method POST -H "X-GitHub-Api-Version: 2026-03-10" \
+  -F sub_issue_id=$CHILD_ID
+```
+
+> **NOTE:** Use `-F` (capital, `--field`) for `sub_issue_id` because it must be an integer. `-f` would send a string and 422.
+
+### Step 4: Add to Project V2
+
+```bash
+gh project item-add {projectNumber} --owner {org} --url "$CHILD_URL" --format json
+```
+
+Then `gh project item-edit` to set Level={Task|SubTask}, Status=Not Started, Progress=0 (per `beaver-issue` Step 6).
+
+### Step 5: Auto-transition (Goal→Task only)
+
+If parent was a Goal (this child is a Task / size/L):
+- Execute transition `status/triage` → `status/design-pending` per engine Section 6 (validates G001)
+
+If parent was a Task (this child is a SubTask / size/S):
+- Keep `status/triage` — do NOT auto-transition. Claim mode in `beaver-issue` will move to in-progress when a developer picks it up.
+
+### Step 6: Cleanup
+
+```bash
+rm "$BODY_FILE"
+```
+
+### Failure handling
+
+| Failure point | Action |
+|---|---|
+| Issue create fails | Stop the loop. Report: "Created {i-1}/{N}; failed at {i}: {error}". Do NOT roll back created issues. |
+| Sub-issue link fails (issue created) | Report the orphan child URL. Continue to next item. User can manually link or rerun. |
+| Project item-add fails | Warn, do not stop. Report URL with note "manually add to project". |
+| Status transition fails | Warn, do not stop. Report which child needs manual transition. |
+
+---
