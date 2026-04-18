@@ -122,3 +122,54 @@ If fetch fails (404, network error, file missing): stop with the specific error.
 Store the full design doc text in memory; it is the primary input to Phase 3.
 
 ---
+
+## Phase 3: Draft Decomposition
+
+### Step 1: Build LLM input context
+
+Concatenate:
+- Parent Issue title + body (目标 + 验收标准)
+- Full design doc text (from Phase 2)
+- "Already covered" set from Phase 1, Step 4 — list of `{number, title, body_summary}`
+
+### Step 2: Generate draft
+
+Produce a draft list of children. Constraints:
+
+- **Goal → Task**: each Task aligns to a component / module / phase named in the design doc. Use design doc section titles as the basis for Task scoping.
+- **Task → SubTask**: each SubTask must have:
+  - A complete functional description (what it does, inputs/outputs)
+  - An end-to-end test plan (test path: input → execution → expected output, plus framework/command, plus test file location)
+- **Coverage rule**: explicitly skip any scope that the "already covered" set addresses. If a draft Task overlaps with an existing OPEN sub-issue, drop it.
+- **No LOC constraint at this phase** — `beaver-pr` G005 enforces 200 LOC at PR creation time.
+
+### Step 3: Set defaults
+
+For each draft child:
+- `type/{label}`: inherit from parent (e.g. parent has `type/feat` → child has `type/feat`)
+- `p*/{priority}`: inherit from parent
+- `size/{L|S}`: from mapping table (Goal→L, Task→S)
+
+User can override per item in Phase 4.
+
+### Step 4: Render draft to user
+
+Present in two parts:
+
+```markdown
+### Skipped (already covered by existing sub-issues)
+
+- #{n} {title} — covers: {one-line summary}
+- #{n} {title} — covers: {one-line summary}
+
+### Drafted children
+
+| # | Title | Type | Size | Priority | One-line scope |
+|---|-------|------|------|----------|----------------|
+| 1 | {title} | type/feat | size/L | p2/high | {scope} |
+| 2 | ... | ... | ... | ... | ... |
+```
+
+Then announce: "Next, I will walk through each drafted child one at a time for your confirmation."
+
+---
