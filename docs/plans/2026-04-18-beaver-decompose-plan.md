@@ -247,14 +247,14 @@ Resolve `--design-doc <url>` based on form:
 gh pr view {url} --json files --jq '.files[] | select(.path | endswith(".md")) | .path'
 # Then read the file from the PR's head ref
 gh pr view {url} --json headRefName,headRepository --jq '.'
-gh api repos/{head_owner}/{head_repo}/contents/{path}?ref={head_ref} --jq '.content' | base64 -d
+gh api repos/{head_owner}/{head_repo}/contents/{path}?ref={head_ref} --template '{{.content}}' | base64 -d
 ```
 
 ### Case B: GitHub blob URL (e.g. `https://github.com/primatrix/wiki/blob/main/docs/designs/X.md`)
 
 Convert to API form:
 ```bash
-gh api repos/{owner}/{repo}/contents/{path}?ref={branch} --jq '.content' | base64 -d
+gh api repos/{owner}/{repo}/contents/{path}?ref={branch} --template '{{.content}}' | base64 -d
 ```
 
 ### Case C: Local path (e.g. `~/Code/wiki/docs/designs/X.md`)
@@ -446,7 +446,7 @@ CHILD_URL=$(gh api repos/{owner}/{repo}/issues --method POST \
   -f "labels[]=size/{L|S}" \
   -f "labels[]={priority}" \
   -f "labels[]=status/triage" \
-  --jq '.html_url')
+  --template '{{.html_url}}')
 ```
 
 If issue type API fails, retry without `-f type`.

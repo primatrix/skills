@@ -56,7 +56,7 @@ argument-hint: "<owner/repo#issue-number> --design-doc <url>"
 | `Goal` | `Task` | `size/L` | `status/triage` → auto-transition `status/design-pending` |
 | `Task` | `SubTask` | `size/S` | `status/triage` (kept; no auto-transition) |
 
-Level is determined by reading the GitHub native issue type field (`gh api ... --jq '.type'`).
+Level is determined by reading the GitHub native issue type field (`gh api ... --jq '.type.name'`). Note: `type` is an object (`{ id, node_id, name, description, color, ... }`) — extract `.type.name` to get the "Goal"/"Task" string.
 
 ### 3.3 Workflow
 

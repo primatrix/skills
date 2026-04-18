@@ -99,14 +99,20 @@ Resolve `--design-doc <url>` based on form:
 gh pr view {url} --json files --jq '.files[] | select(.path | endswith(".md")) | .path'
 # Then read the file from the PR's head ref
 gh pr view {url} --json headRefName,headRepository --jq '.'
-gh api repos/{head_owner}/{head_repo}/contents/{path}?ref={head_ref} --jq '.content' | base64 -d
+# Use --template (not --jq) to get raw content; --jq emits a JSON-quoted string that breaks `base64 -d`.
+gh api repos/{head_owner}/{head_repo}/contents/{path}?ref={head_ref} --template '{{.content}}' | base64 -d
 ```
+
+If the PR returns multiple `.md` paths, disambiguate before fetching:
+1. Filter to paths whose filename contains "design" (case-insensitive). If exactly one remains, use it.
+2. Otherwise, list all `.md` paths and ask the user to pick one. Do NOT guess. Do NOT fetch all of them.
+3. Substitute the chosen path into `{path}` for the API call.
 
 ### Case B: GitHub blob URL (e.g. `https://github.com/primatrix/wiki/blob/main/docs/designs/X.md`)
 
-Convert to API form:
+Convert to API form (use `--template`, not `--jq`, for the same reason as Case A):
 ```bash
-gh api repos/{owner}/{repo}/contents/{path}?ref={branch} --jq '.content' | base64 -d
+gh api repos/{owner}/{repo}/contents/{path}?ref={branch} --template '{{.content}}' | base64 -d
 ```
 
 ### Case C: Local path (e.g. `~/Code/wiki/docs/designs/X.md`)
@@ -235,10 +241,15 @@ CHILD_URL=$(gh api repos/{owner}/{repo}/issues --method POST \
   -f "labels[]=size/{L|S}" \
   -f "labels[]={priority}" \
   -f "labels[]=status/triage" \
-  --jq '.html_url')
+  --template '{{.html_url}}')
 ```
 
-If issue type API fails, retry without `-f type`.
+> **NOTE:** Use `--template '{{.html_url}}'` (not `--jq '.html_url'`). `--jq` emits a JSON-quoted string (`"https://.../123"`); the trailing quote then leaks into `CHILD_NUMBER` via `awk` in Step 3 and breaks the next `gh api` call.
+
+If issue creation fails with a `type` field validation error (HTTP 422 mentioning the `type` field), retry once **without** `-f type`. For any other failure mode (network error, ambiguous response, non-422 error from `POST /repos/{owner}/{repo}/issues`), do NOT retry blindly — the endpoint is non-idempotent and a blind retry can create duplicates. Instead:
+1. Search the repo for an issue with the same title via `gh api -X GET repos/{owner}/{repo}/issues --field state=open` (filter by exact title match).
+2. If found, treat the original POST as successful and skip the retry.
+3. If not found, then retry once.
 
 ### Step 3: Capture child id and link to parent
 
