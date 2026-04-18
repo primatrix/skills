@@ -50,3 +50,40 @@ digraph decompose {
 ```
 
 ---
+
+## Phase 1: Load & Validate
+
+### Step 1: Parse arguments
+
+Extract `owner`, `repo`, `issue_number` from the first positional arg (format `owner/repo#number`). Extract `design_doc_url` from `--design-doc <url>`.
+
+If either is missing or malformed, stop and inform user:
+- "Usage: beaver-decompose <owner/repo#number> --design-doc <url>"
+
+### Step 2: Fetch parent issue
+
+```bash
+gh api repos/{owner}/{repo}/issues/{number} \
+  --jq '{title, body, state, type: (.type.name // null), labels: [.labels[].name]}'
+```
+
+### Step 3: Validate parent
+
+Parse labels per engine Section 4. Verify:
+- `state == "open"` — else stop: "Parent issue is closed; cannot decompose."
+- `type` ∈ {`Goal`, `Task`} — else stop: "beaver-decompose only supports Goal or Task issues. This issue type is `{type}`."
+- If `type == "Task"`: must have `status/ready-to-develop` label — else stop: "Task issues must be in status/ready-to-develop before decomposition. Current status: {status}. Run beaver-design-doc first if needed."
+
+### Step 4: Fetch existing sub-issues (do not block)
+
+```bash
+gh api repos/{owner}/{repo}/issues/{number}/sub_issues \
+  -H "X-GitHub-Api-Version: 2026-03-10" \
+  --jq '.[] | {number, title, state, body_summary: (.body | .[0:200])}'
+```
+
+Collect OPEN sub-issues into the "already covered" set. This set is passed to Phase 3 — existing sub-issues are NEVER modified, only the uncovered scope is generated.
+
+If the API returns empty or errors with 404 (no sub-issues yet), continue with empty set.
+
+---
