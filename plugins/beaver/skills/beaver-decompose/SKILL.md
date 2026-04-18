@@ -285,3 +285,35 @@ rm "$BODY_FILE"
 | Status transition fails | Warn, do not stop. Report which child needs manual transition. |
 
 ---
+
+## Phase 6: Offer Audit & Report
+
+### Step 1: Print summary
+
+```markdown
+## Decomposition Complete
+
+Parent: {owner}/{repo}#{parent_number} ({Goal|Task})
+Created: {N} {Task|SubTask} sub-issues
+
+| # | URL | Status |
+|---|-----|--------|
+| 1 | {url} | created + linked + project added |
+| ... | ... | ... |
+
+Skipped (already covered): {count}
+Failures: {count, with details}
+```
+
+### Step 2: Offer audit (Goal → Task only)
+
+If parent was a `Goal`:
+
+> Decomposed Goal #{n} into {N} Tasks. Run `beaver-audit {parent_number}` now to verify coverage, atomicity, and test definitions? (yes/no)
+
+If yes: invoke beaver-audit on the parent issue number.
+If no: stop; remind user they can run it manually later.
+
+If parent was a `Task`: skip the audit prompt entirely (`beaver-audit` only targets size/L parents).
+
+---
