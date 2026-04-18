@@ -384,3 +384,28 @@ keywords:
 ```
 
 ---
+
+## Red Flags — STOP If You Catch Yourself Thinking
+
+| Thought | Reality |
+|---------|---------|
+| "Design doc is optional, issue body is enough" | Design doc is the only reliable source for module boundaries. Issue body usually has only objective + acceptance criteria — not enough to scope sub-issues. |
+| "I can modify or merge the existing sub-issue" | Never modify existing sub-issues. Only append uncovered scope. |
+| "I'll batch all N children in one prompt" | One child at a time. Four actions only: accept / edit / delete / insert. |
+| "Task without ready-to-develop is fine to decompose" | Decomposing without an approved design produces wrong boundaries. Stop and tell the user to complete design review first. |
+| "SubTask body can skip the test section" | SubTask MUST have an end-to-end test plan, otherwise G004 will block at done time. |
+| "On failure, I'll auto-rollback created issues" | Don't roll back. Report partial state and let the user choose retry / manual fix / delete. |
+| "I'll auto-transition SubTask to in-progress" | SubTasks stay at `status/triage`. `beaver-issue` claim mode owns the transition to in-progress. |
+| "I'll fabricate the design doc URL if user forgot it" | Both arguments are required. Stop and ask. Never invent a URL. |
+
+## Constraints
+
+- Both arguments required: `<owner/repo#number>` and `--design-doc <url>`
+- Issue type must be `Goal` or `Task`
+- Task issues must have `status/ready-to-develop` label
+- Existing OPEN sub-issues are skipped, never modified
+- Sub-issue creation failures do NOT auto-rollback
+- Audit prompt only after Goal→Task decomposition
+- Child issue body in Chinese (目标 / 验收标准 / 端到端测试方案)
+- One child confirmation at a time during Phase 4
+- LOC is NOT enforced at decompose time (G005 enforces at PR creation)
