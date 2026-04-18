@@ -173,3 +173,39 @@ Present in two parts:
 Then announce: "Next, I will walk through each drafted child one at a time for your confirmation."
 
 ---
+
+## Phase 4: Per-child Q&A Confirm
+
+Iterate the draft list in order. For each item, render the FULL proposed issue body (using templates from "Issue Body Templates" section below) and prompt:
+
+> Child #{i} of {N}: **{title}**
+>
+> [render full body]
+>
+> Choose action:
+> - **accept** → keep as-is, move to next
+> - **edit** → describe the change, I will rewrite and re-prompt
+> - **delete** → drop this child entirely
+> - **insert** → insert a new child at this position (collect title + body)
+
+### Rules
+
+- One item at a time. Do NOT batch multiple confirmations.
+- After **edit**: rewrite the full body, re-render, re-prompt. Loop until accept/delete.
+- After **insert**: collect new child via Q&A (title, type override?, priority override?, full body), then re-prompt the original item.
+- After **delete**: do not store this item; move to the next.
+- After all items processed, show final summary table:
+
+```markdown
+### Final decomposition (will be created)
+
+| # | Title | Type | Size | Priority |
+|---|-------|------|------|----------|
+| ... | ... | ... | ... | ... |
+```
+
+Ask: "Create these {N} sub-issues now? (yes/no)"
+
+If user says no: stop without creating anything. If yes: proceed to Phase 5.
+
+---
