@@ -87,3 +87,38 @@ Collect OPEN sub-issues into the "already covered" set. This set is passed to Ph
 If the API returns empty or errors with 404 (no sub-issues yet), continue with empty set.
 
 ---
+
+## Phase 2: Read Design Doc
+
+Resolve `--design-doc <url>` based on form:
+
+### Case A: GitHub PR URL (e.g. `https://github.com/primatrix/wiki/pull/123`)
+
+```bash
+# Get the PR's changed markdown files
+gh pr view {url} --json files --jq '.files[] | select(.path | endswith(".md")) | .path'
+# Then read the file from the PR's head ref
+gh pr view {url} --json headRefName,headRepository --jq '.'
+gh api repos/{head_owner}/{head_repo}/contents/{path}?ref={head_ref} --jq '.content' | base64 -d
+```
+
+### Case B: GitHub blob URL (e.g. `https://github.com/primatrix/wiki/blob/main/docs/designs/X.md`)
+
+Convert to API form:
+```bash
+gh api repos/{owner}/{repo}/contents/{path}?ref={branch} --jq '.content' | base64 -d
+```
+
+### Case C: Local path (e.g. `~/Code/wiki/docs/designs/X.md`)
+
+```bash
+cat {expanded_path}
+```
+
+### Failure handling
+
+If fetch fails (404, network error, file missing): stop with the specific error. Do NOT proceed to Phase 3 — drafting without a design doc is forbidden.
+
+Store the full design doc text in memory; it is the primary input to Phase 3.
+
+---
