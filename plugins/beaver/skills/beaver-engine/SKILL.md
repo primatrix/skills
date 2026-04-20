@@ -339,7 +339,7 @@ If ANY row is ☐, the caller MUST revise the section first, then re-present the
 Issue bodies (created by beaver-issue) do not require a Provenance block but MUST satisfy:
 
 - **Objective**: one sentence stating the user-facing outcome (not the implementation).
-- **Acceptance criteria**: ≥ 2 items, each starting with a verb that yields a verifiable check (`运行 X 返回 Y` / `打开 URL Z 看到 W` / `pytest tests/foo.py 全部通过`). Avoid `improve` / `refactor` / `optimize` without a measurable target.
+- **Acceptance criteria**: ≥ 2 items, each starting with a verb that yields a verifiable check (`运行 X 返回 Y` / `打开 URL Z 看到 W` / `pytest tests/foo.py 全部通过`). Avoid the verbs `improve` / `refactor` / `optimize` as acceptance-criterion phrasing without a measurable target. (The `type/refactor` label itself is unaffected.)
 - **No invented file paths**: every path mentioned must appear in the Discovery Brief D2 hits or D3 file list.
 
 ### 9.5 Bug-mode adjustment
@@ -347,4 +347,4 @@ Issue bodies (created by beaver-issue) do not require a Provenance block but MUS
 For `type/bug` issues, the body uses the Bug template (复现步骤 / 期望 / 实际 / 影响 / 环境). §9.4 applies with these substitutions:
 - "Objective" → 复现步骤 (must be runnable / clickable, not abstract description).
 - "Acceptance criteria" → 期望行为 + 实际行为, both concrete.
-- Provenance for Bug issues is the source of the reproduction steps (e.g., "user-reported in §7 Q&A round 2" or "log file path X").
+- Traceability for Bug issues: the reproduction steps must cite their origin inline (e.g., `(来源: §7 Q&A round 2)` or `(log: path/to/file)`). No separate Provenance block is required, consistent with §9.2's issue-body rule.
