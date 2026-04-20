@@ -18,8 +18,15 @@ Create a new Beaver-tracked Issue or claim an existing one. Handles Project V2 f
 
 ## Detect Mode
 
-- If an argument is provided (issue number): **Claim mode**
-- If no argument: **Create mode**
+- If an argument is provided (issue number): **Claim mode** (skip §7/§8/§9)
+- If no argument: **Create mode**, then run **Step 0** below to choose Feature submode or Bug submode.
+
+### Step 0: Type detection (Create mode only)
+
+Ask the user once: "What kind of issue is this? (feat / bug / refactor / docs / chore)"
+
+- If the answer is `bug`: enter **Bug submode** (see "Bug Submode" section near the bottom of this file).
+- Otherwise: enter **Feature submode** (continues with Step 1 below).
 
 ---
 
