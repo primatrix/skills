@@ -284,3 +284,67 @@ When the caller has already detected `type/bug` and the issue is `p0/blocker`:
 - D1 and D3 are still mandatory (skipping is forbidden).
 - D2 keywords are restricted to error messages / stack-trace tokens / API names from the user's reproduction steps.
 - The Brief must still be printed before any §7.2 state-changing action; `p0/blocker` shortens latency but does NOT skip discovery.
+
+## 9. Doc Quality Constraints
+
+Constraints on issue bodies and design-doc sections produced by callers. Used by §7's per-section approval gate.
+
+### 9.1 Bilingual rule
+
+| Element | Language |
+|---|---|
+| Section headings (`## 目标` / `## 验收标准` / `## 1. Context & Scope` etc.) | Follow caller's existing template (issue uses Chinese, design doc uses English numbered headings) |
+| Body prose | Chinese as primary language |
+| Technical nouns: API names, file paths, label names (`status/triage`), commands (`gh api`), commit hashes | English / original form, untranslated |
+| Quoted code blocks, error messages | Original, untranslated |
+
+### 9.2 Anti-hallucination rule
+
+The following content is FORBIDDEN unless verified:
+
+| Type | Verification source |
+|---|---|
+| Library / framework name | Discovery Brief D2 or D3 hit, OR explicit user mention in §7 Q&A |
+| File path | D2 hit, OR `Read` confirmed |
+| API endpoint / function signature | User-provided, OR grep hit |
+| Quantitative metric ("延迟降低 30%", "覆盖 80% 场景") | User-provided with named source |
+
+Every claimed fact MUST be traceable. The caller appends a Provenance block:
+
+- For design docs (markdown): an HTML comment at the end of the document:
+  ```markdown
+  <!-- provenance
+  - "<fact 1>" ← <source: Discovery D1/D2/D3 line, or QA round N>
+  - "<fact 2>" ← <source>
+  -->
+  ```
+- For issue bodies: provenance is implicit — every fact must come from §7 Q&A answers or the Discovery Brief; no separate block is required, but no fact may exceed those sources.
+
+### 9.3 Section completeness checklist
+
+Before requesting approval per §7.3 step 4, the caller MUST present this 5-row table for the section being approved:
+
+| Check | Condition | Pass? |
+|---|---|---|
+| Why | Does this section answer "为什么这么做", not just "做什么"? | ☐ |
+| Verifiable | Can a reader verify each statement via `gh` / `git` / `Read`? | ☐ |
+| No invented facts | Are all facts traceable to Discovery Brief or §7 Q&A answers per §9.2? | ☐ |
+| Bilingual rule | Chinese prose + English technical terms per §9.1? | ☐ |
+| Length scaled | Simple topic ≤ a few sentences; complex topic ≤ 300 words? | ☐ |
+
+If ANY row is ☐, the caller MUST revise the section first, then re-present the table with all rows ☑, THEN ask `Approved? (y/revise)`.
+
+### 9.4 Issue body simplified checklist
+
+Issue bodies (created by beaver-issue) do not require a Provenance block but MUST satisfy:
+
+- **Objective**: one sentence stating the user-facing outcome (not the implementation).
+- **Acceptance criteria**: ≥ 2 items, each starting with a verb that yields a verifiable check (`运行 X 返回 Y` / `打开 URL Z 看到 W` / `pytest tests/foo.py 全部通过`). Avoid `improve` / `refactor` / `optimize` without a measurable target.
+- **No invented file paths**: every path mentioned must appear in the Discovery Brief D2 hits or D3 file list.
+
+### 9.5 Bug-mode adjustment
+
+For `type/bug` issues, the body uses the Bug template (复现步骤 / 期望 / 实际 / 影响 / 环境). §9.4 applies with these substitutions:
+- "Objective" → 复现步骤 (must be runnable / clickable, not abstract description).
+- "Acceptance criteria" → 期望行为 + 实际行为, both concrete.
+- Provenance for Bug issues is the source of the reproduction steps (e.g., "user-reported in §7 Q&A round 2" or "log file path X").
