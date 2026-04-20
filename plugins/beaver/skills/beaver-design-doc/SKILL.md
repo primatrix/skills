@@ -8,7 +8,7 @@ argument-hint: "[owner/repo#issue-number]"
 
 Write a design document for a size/L issue in `status/design-pending`. Collects design details through iterative Q&A, writes a structured design doc, submits it as a PR to primatrix/wiki, and comments on the original issue.
 
-**References beaver-engine for:** label ops (Section 4), state machine validation (Section 2).
+**References beaver-engine for:** label ops (Section 4), state machine validation (Section 2), QA loop & HARD-GATE (Section 7), Discovery Triad (Section 8), doc quality constraints (Section 9).
 
 ## Prerequisites
 
