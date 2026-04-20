@@ -231,7 +231,7 @@ Anything else (including `差不多`, `看起来还行`, `应该可以`, silence
 
 ## 8. Discovery Triad
 
-Mandatory codebase discovery executed by the caller BEFORE the first §7 question. Output goes into a fixed-format "Discovery Brief" presented to the user. **HARD-GATE:** §7 Q&A may not begin until the Brief has been printed.
+Mandatory codebase discovery executed by the caller BEFORE the first §7 question. Output goes into a fixed-format "Discovery Brief" presented to the user. **HARD-GATE:** §7 Q&A may not begin until the Brief has been printed. Order is: §8 discovery → Brief printed → §7 Q&A → §7.5 approval → §7.2 state change.
 
 ### 8.1 The three required actions
 
@@ -246,7 +246,7 @@ Mandatory codebase discovery executed by the caller BEFORE the first §7 questio
 - Pull keywords ONLY from the literal text of the issue title + objective. Do NOT invent synonyms or related terms.
 - Keep slash-bearing identifiers intact (`status/triage`, `beaver-engine`, `type/bug`).
 - Keep ≤ 5 keywords; trim down by removing stop words and single-character tokens.
-- For a Chinese-only title, split on whitespace and `/`. If fewer than 2 tokens emerge, ask the user "Which 2-5 keywords should I search?" before running D2.
+- For a Chinese-only title where simple whitespace/`/` splitting yields fewer than 2 useful tokens, ask the user "Which 2-5 keywords should I search?" before running D2.
 
 ### 8.3 Discovery Brief output format
 
@@ -280,7 +280,7 @@ The caller must print exactly this structure to the user before the first §7 qu
 
 ### 8.5 Bug exception
 
-When the caller has already detected `type/bug` and the issue is `p/0-blocker`:
+When the caller has already detected `type/bug` and the issue is `p0/blocker`:
 - D1 and D3 are still mandatory (skipping is forbidden).
 - D2 keywords are restricted to error messages / stack-trace tokens / API names from the user's reproduction steps.
-- The Brief must still be printed before any state-changing action; `p/0-blocker` shortens latency but does NOT skip discovery.
+- The Brief must still be printed before any §7.2 state-changing action; `p0/blocker` shortens latency but does NOT skip discovery.
