@@ -1,6 +1,6 @@
 ---
 allowed-tools: Bash(gh auth status:*), Bash(gh auth refresh:*), Bash(gh repo list:*), Bash(gh project create:*), Bash(gh project edit:*), Bash(gh project field-create:*), Bash(gh project field-list:*), Bash(gh api:*), Bash(gh label create:*), Bash(cat > /tmp/*), Bash(date:*)
-description: Create a GitHub Project V2 with Beaver-required custom fields, README config, issue types, labels, and milestones
+description: "Bootstrap a Beaver project: create Project V2, labels, custom fields, milestones. Updates label set to RFC-0012 state machine."
 ---
 
 # Create Beaver Project
@@ -172,11 +172,11 @@ Create on the issue repository. Skip any that already exist (on 422 error, conti
 | Label | Color | Description |
 |-------|-------|-------------|
 | status/triage | E4E669 | Awaiting triage |
+| status/ready-to-claim | C2E0C6 | Added to Milestone, awaiting claim |
 | status/design-pending | D4C5F9 | Design review in progress (size/L) |
-| status/ready-to-develop | 0E8A16 | Ready to code (size/L) |
+| status/ready-to-develop | 0E8A16 | Ready to code (size/L, design approved) |
 | status/in-progress | FBCA04 | Active development |
 | status/blocked | B60205 | Blocked |
-| status/review-needed | 1D76DB | Awaiting review |
 | status/done | 0E8A16 | Completed and merged |
 
 **Beaver agent labels:**
