@@ -249,6 +249,13 @@ rm "$BODY_FILE"
 
 Print summary: PR URL, design doc path, issue status (remains `design-pending`).
 
+Then print the next-step hint (do NOT auto-invoke):
+```
+Next step: after the design doc PR is reviewed and merged, run:
+  beaver-decompose {owner}/{repo}#{number}
+to break the size/L Task into SubTasks.
+```
+
 ---
 
 ## Design Doc Template
@@ -301,6 +308,15 @@ status: design-pending
 ## 4. Alternatives Considered
 
 {Other viable approaches and their trade-offs. Focus on the trade-offs of each alternative and why the current approach is better given the stated goals.}
+
+## 5. Open Questions
+
+{Items raised during Q&A that are recorded but not yet decided. For each: question, owner, expected resolution time. Empty list is acceptable but the section header must be present.}
+
+<!-- provenance
+- "<fact 1>" ← <source: Discovery D1/D2/D3 line, or QA round N>
+- "<fact 2>" ← <source>
+-->
 ```
 
 ## Red Flags — STOP If You Catch Yourself Thinking
