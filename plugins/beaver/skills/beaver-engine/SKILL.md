@@ -228,3 +228,59 @@ Approval is granted ONLY when the user's response, stripped of leading/trailing 
 - `通过`
 
 Anything else (including `差不多`, `看起来还行`, `应该可以`, silence, or substring matches like `yes but ...`) MUST be treated as `revise`. The caller must re-present the section, address the implied feedback, and ask again.
+
+## 8. Discovery Triad
+
+Mandatory codebase discovery executed by the caller BEFORE the first §7 question. Output goes into a fixed-format "Discovery Brief" presented to the user. **HARD-GATE:** §7 Q&A may not begin until the Brief has been printed.
+
+### 8.1 The three required actions
+
+| ID | Action | Tool | Purpose |
+|---|---|---|---|
+| D1 | Recent activity | `Bash`: `git log --oneline -20` AND `git log --all --since="14 days ago" --oneline` | Anchor the issue against recent project direction |
+| D2 | Keyword search | `Glob` over file names + `Grep` over file contents, for ≤ 5 keywords | Locate related code |
+| D3 | Project conventions | `Read` repo-root `README.md` and `CLAUDE.md` (when present), plus `*/README.md` under any directory hit by D2 | Surface conventions, tech stack, special instructions |
+
+### 8.2 Keyword extraction rules
+
+- Pull keywords ONLY from the literal text of the issue title + objective. Do NOT invent synonyms or related terms.
+- Keep slash-bearing identifiers intact (`status/triage`, `beaver-engine`, `type/bug`).
+- Keep ≤ 5 keywords; trim down by removing stop words and single-character tokens.
+- For a Chinese-only title, split on whitespace and `/`. If fewer than 2 tokens emerge, ask the user "Which 2-5 keywords should I search?" before running D2.
+
+### 8.3 Discovery Brief output format
+
+The caller must print exactly this structure to the user before the first §7 question:
+
+```text
+## Discovery Brief
+
+### D1 Recent activity
+- {hash} {subject}        ← up to 10 lines
+- ...
+
+### D2 Keyword hits
+- keyword1 → 3 files: a.py, b.py, c.py
+- keyword2 → 0 files (NEW AREA)
+
+### D3 Conventions / docs
+- README.md: <one-line summary>
+- CLAUDE.md: <one-line summary or "absent">
+- relevant docs: <list or "none">
+
+### Open questions surfaced
+- <每个发现衍生出的待确认问题，逐条列出>
+```
+
+### 8.4 Anti-hallucination rules
+
+- Every line in the Brief must correspond 1:1 to actual tool output. Do NOT paraphrase or summarize beyond the source.
+- 0 hits MUST be written as `0 files` / `absent` / `none`. The words `似乎`, `可能`, `应该`, `seems`, `probably`, `should be` are FORBIDDEN in the Brief.
+- If a `Read` fails (file not found), record the file as `absent` rather than guessing its contents.
+
+### 8.5 Bug exception
+
+When the caller has already detected `type/bug` and the issue is `p/0-blocker`:
+- D1 and D3 are still mandatory (skipping is forbidden).
+- D2 keywords are restricted to error messages / stack-trace tokens / API names from the user's reproduction steps.
+- The Brief must still be printed before any state-changing action; `p/0-blocker` shortens latency but does NOT skip discovery.
