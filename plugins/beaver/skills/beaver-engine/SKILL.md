@@ -164,3 +164,67 @@ When a command-layer skill needs to transition an Issue's status:
 4. Validate target state against guardrails (Section 3)
 5. If all checks pass: execute atomic label swap (Section 4)
 6. If any check fails: report failure, do NOT swap labels
+
+## 7. QA Loop & HARD-GATE
+
+Reusable Q&A discipline. Other beaver skills reference this section before any state-changing action (`gh api ... POST`, `git commit`, `gh pr create`, `gh project item-add`, label transitions).
+
+### 7.1 When callers must invoke
+
+A caller MUST invoke this section before any state-changing action when:
+- Creating a new GitHub Issue (beaver-issue Create mode)
+- Drafting a design doc section (beaver-design-doc Phase 2/3)
+- Decomposing into sub-issues (future: beaver-decompose)
+
+A caller MAY skip this section only when the action is purely a label transition / assignee update on an Issue that already has approved content (e.g., beaver-issue Claim mode).
+
+### 7.2 HARD-GATE rule
+
+Until the user has explicitly approved the current section per §7.5, the caller MUST NOT:
+- Write files (other than `mktemp` scratch buffers used inside Step 5 of the caller's own workflow)
+- Run `gh api ... --method POST` / `--method PATCH` / `--method PUT`
+- Run `gh project item-add` / `gh project item-edit`
+- Run `git commit` / `git push`
+- Run `gh pr create`
+- Add or remove GitHub labels
+- Assign or unassign users
+
+The single permitted action is read-only codebase discovery (used by §8).
+
+### 7.3 Sectional Q&A loop
+
+For each section the caller is collecting:
+1. Ask exactly one question per turn. Prefer multiple-choice options when ≥ 2 distinct alternatives exist; otherwise open-ended is acceptable.
+2. Never batch multiple questions in one turn (no "and also" / "additionally" questions).
+3. After each user answer, echo the answer verbatim into the running "已确认要点" (Confirmed Points) list at the top of the next turn. This guards against drift across long Q&A.
+4. When the caller believes the section is complete, present:
+   - The full "已确认要点" for this section
+   - The §9.3 checklist (5 rows, all marked ☐ or ☑)
+   - The literal prompt: `Approved? (y/revise)`
+5. Do NOT advance to the next section until §7.5 approval is received.
+
+### 7.4 Skip-detection — STOP if the caller (you, the agent) catches itself thinking
+
+| Thought | Reality |
+|---|---|
+| "信息够了，先开始写吧" | 每节都有隐藏约束。继续提问。 |
+| "我帮用户合并几个问题省时间" | 一次一问。批量提问会得到肤浅回答。 |
+| "issue body 已经写得很全" | issue body 是起点，不是输入。继续 Q&A。 |
+| "我可以推断技术细节" | 推断 = 幻觉。问。 |
+| "用户看起来很忙" | 烂 doc 比 Q&A 更费时。继续问。 |
+| "这个 section 很简单，可以跳过 checklist" | §9.3 是 HARD-GATE。不可跳。 |
+| "用户说 '差不多' / '看起来还行'" | 模糊回答 = revise。重新呈现并请求显式 approve。 |
+
+### 7.5 Approval grammar
+
+Approval is granted ONLY when the user's response, stripped of leading/trailing whitespace and case-folded, exactly matches one of:
+- `y`
+- `yes`
+- `ok`
+- `approve`
+- `approved`
+- `lgtm`
+- `继续`
+- `通过`
+
+Anything else (including `差不多`, `看起来还行`, `应该可以`, silence, or substring matches like `yes but ...`) MUST be treated as `revise`. The caller must re-present the section, address the implied feedback, and ask again.
