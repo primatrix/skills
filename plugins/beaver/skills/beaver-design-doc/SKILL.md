@@ -333,7 +333,10 @@ General red flags are defined in engine §7.4. Below are design-doc-specific add
 
 - Argument is required (must provide owner/repo#issue-number)
 - Issue must have `size/L` + `status/design-pending` labels
-- One question at a time during Q&A
-- All sections must be individually approved before submission
+- Phase 2 MUST run engine §8 Discovery Triad before the first question (HARD-GATE)
+- Q&A follows engine §7 (one question at a time per §7.3, approval per §7.5 grammar)
+- Each section approval MUST present engine §9.3 completeness checklist with all rows ☑
+- Doc must include a `<!-- provenance -->` block per §9.2 and a `## 5. Open Questions` section
 - Issue status stays at `design-pending` — no automatic transition
+- Phase 4 Step 7 prints a next-step hint pointing at `beaver-decompose`, but does NOT auto-invoke it
 - Wiki repo cloned to fixed path `~/Code/wiki`
