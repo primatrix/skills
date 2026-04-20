@@ -321,15 +321,13 @@ status: design-pending
 
 ## Red Flags — STOP If You Catch Yourself Thinking
 
+General red flags are defined in engine §7.4. Below are design-doc-specific additions only:
+
 | Thought | Reality |
 |---------|---------|
-| "Issue body has enough info to start drafting" | Issue body is a starting point. Q&A surfaces constraints, tradeoffs, and context you can't infer. |
-| "I'll derive reasonable assumptions" | Assumptions in a design doc become wrong decisions. Ask, don't assume. |
-| "The user seems busy, let me just write it" | A bad design doc wastes more time than Q&A. Keep asking. |
-| "I can fill in the technical details myself" | You don't know the team's tech stack, infra constraints, or preferences. Ask. |
-| "This section is obvious, I'll skip the questions" | Every section has hidden constraints. Ask anyway. |
-| "I'll ask all questions at once to save time" | One question at a time. Batching overwhelms and gets shallow answers. |
 | "I can derive the trade-offs from the code" | Trade-offs are design decisions, not code facts. They must come from the user. Ask. |
+| "I'll skip §5 Open Questions to look more decisive" | Forcing closure on open items causes hallucination later. List them honestly. |
+| "The Provenance block is paperwork, I'll skip it" | Provenance is the audit trail that prevents future drift. It is required. |
 
 ## Constraints
 
