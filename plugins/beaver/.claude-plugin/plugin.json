@@ -1,5 +1,5 @@
 {
   "name": "beaver",
-  "description": "Beaver project management: GitHub-native issue lifecycle, compliance checks, task audit, and developer dashboards for Projects V2",
-  "version": "2.0.0"
+  "description": "Beaver project management: GitHub-native issue lifecycle with explicit /beaver-xxx commands covering the full development cycle (create, claim, design, decompose, dev, PR, roadmap, focus, setup)",
+  "version": "3.0.0"
 }
