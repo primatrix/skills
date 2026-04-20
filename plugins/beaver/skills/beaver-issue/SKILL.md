@@ -254,6 +254,32 @@ keywords:
 -->
 ```
 
+### Bug
+
+```
+## 复现步骤
+
+{steps_in_chinese}
+
+## 期望行为
+
+{expected}
+
+## 实际行为
+
+{actual}
+（错误日志 / 截图：原文粘贴）
+
+## 影响范围
+
+{scope}
+
+## 环境
+
+- OS: {os}
+- Version/commit: {version}
+```
+
 ## Constraints
 
 - One issue at a time
