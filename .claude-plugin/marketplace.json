@@ -28,10 +28,10 @@
     {
       "name": "beaver",
       "source": "./plugins/beaver",
-      "description": "Beaver issue tracker: project setup, issue creation, and PR workflows for GitHub Projects V2",
-      "version": "1.0.0",
+      "description": "Beaver project management: GitHub-native issue lifecycle with explicit /beaver-xxx commands covering the full development cycle (create, claim, design, decompose, dev, PR, roadmap, focus, setup)",
+      "version": "3.0.0",
       "license": "Apache-2.0",
-      "keywords": ["beaver", "github", "issues", "project-management", "pr"],
+      "keywords": ["beaver", "github", "issues", "project-management", "pr", "lifecycle"],
       "category": "productivity"
     },
     {
