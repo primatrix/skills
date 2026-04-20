@@ -8,7 +8,7 @@ argument-hint: "[issue-number to claim, or omit to create new]"
 
 Create a new Beaver-tracked Issue or claim an existing one. Handles Project V2 field setup, label assignment, parent linking, and automatic status transitions with guardrail enforcement.
 
-**References beaver-engine for:** state machine (Section 2), guardrails G001 (Section 3), label ops (Section 4), config reading (Section 5), transition execution (Section 6).
+**References beaver-engine for:** state machine (Section 2), guardrails G001 (Section 3), label ops (Section 4), config reading (Section 5), transition execution (Section 6), QA loop & HARD-GATE (Section 7), Discovery Triad (Section 8), doc quality constraints (Section 9).
 
 ## Prerequisites
 
