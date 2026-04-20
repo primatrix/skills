@@ -174,14 +174,14 @@ Reusable Q&A discipline. Other beaver skills reference this section before any s
 A caller MUST invoke this section before any state-changing action when:
 - Creating a new GitHub Issue (beaver-issue Create mode)
 - Drafting a design doc section (beaver-design-doc Phase 2/3)
-- Decomposing into sub-issues (future: beaver-decompose)
+- Decomposing into sub-issues (beaver-decompose)
 
 A caller MAY skip this section only when the action is purely a label transition / assignee update on an Issue that already has approved content (e.g., beaver-issue Claim mode).
 
 ### 7.2 HARD-GATE rule
 
 Until the user has explicitly approved the current section per §7.5, the caller MUST NOT:
-- Write files (other than `mktemp` scratch buffers used inside Step 5 of the caller's own workflow)
+- Write files (other than ephemeral scratch buffers like `mktemp` used purely to assemble content for review)
 - Run `gh api ... --method POST` / `--method PATCH` / `--method PUT`
 - Run `gh project item-add` / `gh project item-edit`
 - Run `git commit` / `git push`
