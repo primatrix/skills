@@ -153,9 +153,11 @@ Based on all collected information, write the design doc using the template belo
 
 Present each of the 4 sections individually. For each section:
 - Show the section content
-- Ask: "Is this section accurate? Any changes needed?"
+- Show the engine §9.3 completeness checklist as a 5-row table; all rows MUST be ☑ before requesting approval. If any row is ☐, revise the section first, re-present, then re-show the table.
+- Ask the literal prompt: `Approved? (y/revise)`
+- Apply engine §7.5 approval grammar strictly (only `y/yes/ok/approve/approved/lgtm/继续/通过` count). Anything else means revise.
 - If user requests changes, revise and re-present
-- Only proceed to next section after approval
+- Only proceed to next section after explicit approval
 
 ### Step 3: Final confirmation
 
