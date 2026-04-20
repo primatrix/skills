@@ -36,28 +36,41 @@ Ask the user once: "What kind of issue is this? (feat / bug / refactor / docs / 
 
 Check auto memory for `beaver-issue-defaults.md`. If found, present defaults for confirmation. Parse project config per engine Section 5.
 
-### Step 2: Collect issue details
+### Step 1.5: Discovery Triad
 
-Collect one at a time:
-1. **Level**: Goal / Task / SubTask
-2. **Parent issue** (Task/SubTask only): list project items, filter by parent level, let user pick
-3. **Title**: concise issue title
-4. **Description**: structured as 目标 (Objective) and 验收标准 (Acceptance Criteria), written in Chinese
-5. **Type label** (`type/`): feat / bug / refactor / docs / chore
-6. **Priority label** (`p/`): choose one: `p0/blocker` / `p1/urgent` / `p2/high` / `p3/normal`
+Execute engine Section 8 (Discovery Triad) using the user's draft title + objective as the keyword source. Print the Discovery Brief in the §8.3 format. The user does not need to "approve" the Brief — it is informational input for Step 2.
 
-### Step 3: Auto-classify size
+HARD-GATE: Do NOT proceed to Step 2 until the Brief has been printed.
 
-Analyze the description and suggest `size/S` or `size/L`:
-- If description mentions multiple components, API changes + frontend + tests → suggest `size/L`
-- If description is focused on a single change → suggest `size/S`
-Present suggestion with reasoning. Wait for user confirmation.
+### Step 2: Collect issue details (engine §7 Q&A loop)
 
-### Step 4: Preview and confirm
+Enter engine Section 7 Q&A loop. The first question MUST be size, because it routes the rest of the loop:
 
-Show complete issue details in a structured preview. Wait for explicit approval.
+1. **Size**: ask "size/S (small, single change) or size/L (multi-component / needs design)?"
 
-### Step 5: Create the Issue
+Then route:
+
+- **size/S route — minimal Q&A (3 questions):**
+  1. Title (concise)
+  2. Objective (一句话, Chinese)
+  3. Acceptance criteria (≥ 2 verifiable items per §9.4)
+  Defaults are used for: Level (= Task unless user mentions parent), Parent (skip if Level=Task at top of project), Type (= feat unless user mentioned bug in Step 0 — in which case the caller is already in Bug submode), Priority (= p3/normal unless user names urgency).
+
+- **size/L route — full Q&A (4 sections, each with §7.5 approval and §9.3 checklist):**
+  1. Level + Parent: Goal / Task / SubTask; for Task/SubTask list project items and let user pick parent.
+  2. Title.
+  3. Objective + Scope (which subsystems / boundaries).
+  4. Acceptance criteria + Stakeholders (who reviews / who is impacted).
+
+In both routes, Type and Priority labels are collected at the END (after the section-by-section loop), as separate single questions. Type defaults to `feat`; Priority is required and asked explicitly.
+
+HARD-GATE per §7.2: until the user approves the section per §7.5, do NOT call any `gh api` POST/PATCH or `gh project` write command.
+
+### Step 3: Preview and §9.4 checklist
+
+Show complete issue details in a structured preview, then present the §9.4 issue-body checklist (Objective is one user-facing sentence / ≥ 2 verifiable acceptance items / no invented file paths). All three rows must be ☑ before continuing. Then ask `Approved? (y/revise)` per §7.5.
+
+### Step 4: Create the Issue
 
 Write the issue body (from template in "Issue Body Template" section) to a temp file, then pass it via `-F body=@`:
 
@@ -82,14 +95,14 @@ After the API call, clean up: `rm "$BODY_FILE"`
 
 > **NOTE:** Only `-F`/`--field` supports `@file` syntax for reading file contents. `-f`/`--raw-field` passes values as literal strings (so `body=@path` would send the literal text `@path`).
 
-### Step 6: Add to Project V2 and set fields
+### Step 5: Add to Project V2 and set fields
 
 ```bash
 gh project item-add {projectNumber} --owner {org} --url {issue_url} --format json
 ```
 Set Level, Status (Not Started), Progress (0) fields via `gh project item-edit`.
 
-### Step 7: Link to parent (Task/SubTask only)
+### Step 6: Link to parent (Task/SubTask only)
 
 ```bash
 CHILD_ID=$(gh api repos/{org}/{issueRepo}/issues/{number} --jq '.id')
@@ -100,7 +113,7 @@ gh api repos/{org}/{issueRepo}/issues/{parent_number}/sub_issues \
 
 > **NOTE:** The sub-issues API requires `sub_issue_id` to be an integer. Use `-F` (uppercase, `--field`) which infers numeric types automatically. `-f` (lowercase, `--raw-field`) always sends strings, causing a 422 error.
 
-### Step 8: Auto-transition from triage
+### Step 7: Auto-transition from triage
 
 Per engine state machine:
 - `size/S`: transition `status/triage` → `status/in-progress`
@@ -108,7 +121,7 @@ Per engine state machine:
 
 Execute transition per engine Section 6 (validates G001).
 
-### Step 9: Report and save defaults
+### Step 8: Report and save defaults
 
 Print summary: issue URL, level, labels, milestone, status, parent. Silently save defaults to `beaver-issue-defaults.md`.
 
