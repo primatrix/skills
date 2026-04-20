@@ -73,20 +73,23 @@ Parse Goals and Acceptance Criteria from the issue body. Display to user as star
 ## Phase 2: Context Collection (Iterative Q&A)
 
 <HARD-GATE>
-Do NOT skip Q&A. Do NOT "derive reasonable assumptions" from the issue body. Do NOT draft any design content until ALL 4 sections have been explored through Q&A with the user. The issue body is a starting point, NOT sufficient input for a design doc.
+Do NOT skip Q&A. Do NOT "derive reasonable assumptions" from the issue body. Do NOT draft any design content until ALL 4 sections have been explored through Q&A with the user per engine §7.3. The issue body is a starting point, NOT sufficient input for a design doc.
 </HARD-GATE>
 
-**General Rules:**
-- Ask only one question at a time
-- Agent must proactively search the codebase first (existing architecture, related files, test infrastructure, etc.), then ask questions based on search results
-- Continuously ask the user for additional context — for each section, ask whether there are related docs, code, or designs to reference
-- Encourage the user to use @ to reference files or paste relevant content
-- Do not move to the next section until the current one is clear
-- Do not fabricate technical details (library names, frameworks, architecture components) — all technical decisions must come from user input
-- Do not skip questions or make assumptions without sufficient context
-- For every design decision, ask about trade-offs — "Why this approach instead of alternatives?"
+### Phase 2 Step 0: Discovery Triad (engine §8)
 
-Collect information across the following 4 sections one by one. Each section does not have a fixed list of questions; instead, dynamically determine the next question based on already-collected information and codebase search results:
+Before the first question, execute engine §8 Discovery Triad. Use the issue title + objective as the keyword source. Print the Discovery Brief in the §8.3 format. Do NOT proceed to Phase 2 Section 1 until the Brief has been printed (HARD-GATE per §8 introduction).
+
+### Phase 2 General Rules
+
+Q&A discipline is governed by engine §7 (one question at a time, approval grammar per §7.5, skip-detection per §7.4). Doc quality is governed by engine §9 (bilingual rule §9.1, anti-hallucination §9.2, completeness checklist §9.3 to be presented before each section's `Approved? (y/revise)` prompt).
+
+Design-doc-specific additions:
+- For every design decision, ask about trade-offs — "Why this approach instead of alternatives?"
+- Encourage the user to use @ to reference files or paste relevant content; the caller MUST `Read` any @-referenced file before continuing.
+- When the user mentions an external doc (e.g. wiki page), `WebFetch` or `Read` it before continuing.
+
+Collect information across the following 4 sections one by one. Each section does not have a fixed list of questions; dynamically determine the next question based on Discovery Brief findings and previously-collected answers:
 
 ### Section 1: Context & Scope
 
