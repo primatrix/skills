@@ -285,3 +285,7 @@ keywords:
 - One issue at a time
 - Always preview before creating
 - Never modify existing issues (except label transitions and assignee updates during claim)
+- Create mode MUST run engine §8 Discovery Triad before the first §7 question
+- Bug submode forbids `size/L` (refuse with the message in Bug Step 2)
+- `p0/blocker` skips `status/triage` but does NOT skip §8 Discovery or §7 Q&A
+- Approval per §7.5 grammar is required before any `gh api` POST / `gh project` write
