@@ -127,6 +127,68 @@ Print summary: issue URL, level, labels, milestone, status, parent. Silently sav
 
 ---
 
+## Bug Submode
+
+Entered when Step 0 detects `type/bug`. Differs from Feature submode: forced `size/S`, mandatory priority, and `p0/blocker` direct-to-in-progress flow with CODEOWNERS @-mention.
+
+### Bug Step 1: Load project config + Discovery Triad
+
+Same as Feature Step 1 + Step 1.5. For D2 keywords, prefer error messages, stack-trace tokens, API names from the user's reproduction steps. If those are not yet known, ask: "Paste the error message or stack trace so I can search the codebase." THEN run §8.
+
+### Bug Step 2: Forced size/S
+
+Set `size/S` automatically. If the user objects ("this is actually a big bug, mark it size/L"), refuse with: "Bug issues are restricted to size/S per the project-management framework. If the underlying work is multi-component, please file a `type/refactor` or `type/feat` Issue instead." Do NOT proceed.
+
+### Bug Step 3: §7 Q&A — Bug template (4 questions)
+
+Run engine §7 with these four required sections, each individually approved per §7.5:
+1. **复现步骤** (Reproduction steps): concrete, runnable / clickable. No abstract description.
+2. **期望行为** (Expected behavior).
+3. **实际行为** (Actual behavior): include the verbatim error log / screenshot reference.
+4. **影响范围 + 环境** (Impact + Environment): scope, OS, version/commit.
+
+### Bug Step 4: Required priority
+
+Ask: "Priority? (p0/blocker / p1/urgent / p2/high / p3/normal)". This is a required field; do NOT default.
+
+If the answer is `p0/blocker`:
+- Mark for direct transition to `status/in-progress` (skip `status/triage`) in Bug Step 7.
+- Resolve CODEOWNERS @-mentions (Bug Step 5).
+
+### Bug Step 5: Resolve @CODEOWNERS (p0/blocker only)
+
+Run:
+```bash
+gh api repos/{owner}/{repo}/contents/.github/CODEOWNERS --jq '.content' | base64 -d
+```
+If the file does not exist or returns 404, skip CODEOWNERS resolution and continue.
+
+Otherwise: parse CODEOWNERS, match against file paths surfaced in the Discovery Brief D2 hits (best-effort glob match: `*` matches segments, `**` matches subtrees). Collect the union of matched owner handles.
+
+Append to the Issue body:
+```
+cc {@owner1 @owner2 ...}
+```
+
+If no D2 hits matched any CODEOWNERS rule, leave a comment instead of failing: `cc (CODEOWNERS lookup found no match — please assign manually)`.
+
+### Bug Step 6: Preview + §9.5 checklist
+
+Show the Bug Issue preview + §9.5-adjusted checklist. All rows must be ☑. Then ask `Approved? (y/revise)`.
+
+### Bug Step 7: Create + transition
+
+Use the Bug body template (in "Issue Body Template" section). Same `gh api` create call as Feature Step 4. Then:
+- Always: `-f "labels[]=type/bug" -f "labels[]=size/S" -f "labels[]={priority}"`.
+- If `p0/blocker`: skip the standard "transition from triage" step. Directly atomic-swap `status/triage` → `status/in-progress` per engine §4. Validate G001 (size label present — guaranteed since size/S was forced).
+- Otherwise: same as Feature Step 7 (size/S → in-progress per §6).
+
+### Bug Step 8: Report
+
+Same as Feature Step 8. Additionally, when `p0/blocker`: print "@-mentioned owners: {@owner1 @owner2}".
+
+---
+
 ## Claim Mode
 
 ### Step 1: Load issue
