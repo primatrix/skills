@@ -1,7 +1,7 @@
 ---
 date: 2026-04-20
 topic: 把 superpowers 的 QA / 信息收集 / 文档编写融入 beaver-issue 与 beaver-design-doc
-status: approved
+status: implemented
 related:
   - plugins/beaver/skills/beaver-engine/SKILL.md
   - plugins/beaver/skills/beaver-issue/SKILL.md
