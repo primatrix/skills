@@ -8,7 +8,7 @@ argument-hint: "[owner/repo#issue-number]"
 
 Write a design document for a size/L issue in `status/design-pending`. Collects design details through iterative Q&A, writes a structured design doc, submits it as a PR to primatrix/wiki, and comments on the original issue.
 
-**References beaver-engine for:** label ops (Section 4), state machine validation (Section 2).
+**References beaver-engine for:** label ops (Section 4), state machine validation (Section 2), QA loop & HARD-GATE (Section 7), Discovery Triad (Section 8), doc quality constraints (Section 9).
 
 ## Prerequisites
 
@@ -73,20 +73,23 @@ Parse Goals and Acceptance Criteria from the issue body. Display to user as star
 ## Phase 2: Context Collection (Iterative Q&A)
 
 <HARD-GATE>
-Do NOT skip Q&A. Do NOT "derive reasonable assumptions" from the issue body. Do NOT draft any design content until ALL 4 sections have been explored through Q&A with the user. The issue body is a starting point, NOT sufficient input for a design doc.
+Do NOT skip Q&A. Do NOT "derive reasonable assumptions" from the issue body. Do NOT draft any design content until ALL 4 sections have been explored through Q&A with the user per engine §7.3. The issue body is a starting point, NOT sufficient input for a design doc.
 </HARD-GATE>
 
-**General Rules:**
-- Ask only one question at a time
-- Agent must proactively search the codebase first (existing architecture, related files, test infrastructure, etc.), then ask questions based on search results
-- Continuously ask the user for additional context — for each section, ask whether there are related docs, code, or designs to reference
-- Encourage the user to use @ to reference files or paste relevant content
-- Do not move to the next section until the current one is clear
-- Do not fabricate technical details (library names, frameworks, architecture components) — all technical decisions must come from user input
-- Do not skip questions or make assumptions without sufficient context
-- For every design decision, ask about trade-offs — "Why this approach instead of alternatives?"
+### Phase 2 Step 0: Discovery Triad (engine §8)
 
-Collect information across the following 4 sections one by one. Each section does not have a fixed list of questions; instead, dynamically determine the next question based on already-collected information and codebase search results:
+Before the first question, execute engine §8 Discovery Triad. Use the issue title + objective as the keyword source. Print the Discovery Brief in the §8.3 format. Do NOT proceed to Phase 2 Section 1 until the Brief has been printed (HARD-GATE per §8 introduction).
+
+### Phase 2 General Rules
+
+Q&A discipline is governed by engine §7 (one question at a time, approval grammar per §7.5, skip-detection per §7.4). Doc quality is governed by engine §9 (bilingual rule §9.1, anti-hallucination §9.2, completeness checklist §9.3 to be presented before each section's `Approved? (y/revise)` prompt).
+
+Design-doc-specific additions:
+- For every design decision, ask about trade-offs — "Why this approach instead of alternatives?"
+- Encourage the user to use @ to reference files or paste relevant content; the caller MUST `Read` any @-referenced file before continuing.
+- When the user mentions an external doc (e.g. wiki page), `WebFetch` or `Read` it before continuing.
+
+Collect information across the following 4 sections one by one. Each section does not have a fixed list of questions; dynamically determine the next question based on Discovery Brief findings and previously-collected answers:
 
 ### Section 1: Context & Scope
 
@@ -150,9 +153,11 @@ Based on all collected information, write the design doc using the template belo
 
 Present each of the 4 sections individually. For each section:
 - Show the section content
-- Ask: "Is this section accurate? Any changes needed?"
+- Show the engine §9.3 completeness checklist as a 5-row table; all rows MUST be ☑ before requesting approval. If any row is ☐, revise the section first, re-present, then re-show the table.
+- Ask the literal prompt: `Approved? (y/revise)`
+- Apply engine §7.5 approval grammar strictly (only `y/yes/ok/approve/approved/lgtm/继续/通过` count). Anything else means revise.
 - If user requests changes, revise and re-present
-- Only proceed to next section after approval
+- Only proceed to next section after explicit approval
 
 ### Step 3: Final confirmation
 
@@ -244,6 +249,13 @@ rm "$BODY_FILE"
 
 Print summary: PR URL, design doc path, issue status (remains `design-pending`).
 
+Then print the next-step hint (do NOT auto-invoke):
+```
+Next step: after the design doc PR is reviewed and merged, run:
+  beaver-decompose {owner}/{repo}#{number}
+to break the size/L Task into SubTasks.
+```
+
 ---
 
 ## Design Doc Template
@@ -296,25 +308,35 @@ status: design-pending
 ## 4. Alternatives Considered
 
 {Other viable approaches and their trade-offs. Focus on the trade-offs of each alternative and why the current approach is better given the stated goals.}
+
+## 5. Open Questions
+
+{Items raised during Q&A that are recorded but not yet decided. For each: question, owner, expected resolution time. Empty list is acceptable but the section header must be present.}
+
+<!-- provenance
+- "<fact 1>" ← <source: Discovery D1/D2/D3 line, or QA round N>
+- "<fact 2>" ← <source>
+-->
 ```
 
 ## Red Flags — STOP If You Catch Yourself Thinking
 
+General red flags are defined in engine §7.4. Below are design-doc-specific additions only:
+
 | Thought | Reality |
 |---------|---------|
-| "Issue body has enough info to start drafting" | Issue body is a starting point. Q&A surfaces constraints, tradeoffs, and context you can't infer. |
-| "I'll derive reasonable assumptions" | Assumptions in a design doc become wrong decisions. Ask, don't assume. |
-| "The user seems busy, let me just write it" | A bad design doc wastes more time than Q&A. Keep asking. |
-| "I can fill in the technical details myself" | You don't know the team's tech stack, infra constraints, or preferences. Ask. |
-| "This section is obvious, I'll skip the questions" | Every section has hidden constraints. Ask anyway. |
-| "I'll ask all questions at once to save time" | One question at a time. Batching overwhelms and gets shallow answers. |
 | "I can derive the trade-offs from the code" | Trade-offs are design decisions, not code facts. They must come from the user. Ask. |
+| "I'll skip §5 Open Questions to look more decisive" | Forcing closure on open items causes hallucination later. List them honestly. |
+| "The Provenance block is paperwork, I'll skip it" | Provenance is the audit trail that prevents future drift. It is required. |
 
 ## Constraints
 
 - Argument is required (must provide owner/repo#issue-number)
 - Issue must have `size/L` + `status/design-pending` labels
-- One question at a time during Q&A
-- All sections must be individually approved before submission
+- Phase 2 MUST run engine §8 Discovery Triad before the first question (HARD-GATE)
+- Q&A follows engine §7 (one question at a time per §7.3, approval per §7.5 grammar)
+- Each section approval MUST present engine §9.3 completeness checklist with all rows ☑
+- Doc must include a `<!-- provenance -->` block per §9.2 and a `## 5. Open Questions` section
 - Issue status stays at `design-pending` — no automatic transition
+- Phase 4 Step 7 prints a next-step hint pointing at `beaver-decompose`, but does NOT auto-invoke it
 - Wiki repo cloned to fixed path `~/Code/wiki`
