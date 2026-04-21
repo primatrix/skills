@@ -29,7 +29,7 @@ Verify token scopes include `project` and `admin:org`. If missing, prompt the us
 Show a full preview before executing. Include:
 
 - All constants above
-- Custom fields: Level (Single Select: Goal, Task, SubTask), Status (Single Select: 7 options — see below), Progress (Number: 0-100)
+- Custom fields: Level (Single Select: Milestone, Task, SubTask), Status (Single Select: 7 options — see below), Progress (Number: 0-100)
 - README beaver-config block
 - Issue types, labels, milestones to create
 - Number of remaining-year weekly milestones to create
@@ -42,7 +42,7 @@ Wait for explicit user confirmation. If changes requested, adjust and re-preview
 
 **Level:**
 ```bash
-gh project field-create 14 --owner primatrix --name "Level" --data-type SINGLE_SELECT --single-select-options "Goal,Task,SubTask"
+gh project field-create 14 --owner primatrix --name "Level" --data-type SINGLE_SELECT --single-select-options "Milestone,Task,SubTask"
 ```
 
 Skip if field already exists.
@@ -134,8 +134,8 @@ Create each if not already present:
 
 | Name | Color | Description |
 |------|-------|-------------|
-| Goal | blue | High-level objective |
-| Task | green | Breakdown of a Goal |
+| Milestone | blue | High-level objective |
+| Task | green | Breakdown of a Milestone |
 | SubTask | gray | Finest granularity work item |
 
 ```bash
