@@ -1,11 +1,21 @@
 ---
-allowed-tools: Bash(gh auth status:*), Bash(gh auth refresh:*), Bash(gh repo list:*), Bash(gh project create:*), Bash(gh project edit:*), Bash(gh project field-create:*), Bash(gh project field-list:*), Bash(gh api:*), Bash(gh label create:*), Bash(cat > /tmp/*), Bash(date:*)
-description: "Bootstrap a Beaver project: create Project V2, labels, custom fields, milestones. Updates label set to RFC-0012 state machine."
+allowed-tools: Bash(gh auth status:*), Bash(gh auth refresh:*), Bash(gh project edit:*), Bash(gh project field-create:*), Bash(gh project field-list:*), Bash(gh api:*), Bash(gh label create:*), Bash(cat > /tmp/*), Bash(date:*)
+description: "Initialize Beaver on primatrix/projects#14: update Status field to 7 options, create labels, and create remaining-year weekly milestones."
 ---
 
-# Create Beaver Project
+# Initialize Beaver Project
 
-Create a GitHub Project V2 with Beaver-required custom fields (Level, Status, Progress), a README containing `beaver-config`, and initialize the issue repository with Issue Types, Labels, and Milestones.
+Idempotent initializer for the Beaver project at `primatrix` org, project #14. Updates custom fields, README, issue types, labels, and milestones on `primatrix/projects`.
+
+## Constants
+
+| Parameter | Value |
+|-----------|-------|
+| Organization | `primatrix` |
+| Project number | `14` |
+| Project URL | `https://github.com/orgs/primatrix/projects/14` |
+| Issue repo | `primatrix/projects` |
+| Observed repos | all |
 
 ## Context
 
@@ -14,43 +24,30 @@ Create a GitHub Project V2 with Beaver-required custom fields (Level, Status, Pr
 
 Verify token scopes include `project` and `admin:org`. If missing, prompt the user to run `gh auth refresh -h github.com -s project` and/or `gh auth refresh -h github.com -s admin:org`.
 
-## Workflow
+## Preview and Confirm
 
-Collect from the user, one at a time:
-1. **Organization** — verify access with `gh repo list {org} --json name --limit 1`
-2. **Project title**
-3. **Repositories to observe** — list with `gh repo list {org} --json name --limit 100 --jq '.[].name'`, accept comma-separated names or "all"
-4. **Issue repository** — which observed repo hosts Beaver-tracked issues
+Show a full preview before executing. Include:
 
-### Preview and Confirm
-
-Always show a full preview before executing. Include:
-
-- Organization, project title, observed repos, issue repo
-- Custom fields: Level (Single Select: Goal, Task, SubTask), Status (Single Select: Not Started, In Progress, Blocked, Done), Progress (Number: 0-100)
+- All constants above
+- Custom fields: Level (Single Select: Goal, Task, SubTask), Status (Single Select: 7 options — see below), Progress (Number: 0-100)
 - README beaver-config block
 - Issue types, labels, milestones to create
+- Number of remaining-year weekly milestones to create
 
 Wait for explicit user confirmation. If changes requested, adjust and re-preview.
 
 ## Execution
 
-### Create Project
-
-```bash
-gh project create --owner {org} --title "{title}" --format json
-```
-
-Extract `number` and `url` from the output.
-
-### Create Custom Fields
+### Update Custom Fields
 
 **Level:**
 ```bash
-gh project field-create {number} --owner {org} --name "Level" --data-type SINGLE_SELECT --single-select-options "Goal,Task,SubTask"
+gh project field-create 14 --owner primatrix --name "Level" --data-type SINGLE_SELECT --single-select-options "Goal,Task,SubTask"
 ```
 
-**Status:** The built-in Status field cannot be deleted. List fields with `gh project field-list {number} --owner {org} --format json`, find the Status field ID, then update via GraphQL:
+Skip if field already exists.
+
+**Status:** List fields with `gh project field-list 14 --owner primatrix --format json`, find the Status field ID, then update via GraphQL to exactly 7 options. This is a full replacement — any pre-existing options not in this list are removed.
 
 ```bash
 gh api graphql -f query='
@@ -58,10 +55,13 @@ mutation {
   updateProjectV2Field(input: {
     fieldId: "{existing_status_field_id}"
     singleSelectOptions: [
-      {name: "Not Started", color: GRAY, description: ""},
-      {name: "In Progress", color: YELLOW, description: ""},
-      {name: "Blocked", color: RED, description: ""},
-      {name: "Done", color: GREEN, description: ""}
+      {name: "Triage", color: GRAY, description: "Awaiting triage"},
+      {name: "Ready to Claim", color: BLUE, description: "Added to Milestone, awaiting claim"},
+      {name: "Design Pending", color: PURPLE, description: "Design review in progress (size/L)"},
+      {name: "Ready to Develop", color: ORANGE, description: "Ready to code (size/L, design approved)"},
+      {name: "In Progress", color: YELLOW, description: "Active development"},
+      {name: "Blocked", color: RED, description: "Blocked"},
+      {name: "Done", color: GREEN, description: "Completed and merged"}
     ]
   }) {
     projectV2Field {
@@ -78,12 +78,12 @@ mutation {
 
 If no Status field exists, create it:
 ```bash
-gh project field-create {number} --owner {org} --name "Status" --data-type SINGLE_SELECT --single-select-options "Not Started,In Progress,Blocked,Done"
+gh project field-create 14 --owner primatrix --name "Status" --data-type SINGLE_SELECT --single-select-options "Triage,Ready to Claim,Design Pending,Ready to Develop,In Progress,Blocked,Done"
 ```
 
 **Progress:**
 ```bash
-gh project field-create {number} --owner {org} --name "Progress" --data-type NUMBER
+gh project field-create 14 --owner primatrix --name "Progress" --data-type NUMBER
 ```
 
 Skip any field that already exists and inform the user.
@@ -91,13 +91,11 @@ Skip any field that already exists and inform the user.
 ### Write README with beaver-config
 
 ````
-# {title}
+# Primatrix Projects
 
 ```yaml beaver-config
-repositories:
-  - {repo1}
-  - {repo2}
-issueRepo: {issueRepo}
+repositories: all
+issueRepo: projects
 customFields:
   level: Level
   progress: Progress
@@ -107,12 +105,21 @@ customFields:
 
 ```bash
 cat > /tmp/beaver-project-readme.md << 'BEAVEREOF'
-{readme_content}
+# Primatrix Projects
+
+```yaml beaver-config
+repositories: all
+issueRepo: projects
+customFields:
+  level: Level
+  progress: Progress
+  status: Status
+```
 BEAVEREOF
 ```
 
 ```bash
-gh project edit {number} --owner {org} --readme "$(cat /tmp/beaver-project-readme.md)"
+gh project edit 14 --owner primatrix --readme "$(cat /tmp/beaver-project-readme.md)"
 ```
 
 ### Create Issue Types
@@ -120,7 +127,7 @@ gh project edit {number} --owner {org} --readme "$(cat /tmp/beaver-project-readm
 Issue types are org-scoped. Requires `admin:org` scope and `X-GitHub-Api-Version: 2026-03-10` header. List existing first to avoid duplicates:
 
 ```bash
-gh api orgs/{org}/issue-types -H "X-GitHub-Api-Version: 2026-03-10" --jq '.[].name'
+gh api orgs/primatrix/issue-types -H "X-GitHub-Api-Version: 2026-03-10" --jq '.[].name'
 ```
 
 Create each if not already present:
@@ -132,7 +139,7 @@ Create each if not already present:
 | SubTask | gray | Finest granularity work item |
 
 ```bash
-gh api orgs/{org}/issue-types --method POST -H "X-GitHub-Api-Version: 2026-03-10" -f name="{name}" -f color="{color}" -f description="{desc}" -F is_enabled=true
+gh api orgs/primatrix/issue-types --method POST -H "X-GitHub-Api-Version: 2026-03-10" -f name="{name}" -f color="{color}" -f description="{desc}" -F is_enabled=true
 ```
 
 Skip on 422 (already exists). Warn and continue on 404 (org plan may not support issue types).
@@ -198,30 +205,36 @@ Create on the issue repository. Skip any that already exist (on 422 error, conti
 | Control-By-Beaver | 7B61FF | Issue managed by Beaver automation |
 
 ```bash
-gh label create "{label}" --repo {org}/{issueRepo} --color "{color}" --description "{desc}"
+gh label create "{label}" --repo primatrix/projects --color "{color}" --description "{desc}"
 ```
 
 Create all labels in sequence. Skip on error (label already exists).
 
 ### Create Milestones
 
-Calculate 4 weekly milestones starting from today. Each week spans 7 days. Title format: `Week N (Mon DD - Mon DD)`.
+Calculate weekly milestones for the remaining weeks of the current year. Each milestone represents one ISO week (Monday to Sunday).
+
+- **Start:** Monday of the current ISO week
+- **End:** Sunday of the ISO week containing December 31
+- **Title format:** `Week {iso_week_number} (Mon DD - Mon DD)` where dates use short month names (e.g. `Apr 21`)
+- **due_on:** Sunday of that week, `T23:59:59Z`
 
 ```bash
-gh api repos/{org}/{issueRepo}/milestones --method POST -f title="Week {n} ({start} - {end})" -f due_on="{end_iso}T23:59:59Z" -f state="open"
+gh api repos/primatrix/projects/milestones --method POST -f title="Week {n} ({start} - {end})" -f due_on="{end_iso}T23:59:59Z" -f state="open"
 ```
 
 Skip on 422 (title already exists).
 
 ## Success Report
 
-Print summary with: project URL, custom fields, observed repos, issue repo, issue types, labels, milestones. Inform the user they can now use `beaver-issue` with project identifier `{org}/{number}`.
+Print summary with: project URL (`https://github.com/orgs/primatrix/projects/14`), custom fields (Level, Status with 7 options, Progress), issue types, label count, milestone count and range. Inform the user they can now use `beaver-issue` with project identifier `primatrix/14`.
 
 ## Constraints
 
-- Organization-level projects only (not user-level)
-- Fixed field names: Level, Status, Progress
-- Fixed labels, issue types, and milestone count (4 weeks)
-- Always confirm before executing — never create without preview and approval
-- Does not modify existing projects — new projects only
+- Idempotent — safe to run multiple times; skips existing fields, labels, milestones
+- Organization: `primatrix` only
+- Project: `#14` only (does not create new projects)
+- Fixed field names: Level, Status (7 options), Progress
+- Status field is a full replacement — only the 7 specified options will exist after update
+- Always confirm before executing — never execute without preview and approval
 - On failure, report the error and let the user decide how to proceed (no auto-retry)
