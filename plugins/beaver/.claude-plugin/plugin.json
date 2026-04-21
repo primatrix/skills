@@ -1,5 +1,5 @@
 {
   "name": "beaver",
   "description": "Beaver project management: GitHub-native issue lifecycle with explicit /beaver-xxx commands covering the full development cycle (create, claim, design, decompose, dev, PR, roadmap, focus, setup)",
-  "version": "3.0.0"
+  "version": "3.1.0"
 }
