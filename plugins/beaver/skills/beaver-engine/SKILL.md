@@ -1,6 +1,6 @@
 ---
 name: beaver-engine
-description: "Internal engine for Beaver workflow skills. DO NOT trigger directly. Provides state machine rules, guardrail checks, label operations, and project config reading used by beaver-issue, beaver-pr, beaver-audit, beaver-report, beaver-focus, and beaver-design-doc."
+description: "Internal engine for Beaver commands. DO NOT trigger directly. Provides state machine rules, guardrail checks, label operations, and project config reading used by beaver-create, beaver-claim, beaver-design, beaver-decompose, beaver-dev, beaver-pr, beaver-roadmap, beaver-focus, and beaver-setup."
 ---
 
 # Beaver Engine
@@ -30,11 +30,11 @@ All labels use a `prefix/name` format:
 
 ### Status labels (`status/`)
 - `status/triage` — Initial state, awaiting triage
-- `status/design-pending` — (size/L only) Design review in progress
-- `status/ready-to-develop` — (size/L only) Design approved, ready to code
+- `status/ready-to-claim` — Added to Milestone, awaiting claim
+- `status/design-pending` — (size/L only) Claimed, design review in progress
+- `status/ready-to-develop` — (size/L only) Design Doc PR merged, ready to decompose/code
 - `status/in-progress` — Active development
 - `status/blocked` — Blocked (must note reason)
-- `status/review-needed` — Awaiting code/design review
 - `status/done` — Completed and merged
 
 ### Beaver agent labels (`beaver/`)
@@ -50,13 +50,18 @@ All labels use a `prefix/name` format:
 
 ### size/S Fast Track
 ```text
-triage → in-progress → review-needed → done
+triage → ready-to-claim → in-progress → done
 ```
 
 ### size/L Standard SOP
 ```text
-triage → design-pending → ready-to-develop → in-progress → review-needed → done
+triage → ready-to-claim → design-pending → ready-to-develop → in-progress → done
 ```
+
+### Bug track
+- All bugs forced `size/S`
+- `p0/blocker` bugs: created directly at `status/in-progress` (skip triage/ready-to-claim)
+- Other bugs: `triage → in-progress` (skip ready-to-claim, no Milestone required)
 
 ### Universal transitions
 - Any status → `blocked` (must note reason in Issue comment)
@@ -66,11 +71,11 @@ triage → design-pending → ready-to-develop → in-progress → review-needed
 
 | Current Status | size/S next | size/L next |
 |---|---|---|
-| triage | in-progress | design-pending |
+| triage | ready-to-claim (or in-progress for bug) | ready-to-claim |
+| ready-to-claim | in-progress | design-pending |
 | design-pending | N/A | ready-to-develop |
 | ready-to-develop | N/A | in-progress |
-| in-progress | review-needed | review-needed |
-| review-needed | done | done |
+| in-progress | done (via PR merge) | done (all SubTasks closed) |
 | blocked | (previous) | (previous) |
 
 ## 3. Guardrail Rules
@@ -85,33 +90,40 @@ triage → design-pending → ready-to-develop → in-progress → review-needed
 - **When:** Any transition of a `size/L` Issue
 - **Fail action:** Block transition, comment listing required intermediate stages
 
-### G003: Cannot skip review
-- **Check:** `in-progress` cannot go directly to `done`
-- **When:** Transition to `status/done`
-- **Fail action:** Block transition, require `status/review-needed` first
-
 ### G004: Test evidence required for done
 - **Check:** Find test evidence from (in priority order):
   1. Current session context — scan conversation for test runner output (pytest, go test, npm test, cargo test, etc.)
   2. PR diff — new/modified test files (`*_test.*`, `test_*.*`, `tests/**`)
   3. CI status — GitHub Actions / Check Runs on associated PR
-- **When:** Transition to `status/done` or PR creation
+- **When:** PR creation (beaver-pr)
 - **Fail action:** Add `beaver/missing-test` label, comment requesting evidence
 - **On success:** Write test summary to PR body's Test Plan section or Issue comment
-
-### G005: LOC limit on PR
-- **Check:** Count added lines in core directories, excluding:
-  - `**/*_test.*`, `**/test_*.*`, `**/tests/**`
-  - `**/*.md`, `**/docs/**`
-  - `*.pb.go`, `*_generated.*`, `*.lock`
-- **Threshold:** 200 lines
-- **When:** PR creation
-- **Fail action:** Add `beaver/needs-split` label, warn developer (do not block — let developer confirm)
 
 ### G006: PR must have complete labels
 - **Check:** Associated Issue has at least one `type/` label AND one `size/` label
 - **When:** PR creation
 - **Fail action:** Add `beaver/missing-context` label, list missing labels
+
+### G007: ready-to-claim requires Milestone
+- **Check:** Issue is associated with a Milestone
+- **When:** Transition to `status/ready-to-claim`
+- **Exempt:** `type/bug` issues (bugs skip Roadmap)
+- **Fail action:** Block transition, comment requesting Milestone assignment
+
+### G008: Bug forced size/S
+- **Check:** `type/bug` issues must have `size/S`, never `size/L`
+- **When:** Issue creation (beaver-create)
+- **Fail action:** Override to `size/S`, warn user
+
+### G009: size/L must be ready-to-develop before in-progress
+- **Check:** size/L issue has `status/ready-to-develop` AND at least one sub-issue
+- **When:** Transition to `status/in-progress` for size/L issues (beaver-dev)
+- **Fail action:** Block transition, comment listing what's missing
+
+### G010: stale/overdue are flag labels
+- **Check:** `beaver/stale` and `beaver/overdue` are beaver flag labels, not status labels
+- **When:** beaver-roadmap applies stale/overdue flags
+- **Note:** These labels coexist with any status label and do not participate in state machine transitions
 
 ## 4. Label Operations (gh command templates)
 
@@ -172,11 +184,11 @@ Reusable Q&A discipline. Other beaver skills reference this section before any s
 ### 7.1 When callers must invoke
 
 A caller MUST invoke this section before any state-changing action when:
-- Creating a new GitHub Issue (beaver-issue Create mode)
-- Drafting a design doc section (beaver-design-doc Phase 2/3)
+- Creating a new GitHub Issue (beaver-create)
+- Drafting a design doc section (beaver-design Phase 2/3)
 - Decomposing into sub-issues (beaver-decompose)
 
-A caller MAY skip this section only when the action is purely a label transition / assignee update on an Issue that already has approved content (e.g., beaver-issue Claim mode).
+A caller MAY skip this section only when the action is purely a label transition / assignee update on an Issue that already has approved content (e.g., beaver-claim).
 
 ### 7.2 HARD-GATE rule
 

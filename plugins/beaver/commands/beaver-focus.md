@@ -1,9 +1,11 @@
 ---
-name: beaver-focus
-description: "Show your personal Beaver work status: today's tasks, pending reviews, blockers, and DDL warnings with priority recommendations. Trigger when the user asks about their tasks, what to work on, or personal status."
+allowed-tools: Bash(gh api:*), Bash(gh search:*)
+description: "Show your personal Beaver work status. Trigger when the user asks about their tasks, what to work on, or personal status."
 ---
 
-# Beaver Focus
+# /beaver-focus — 个人看板
+
+Utility command, usable at any time.
 
 Show the current developer's personal work dashboard: active tasks, pending reviews, blockers, DDL warnings, and LLM-powered priority recommendations.
 
@@ -35,6 +37,8 @@ gh api "repos/{org}/{issueRepo}/issues?labels=Control-By-Beaver&assignee=$CURREN
 
 Parse labels per engine Section 4. Group by status.
 
+Within each group, sort p/0-blocker bugs to the TOP of results. For any p/0-blocker issue open longer than 24 hours, display a ⚠️ warning alongside the issue row.
+
 ### Step 4: Fetch PRs needing my review
 
 ```bash
@@ -44,7 +48,7 @@ gh api "search/issues?q=is:pr+is:open+review-requested:$CURRENT_USER" \
 
 ### Step 5: Compute DDL warnings
 
-For issues with milestones, check if `due_on` is within 48 hours. Flag accordingly.
+For issues with milestones, check if `due_on` is within 48 hours. Flag accordingly with a warning indicator.
 
 ### Step 6: Generate dashboard
 
@@ -53,11 +57,24 @@ For issues with milestones, check if `due_on` is within 48 hours. Flag according
 
 **Date:** {today}
 
+## P/0 Blockers ({count})
+| # | Title | Age | Warning |
+|---|-------|-----|---------|
+(⚠️ shown if open > 24h)
+
 ## In Progress ({count})
 | # | Title | Priority | Updated |
 |---|-------|----------|---------|
 
+## Bugs ({count})
+| # | Title | Priority | Updated |
+|---|-------|----------|---------|
+
 ## Ready to Develop ({count})
+| # | Title | Priority |
+|---|-------|----------|
+
+## Ready to Claim ({count})
 | # | Title | Priority |
 |---|-------|----------|
 
@@ -72,18 +89,21 @@ For issues with milestones, check if `due_on` is within 48 hours. Flag according
 ## DDL Warnings ({count})
 | # | Title | Due | Days Left |
 |---|-------|-----|-----------|
+(⚠️ shown if milestone due within 48h)
 
 ## Today's Top 3 Priorities
 
 {LLM recommendation based on:
- 1. p0/blocker and p1/urgent issues first
- 2. DDL < 48h issues next
- 3. Longest-waiting review requests
+ 1. p/0-blocker issues first (especially if open > 24h)
+ 2. p1/urgent issues next
+ 3. DDL < 48h issues next
+ 4. Longest-waiting review requests
  Explain WHY each is prioritized.}
 ```
 
 ## Constraints
 
-- Read-only — no label changes, no status transitions
+Strictly read-only — no label changes or status transitions.
+
 - Only shows issues assigned to the current `gh` authenticated user
 - Dashboard in terminal markdown, not written to file
