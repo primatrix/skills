@@ -143,7 +143,7 @@ cat > "$REPORT_FILE" << 'BEAVEREOF'
 BEAVEREOF
 
 gh api repos/{org}/{issueRepo}/issues/{target_number}/comments --method POST \
-  --raw-field body=@"$REPORT_FILE"
+  -F body=@"$REPORT_FILE"
 rm "$REPORT_FILE"
 ```
 

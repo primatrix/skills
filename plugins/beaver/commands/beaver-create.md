@@ -37,7 +37,7 @@ Phase 1 of the Beaver development lifecycle.
    # Create issue
    gh api repos/{org}/{issueRepo}/issues --method POST \
      -f title="{title}" \
-     --raw-field body=@/tmp/beaver-issue-body.md \
+     -F body=@/tmp/beaver-issue-body.md \
      --jq '.number'
 
    # Add labels

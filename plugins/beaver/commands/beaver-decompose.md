@@ -93,7 +93,7 @@ For each approved child, sequentially:
    ```bash
    gh api repos/{org}/{issueRepo}/issues --method POST \
      -f title="{title}" \
-     --raw-field body=@/tmp/beaver-sub-issue.md \
+     -F body=@/tmp/beaver-sub-issue.md \
      --jq '.number'
    ```
 
