@@ -1,11 +1,11 @@
 ---
 allowed-tools: Bash(gh auth status:*), Bash(gh auth refresh:*), Bash(gh project edit:*), Bash(gh project field-create:*), Bash(gh project field-list:*), Bash(gh api:*), Bash(gh label create:*), Bash(cat > /tmp/*), Bash(date:*)
-description: "Initialize Beaver on primatrix/projects#14: update Status field to 7 options, create labels, and create remaining-year weekly milestones."
+description: "Initialize Beaver on primatrix/projects#14: update Status field to 7 options, create labels, and create Iteration field with monthly entries."
 ---
 
 # Initialize Beaver Project
 
-Idempotent initializer for the Beaver project at `primatrix` org, project #14. Updates custom fields, README, issue types, labels, and milestones on `primatrix/projects`.
+Idempotent initializer for the Beaver project at `primatrix` org, project #14. Updates custom fields, README, issue types, labels, and Iteration field on `primatrix/projects`.
 
 ## Constants
 
@@ -29,10 +29,10 @@ Verify token scopes include `project` and `admin:org`. If missing, prompt the us
 Show a full preview before executing. Include:
 
 - All constants above
-- Custom fields: Level (Single Select: Milestone, Task, SubTask), Status (Single Select: 7 options — see below), Progress (Number: 0-100)
+- Custom fields: Level (Single Select: Milestone, Task, SubTask), Status (Single Select: 7 options — see below), Progress (Number: 0-100), Iteration (Iteration: monthly entries from current month to year-end)
 - README beaver-config block
-- Issue types, labels, milestones to create
-- Number of remaining-year weekly milestones to create
+- Issue types and labels to create
+- Iteration field with N monthly entries (YYYY-MM ... YYYY-12)
 
 Wait for explicit user confirmation. If changes requested, adjust and re-preview.
 
@@ -56,7 +56,7 @@ mutation {
     fieldId: "{existing_status_field_id}"
     singleSelectOptions: [
       {name: "Triage", color: GRAY, description: "Awaiting triage"},
-      {name: "Ready to Claim", color: BLUE, description: "Added to Milestone, awaiting claim"},
+      {name: "Ready to Claim", color: BLUE, description: "Added to Iteration, awaiting claim"},
       {name: "Design Pending", color: PURPLE, description: "Design review in progress (size/L)"},
       {name: "Ready to Develop", color: ORANGE, description: "Ready to code (size/L, design approved)"},
       {name: "In Progress", color: YELLOW, description: "Active development"},
@@ -100,6 +100,7 @@ customFields:
   level: Level
   progress: Progress
   status: Status
+  iteration: Iteration
 ```
 ````
 
@@ -114,6 +115,7 @@ customFields:
   level: Level
   progress: Progress
   status: Status
+  iteration: Iteration
 ```
 BEAVEREOF
 ```
@@ -179,7 +181,7 @@ Create on the issue repository. Skip any that already exist (on 422 error, conti
 | Label | Color | Description |
 |-------|-------|-------------|
 | status/triage | E4E669 | Awaiting triage |
-| status/ready-to-claim | C2E0C6 | Added to Milestone, awaiting claim |
+| status/ready-to-claim | C2E0C6 | Added to Iteration, awaiting claim |
 | status/design-pending | D4C5F9 | Design review in progress (size/L) |
 | status/ready-to-develop | 0E8A16 | Ready to code (size/L, design approved) |
 | status/in-progress | FBCA04 | Active development |
@@ -210,31 +212,64 @@ gh label create "{label}" --repo primatrix/projects --color "{color}" --descript
 
 Create all labels in sequence. Skip on error (label already exists).
 
-### Create Milestones
+### Create Iteration Field
 
-Calculate weekly milestones for the remaining weeks of the current year. Each milestone represents one ISO week (Monday to Sunday).
+Create the Iteration custom field on Project #14 and populate one entry per natural month from the current month through December of the current year.
 
-- **Start:** Monday of the current ISO week
-- **End:** Sunday of the ISO week containing December 31
-- **Title format:** `Week {iso_week_number} (Mon DD - Mon DD)` where dates use short month names (e.g. `Apr 21`)
-- **due_on:** Sunday of that week, `T23:59:59Z`
+**Field creation (skip if exists):**
 
 ```bash
-gh api repos/primatrix/projects/milestones --method POST -f title="Week {n} ({start} - {end})" -f due_on="{end_iso}T23:59:59Z" -f state="open"
+PROJECT_ID=$(gh api graphql -f query='
+  query { organization(login: "primatrix") { projectV2(number: 14) { id } } }' \
+  --jq '.data.organization.projectV2.id')
+
+gh api graphql -f query='
+mutation($projectId: ID!) {
+  createProjectV2Field(input: {
+    projectId: $projectId
+    dataType: ITERATION
+    name: "Iteration"
+    iterationConfiguration: {
+      startDate: "{first_day_of_current_month}"
+      duration: {days_in_current_month}
+      iterations: [
+        {startDate: "{YYYY-MM-01}", duration: {days_in_month}, title: "<YYYY-MM> (<MonthShort>)"},
+        ...
+      ]
+    }
+  }) { projectV2Field { ... on ProjectV2IterationField { id name } } }
+}' -f projectId="$PROJECT_ID"
 ```
 
-Skip on 422 (title already exists).
+Build the `iterations` array by iterating from the current month to December of the current year. For each month: title = `YYYY-MM (MonthShort)` (e.g. `2026-04 (Apr)`), startDate = first of that month (`YYYY-MM-01`), duration = days in that month (28/29/30/31).
+
+If the Iteration field already exists, skip creation and instead read existing entries via:
+
+```bash
+gh api graphql -f query='
+  query { organization(login: "primatrix") { projectV2(number: 14) {
+    field(name: "Iteration") {
+      ... on ProjectV2IterationField {
+        id
+        configuration { iterations { title startDate duration } }
+      }
+    }
+  } } }'
+```
+
+Compute which monthly entries are missing (compare titles to the expected `YYYY-MM (MonthShort)` set) and append only the missing ones via `updateProjectV2IterationField` (preserve existing entries).
 
 ## Success Report
 
-Print summary with: project URL (`https://github.com/orgs/primatrix/projects/14`), custom fields (Level, Status with 7 options, Progress), issue types, label count, milestone count and range. Inform the user they can now use `beaver-issue` with project identifier `primatrix/14`.
+Print summary with: project URL (`https://github.com/orgs/primatrix/projects/14`), custom fields (Level, Status with 7 options, Progress, Iteration), issue types, label count, Iteration entry count and range. Inform the user they can now use `beaver-issue` with project identifier `primatrix/14`.
 
 ## Constraints
 
-- Idempotent — safe to run multiple times; skips existing fields, labels, milestones
+- Idempotent — safe to run multiple times; skips existing fields, labels, Iteration entries
 - Organization: `primatrix` only
 - Project: `#14` only (does not create new projects)
 - Fixed field names: Level, Status (7 options), Progress
 - Status field is a full replacement — only the 7 specified options will exist after update
+- Iteration field — only missing months are appended; existing entries preserved
 - Always confirm before executing — never execute without preview and approval
 - On failure, report the error and let the user decide how to proceed (no auto-retry)
