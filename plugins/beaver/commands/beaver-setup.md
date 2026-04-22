@@ -1,5 +1,5 @@
 ---
-allowed-tools: Bash(bash:*), Write
+allowed-tools: Bash(gh auth status:*), Bash(gh auth refresh:*), Bash(gh project edit:*), Bash(gh project field-create:*), Bash(gh project field-list:*), Bash(gh api:*), Bash(gh label create:*), Bash(date:*)
 description: "Initialize Beaver on primatrix/projects#14: update Status field to 7 options, create labels, and create Iteration field with monthly entries."
 ---
 
@@ -131,7 +131,7 @@ Skip on 422 (already exists). Warn and continue on 404 (org plan may not support
 Create on the issue repository. For each row in the label tables below, run:
 
 ```bash
-bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-setup.sh ensure-label projects <name> <color> <desc>
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-setup.sh ensure-label primatrix/projects <name> <color> <desc>
 ```
 
 The `ensure-label` subcommand swallows duplicate-label errors so the loop is idempotent.
