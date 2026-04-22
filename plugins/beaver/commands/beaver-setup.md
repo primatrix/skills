@@ -223,25 +223,33 @@ PROJECT_ID=$(gh api graphql -f query='
   query { organization(login: "primatrix") { projectV2(number: 14) { id } } }' \
   --jq '.data.organization.projectV2.id')
 
-gh api graphql -f query='
-mutation($projectId: ID!) {
+# Build the iterations array as a JSON-like string for inline substitution.
+# For each month from current month through December of the current year:
+#   {startDate: "YYYY-MM-01", duration: <days_in_month>, title: "YYYY-MM (MonthShort)"}
+# e.g. {startDate: "2026-04-01", duration: 30, title: "2026-04 (Apr)"}
+
+gh api graphql -f query="
+mutation {
   createProjectV2Field(input: {
-    projectId: $projectId
+    projectId: \"$PROJECT_ID\"
     dataType: ITERATION
-    name: "Iteration"
+    name: \"Iteration\"
     iterationConfiguration: {
-      startDate: "{first_day_of_current_month}"
-      duration: {days_in_current_month}
+      startDate: \"<first_day_of_current_month>\"
+      duration: <days_in_current_month>
       iterations: [
-        {startDate: "{YYYY-MM-01}", duration: {days_in_month}, title: "<YYYY-MM> (<MonthShort>)"},
-        ...
+        {startDate: \"2026-04-01\", duration: 30, title: \"2026-04 (Apr)\"},
+        {startDate: \"2026-05-01\", duration: 31, title: \"2026-05 (May)\"}
+        # ... continue through December of current year
       ]
     }
   }) { projectV2Field { ... on ProjectV2IterationField { id name } } }
-}' -f projectId="$PROJECT_ID"
+}"
 ```
 
-Build the `iterations` array by iterating from the current month to December of the current year. For each month: title = `YYYY-MM (MonthShort)` (e.g. `2026-04 (Apr)`), startDate = first of that month (`YYYY-MM-01`), duration = days in that month (28/29/30/31).
+**Note:** The top-level `startDate` / `duration` in `iterationConfiguration` set the **default cadence** GitHub uses to auto-generate future iterations. The explicit `iterations` array fully defines the initial set — set top-level `startDate` to the first day of the current month and `duration` to that month's length so future auto-generated iterations align to month starts.
+
+Build the `iterations` array by iterating from the current month to December of the current year. For each month: title = `YYYY-MM (MonthShort)` (e.g. `2026-04 (Apr)`), startDate = first of that month (`YYYY-MM-01`), duration = days in that month (28/29/30/31). Compute month lengths via `cal` or `date -v1d -v+1m -v-1d +%d` (BSD/macOS) / `date -d "$(date +%Y-%m-01) +1 month -1 day" +%d` (GNU/Linux) to handle February correctly.
 
 If the Iteration field already exists, skip creation and instead read existing entries via:
 
@@ -259,6 +267,21 @@ gh api graphql -f query='
 
 Compute which monthly entries are missing (compare titles to the expected `YYYY-MM (MonthShort)` set) and append only the missing ones via `updateProjectV2IterationField` (preserve existing entries).
 
+Use `additions` to append iterations without disturbing existing ones. Pass only the entries whose titles are absent from the current configuration.
+
+```bash
+gh api graphql -f query="
+mutation {
+  updateProjectV2IterationField(input: {
+    iterationFieldId: \"<iteration_field_id>\"
+    additions: [
+      {startDate: \"2026-05-01\", duration: 31, title: \"2026-05 (May)\"}
+      # ... only the missing months
+    ]
+  }) { iterationField { id } }
+}"
+```
+
 ## Success Report
 
 Print summary with: project URL (`https://github.com/orgs/primatrix/projects/14`), custom fields (Level, Status with 7 options, Progress, Iteration), issue types, label count, Iteration entry count and range. Inform the user they can now use `beaver-issue` with project identifier `primatrix/14`.
@@ -268,7 +291,7 @@ Print summary with: project URL (`https://github.com/orgs/primatrix/projects/14`
 - Idempotent — safe to run multiple times; skips existing fields, labels, Iteration entries
 - Organization: `primatrix` only
 - Project: `#14` only (does not create new projects)
-- Fixed field names: Level, Status (7 options), Progress
+- Fixed field names: Level, Status (7 options), Progress, Iteration
 - Status field is a full replacement — only the 7 specified options will exist after update
 - Iteration field — only missing months are appended; existing entries preserved
 - Always confirm before executing — never execute without preview and approval
