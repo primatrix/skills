@@ -47,6 +47,12 @@ Phase 1 of the Beaver development lifecycle.
    bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-create.sh add-labels {org} {issueRepo} $NEW_NUM \
      Control-By-Beaver {type_label} {size_label} status/triage
 
+   # Link to parent FIRST (if Task or SubTask) — must precede add-to-project so
+   # Projects V2 emits the parent→child rollup when the project item is created.
+   # If skipped, the parent's project card shows "1 sub-issue not in this project".
+   # (Top-level Goals have no parent; skip this step for them.)
+   bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-create.sh link-parent {org} {issueRepo} {parent_number} $NEW_ID
+
    # Add to Project V2 (capture the project item id for the field-edit step)
    ITEM_ID=$(bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-create.sh add-to-project {project_number} {org} "$NEW_URL")
 
@@ -93,12 +99,6 @@ Phase 1 of the Beaver development lifecycle.
    ```
 
    On success, the issue gains the Iteration assignment and (per engine §G007) becomes eligible for `status/ready-to-claim`. This step does NOT auto-transition the status label — that remains `/beaver-claim`'s job.
-
-1. **Link to parent** (if Task or SubTask):
-
-   ```bash
-   bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-create.sh link-parent {org} {issueRepo} {parent_number} $NEW_ID
-   ```
 
 1. **Initial status**: `status/triage` for all. Exception: p0/blocker Bug → `status/in-progress` + @CODEOWNERS (see Bug Submode).
 
