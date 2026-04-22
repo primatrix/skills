@@ -223,29 +223,44 @@ PROJECT_ID=$(gh api graphql -f query='
   query { organization(login: "primatrix") { projectV2(number: 14) { id } } }' \
   --jq '.data.organization.projectV2.id')
 
-# Build the iterations array as a JSON-like string for inline substitution.
-# For each month from current month through December of the current year:
-#   {startDate: "YYYY-MM-01", duration: <days_in_month>, title: "YYYY-MM (MonthShort)"}
+# GraphQL ITERATION input requires the full iterationConfiguration object inline,
+# so build the iterations array (one entry per month from current month through
+# December of the current year) and embed it as a JSON literal inside the mutation.
+# Each entry: {startDate: "YYYY-MM-01", duration: <days_in_month>, title: "YYYY-MM (MonthShort)"}
 # e.g. {startDate: "2026-04-01", duration: 30, title: "2026-04 (Apr)"}
 
-gh api graphql -f query="
-mutation {
+# Compose the mutation body via heredoc so single quotes inside (none today, but
+# safe for future edits) cannot break the shell parse. Pass scalars as GraphQL
+# variables through gh api flags (-f for strings).
+
+read -r -d '' MUTATION <<'GRAPHQL'
+mutation($projectId: ID!, $startDate: Date!, $duration: Int!, $iterations: [ProjectV2IterationFieldIterationInput!]!) {
   createProjectV2Field(input: {
-    projectId: \"$PROJECT_ID\"
+    projectId: $projectId
     dataType: ITERATION
-    name: \"Iteration\"
+    name: "Iteration"
     iterationConfiguration: {
-      startDate: \"<first_day_of_current_month>\"
-      duration: <days_in_current_month>
-      iterations: [
-        {startDate: \"2026-04-01\", duration: 30, title: \"2026-04 (Apr)\"},
-        {startDate: \"2026-05-01\", duration: 31, title: \"2026-05 (May)\"}
-        # ... continue through December of current year
-      ]
+      startDate: $startDate
+      duration: $duration
+      iterations: $iterations
     }
   }) { projectV2Field { ... on ProjectV2IterationField { id name } } }
-}"
+}
+GRAPHQL
+
+# ITERATIONS_JSON is a JSON array of iteration entries, e.g.
+#   [{"startDate":"2026-04-01","duration":30,"title":"2026-04 (Apr)"}, ...]
+# Build it via jq from the computed month list rather than string concatenation.
+
+gh api graphql \
+  -f query="$MUTATION" \
+  -f projectId="$PROJECT_ID" \
+  -f startDate="<first_day_of_current_month>" \
+  -F duration=<days_in_current_month> \
+  -f iterations="$ITERATIONS_JSON"
 ```
+
+Use `-f` for string fields and `-F` for typed values (integer `duration`). The `$iterations` variable is declared as a GraphQL list type so `gh api` parses the JSON string correctly.
 
 **Note:** The top-level `startDate` / `duration` in `iterationConfiguration` set the **default cadence** GitHub uses to auto-generate future iterations. The explicit `iterations` array fully defines the initial set — set top-level `startDate` to the first day of the current month and `duration` to that month's length so future auto-generated iterations align to month starts.
 
@@ -270,16 +285,22 @@ Compute which monthly entries are missing (compare titles to the expected `YYYY-
 Use `additions` to append iterations without disturbing existing ones. Pass only the entries whose titles are absent from the current configuration.
 
 ```bash
-gh api graphql -f query="
-mutation {
+read -r -d '' UPDATE_MUTATION <<'GRAPHQL'
+mutation($fieldId: ID!, $additions: [ProjectV2IterationFieldIterationInput!]!) {
   updateProjectV2IterationField(input: {
-    iterationFieldId: \"<iteration_field_id>\"
-    additions: [
-      {startDate: \"2026-05-01\", duration: 31, title: \"2026-05 (May)\"}
-      # ... only the missing months
-    ]
+    iterationFieldId: $fieldId
+    additions: $additions
   }) { iterationField { id } }
-}"
+}
+GRAPHQL
+
+# ADDITIONS_JSON contains only the entries whose titles are absent from the
+# current configuration, e.g. [{"startDate":"2026-05-01","duration":31,"title":"2026-05 (May)"}]
+
+gh api graphql \
+  -f query="$UPDATE_MUTATION" \
+  -f fieldId="<iteration_field_id>" \
+  -f additions="$ADDITIONS_JSON"
 ```
 
 ## Success Report

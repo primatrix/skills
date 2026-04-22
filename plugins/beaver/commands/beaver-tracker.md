@@ -270,28 +270,42 @@ For every sub-issue currently attached to the tracker (fetch fresh via `gh api /
 
 ```bash
 # Resolve item id for an issue (assuming the issue is already on the project):
-ITEM_ID=$(gh api graphql -f query="
-  query {
-    repository(owner: \"primatrix\", name: \"projects\") {
-      issue(number: <issue_number>) {
-        projectItems(first: 10) {
-          nodes { id project { number } }
-        }
-      }
+read -r -d '' ITEM_QUERY <<'GRAPHQL'
+query($owner: String!, $repo: String!, $number: Int!) {
+  repository(owner: $owner, name: $repo) {
+    issue(number: $number) {
+      projectItems(first: 10) { nodes { id project { number } } }
     }
-  }" --jq '.data.repository.issue.projectItems.nodes
-            | map(select(.project.number == 14)) | .[0].id')
+  }
+}
+GRAPHQL
+
+ITEM_ID=$(gh api graphql \
+  -f query="$ITEM_QUERY" \
+  -f owner=primatrix \
+  -f repo=projects \
+  -F number=<issue_number> \
+  --jq '.data.repository.issue.projectItems.nodes
+        | map(select(.project.number == 14)) | .[0].id')
 
 # Set Iteration field
-gh api graphql -f query="
-  mutation {
-    updateProjectV2ItemFieldValue(input: {
-      projectId: \"$PROJECT_ID\"
-      itemId: \"$ITEM_ID\"
-      fieldId: \"$ITERATION_FIELD_ID\"
-      value: { iterationId: \"$ITERATION_ID\" }
-    }) { projectV2Item { id } }
-  }"
+read -r -d '' SET_ITERATION_MUTATION <<'GRAPHQL'
+mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $iterationId: String!) {
+  updateProjectV2ItemFieldValue(input: {
+    projectId: $projectId
+    itemId: $itemId
+    fieldId: $fieldId
+    value: { iterationId: $iterationId }
+  }) { projectV2Item { id } }
+}
+GRAPHQL
+
+gh api graphql \
+  -f query="$SET_ITERATION_MUTATION" \
+  -f projectId="$PROJECT_ID" \
+  -f itemId="$ITEM_ID" \
+  -f fieldId="$ITERATION_FIELD_ID" \
+  -f iterationId="$ITERATION_ID"
 ```
 
 > **Note (add-if-missing, then update):** A sub-issue parented via the Sub-Issues API is NOT auto-added to Project v2 #14. If `ITEM_ID` resolves to `null` for a given sub-issue, first add it to the project, then retry the field update:
@@ -299,13 +313,20 @@ gh api graphql -f query="
 > ```bash
 > # Resolve the issue's node id, then add to project
 > CONTENT_ID=$(gh api repos/primatrix/projects/issues/<issue_number> --jq '.node_id')
-> ITEM_ID=$(gh api graphql -f query="
->   mutation {
->     addProjectV2ItemById(input: {
->       projectId: \"$PROJECT_ID\"
->       contentId: \"$CONTENT_ID\"
->     }) { item { id } }
->   }" --jq '.data.addProjectV2ItemById.item.id')
+>
+> read -r -d '' ADD_ITEM_MUTATION <<'GRAPHQL'
+> mutation($projectId: ID!, $contentId: ID!) {
+>   addProjectV2ItemById(input: { projectId: $projectId, contentId: $contentId }) {
+>     item { id }
+>   }
+> }
+> GRAPHQL
+>
+> ITEM_ID=$(gh api graphql \
+>   -f query="$ADD_ITEM_MUTATION" \
+>   -f projectId="$PROJECT_ID" \
+>   -f contentId="$CONTENT_ID" \
+>   --jq '.data.addProjectV2ItemById.item.id')
 > ```
 >
 > Then re-run the `updateProjectV2ItemFieldValue` mutation above with the new `ITEM_ID`. If the add itself fails, log the failure (per the existing "Per-issue failures: collect, do NOT abort" behavior below) and continue.
