@@ -32,7 +32,7 @@ Read `beaver-config` per engine Section 5.
 
 ```bash
 gh api graphql -f query='
-  query($owner: String!, $number: Int!, $login: String!) {
+  query($owner: String!, $number: Int!) {
     organization(login: $owner) {
       projectV2(number: $number) {
         items(first: 100) {
@@ -57,15 +57,15 @@ gh api graphql -f query='
         }
       }
     }
-  }' -f owner=primatrix -F number=14 -f login="$CURRENT_USER" \
+  }' -f owner=primatrix -F number=14 \
   --jq '.data.organization.projectV2.items.nodes
-        | map(select(.content.assignees.nodes | map(.login) | index($login)))
+        | map(select(.content.assignees.nodes | map(.login) | index("'"$CURRENT_USER"'")))
         | map(select(.content.labels.nodes | map(.name) | index("Control-By-Beaver")))
         | map({number: .content.number, title: .content.title,
                labels: [.content.labels.nodes[].name],
                iteration: (if .fieldValueByName then
                  {title: .fieldValueByName.title,
-                  start: .fieldValueByName.startDate,
+                  startDate: .fieldValueByName.startDate,
                   duration: .fieldValueByName.duration} else null end)})'
 ```
 
