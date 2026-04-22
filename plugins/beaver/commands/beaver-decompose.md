@@ -120,7 +120,7 @@ For each approved child, sequentially:
    gh project item-add {project_number} --owner {org} --url {child_url}
    ```
 
-1. For Goal → Task children only: set initial status to `status/triage`. Note: these children are size/L and will need to be added to a Milestone (-> ready-to-claim) and claimed (-> design-pending) before design work begins. Do NOT auto-transition to design-pending directly — that would skip the ready-to-claim state.
+1. For Goal → Task children only: set initial status to `status/triage`. Note: these children are size/L and will need to be added to an Iteration (-> ready-to-claim) and claimed (-> design-pending) before design work begins. Do NOT auto-transition to design-pending directly — that would skip the ready-to-claim state.
 
 ### Phase 6: Auto-Audit
 
@@ -150,7 +150,7 @@ Print summary:
 
 - Number of children created
 - Audit results
-- Next-step hint: "Children are in `status/triage`. Add them to a Milestone, then team members can claim with `/beaver-claim <number>`."
+- Next-step hint: "Children are in `status/triage`. Add them to an Iteration, then team members can claim with `/beaver-claim <number>`."
 
 ## Constraints
 

@@ -22,14 +22,14 @@ Argument is required: the issue number to claim.
 
    | Issue Type | Required Status | Notes |
    |---|---|---|
-   | Feature (size/S) | `status/ready-to-claim` | Must be in Milestone |
-   | Feature (size/L) | `status/ready-to-claim` | Must be in Milestone |
-   | Bug (non-p/0) | `status/triage` | Bugs skip Roadmap, G007 exempt |
+   | Feature (size/S) | `status/ready-to-claim` | Must be in Iteration |
+   | Feature (size/L) | `status/ready-to-claim` | Must be in Iteration |
+   | Bug (non-p/0) | `status/triage` | Bugs skip Iteration, G007 exempt |
    | Bug (p/0-blocker) | Already `status/in-progress` | No claim needed, warn user |
 
 1. **Guardrail checks**:
    - G001: Verify `size/S` or `size/L` label exists
-   - G007: Verify Milestone associated (exempt for `type/bug`)
+   - G007: Verify Iteration associated (exempt for `type/bug`)
 
 1. **Assign current user**:
 

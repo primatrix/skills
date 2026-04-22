@@ -80,7 +80,7 @@ Activated when `type/bug` is detected. Overrides:
 - **p0/blocker fast path**:
   - Skip `status/triage`, set directly to `status/in-progress`
   - Resolve CODEOWNERS for relevant files, @mention in Issue body
-  - No Milestone required (G007 exempt)
+  - No Iteration required (G007 exempt)
 
 ## Issue Body Templates
 
