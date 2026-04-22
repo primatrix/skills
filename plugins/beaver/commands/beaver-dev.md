@@ -17,7 +17,7 @@ Argument is required: the issue number to develop.
 1. Fetch Issue:
 
    ```bash
-   gh api repos/{org}/{issueRepo}/issues/{number} --jq '{number, title, body, labels: [.labels[].name]}'
+   bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-dev.sh fetch-issue {org} {issueRepo} {number}
    ```
 
 1. Extract from Issue body:
@@ -28,7 +28,7 @@ Argument is required: the issue number to develop.
 1. If size/L: fetch sub-issues list:
 
    ```bash
-   gh api repos/{org}/{issueRepo}/issues/{number}/sub_issues --jq '[.[] | {number, title, body, labels: [.labels[].name]}]'
+   bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-dev.sh fetch-sub-issues {org} {issueRepo} {number}
    ```
 
 ### Phase 2: Guardrail Check
@@ -47,16 +47,14 @@ Argument is required: the issue number to develop.
 
    ```bash
    BRANCH_NAME="{type}/{issue_number}-{short_desc}"
-   git worktree add .claude/worktrees/${BRANCH_NAME} -b ${BRANCH_NAME}
+   bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-dev.sh add-worktree "$BRANCH_NAME"
    ```
 
 1. Transition size/L issues from `status/ready-to-develop` to `status/in-progress` (first-time only):
 
    ```bash
    # Only if current status is ready-to-develop
-   gh api repos/{org}/{issueRepo}/issues/{number}/labels/status%2Fready-to-develop --method DELETE
-   gh api repos/{org}/{issueRepo}/issues/{number}/labels --method POST \
-     -f "labels[]=status/in-progress"
+   bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-dev.sh swap-to-in-progress {org} {issueRepo} {number}
    ```
 
 ### Phase 4: Subagent-Driven Development
