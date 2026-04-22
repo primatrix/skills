@@ -98,7 +98,9 @@ For each approved child, sequentially:
    bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-decompose.sh add-labels {org} {issueRepo} {child_number} Control-By-Beaver {type_label} {size_label} status/triage
    ```
 
-1. Link to parent:
+1. Link to parent (MUST precede add-to-project so Projects V2 emits the
+   parent→child rollup when the project item is created; otherwise the parent's
+   project card shows "1 sub-issue not in this project"):
 
    ```bash
    bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-decompose.sh link-parent {org} {issueRepo} {parent_number} {child_issue_id}
