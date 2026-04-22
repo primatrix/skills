@@ -31,8 +31,43 @@ Read `beaver-config` per engine Section 5.
 ### Step 3: Fetch my active issues
 
 ```bash
-gh api "repos/{org}/{issueRepo}/issues?labels=Control-By-Beaver&assignee=$CURRENT_USER&state=open&per_page=100" \
-  --jq '.[] | {number, title, labels: [.labels[].name], milestone: {title: (.milestone.title // null), due_on: (.milestone.due_on // null)}, updated_at}'
+gh api graphql -f query='
+  query($owner: String!, $number: Int!) {
+    organization(login: $owner) {
+      projectV2(number: $number) {
+        items(first: 100) {
+          nodes {
+            content {
+              ... on Issue {
+                number
+                title
+                state
+                labels(first: 30) { nodes { name } }
+                assignees(first: 10) { nodes { login } }
+              }
+            }
+            fieldValueByName(name: "Iteration") {
+              ... on ProjectV2ItemFieldIterationValue {
+                title
+                startDate
+                duration
+              }
+            }
+          }
+        }
+      }
+    }
+  }' -f owner=primatrix -F number=14 \
+  --jq '.data.organization.projectV2.items.nodes
+        | map(select(.content != null and .content.state == "OPEN"))
+        | map(select(.content.assignees.nodes | map(.login) | index("'"$CURRENT_USER"'")))
+        | map(select(.content.labels.nodes | map(.name) | index("Control-By-Beaver")))
+        | map({number: .content.number, title: .content.title,
+               labels: [.content.labels.nodes[].name],
+               iteration: (if .fieldValueByName then
+                 {title: .fieldValueByName.title,
+                  startDate: .fieldValueByName.startDate,
+                  duration: .fieldValueByName.duration} else null end)})'
 ```
 
 Parse labels per engine Section 4. Group by status.
@@ -48,7 +83,7 @@ gh api "search/issues?q=is:pr+is:open+review-requested:$CURRENT_USER" \
 
 ### Step 5: Compute DDL warnings
 
-For issues with milestones, check if `due_on` is within 48 hours. Flag accordingly with a warning indicator.
+For issues with an Iteration assignment, compute `iteration_end = startDate + duration days`. If `iteration_end - now <= 48h`, flag with a warning indicator.
 
 ### Step 6: Generate dashboard
 
@@ -87,9 +122,9 @@ For issues with milestones, check if `due_on` is within 48 hours. Flag according
 |---|-------|--------------|
 
 ## DDL Warnings ({count})
-| # | Title | Due | Days Left |
-|---|-------|-----|-----------|
-(⚠️ shown if milestone due within 48h)
+| # | Title | Iteration End | Days Left |
+|---|-------|---------------|-----------|
+(⚠️ shown if Iteration ends within 48h)
 
 ## Today's Top 3 Priorities
 

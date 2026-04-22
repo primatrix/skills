@@ -1,6 +1,6 @@
 ---
 name: beaver-engine
-description: "Internal engine for Beaver commands. DO NOT trigger directly. Provides state machine rules, guardrail checks, label operations, and project config reading used by beaver-create, beaver-claim, beaver-design, beaver-decompose, beaver-dev, beaver-pr, beaver-roadmap, beaver-focus, and beaver-setup."
+description: "Internal engine for Beaver commands. DO NOT trigger directly. Provides state machine rules, guardrail checks, label operations, and project config reading used by beaver-create, beaver-claim, beaver-design, beaver-decompose, beaver-dev, beaver-pr, beaver-tracker, beaver-focus, and beaver-setup."
 ---
 
 # Beaver Engine
@@ -30,7 +30,7 @@ All labels use a `prefix/name` format:
 
 ### Status labels (`status/`)
 - `status/triage` — Initial state, awaiting triage
-- `status/ready-to-claim` — Added to Milestone, awaiting claim
+- `status/ready-to-claim` — Added to Iteration, awaiting claim
 - `status/design-pending` — (size/L only) Claimed, design review in progress
 - `status/ready-to-develop` — (size/L only) Design Doc PR merged, ready to decompose/code
 - `status/in-progress` — Active development
@@ -61,7 +61,7 @@ triage → ready-to-claim → design-pending → ready-to-develop → in-progres
 ### Bug track
 - All bugs forced `size/S`
 - `p0/blocker` bugs: created directly at `status/in-progress` (skip triage/ready-to-claim)
-- Other bugs: `triage → in-progress` (skip ready-to-claim, no Milestone required)
+- Other bugs: `triage → in-progress` (skip ready-to-claim, no Iteration required)
 
 ### Universal transitions
 - Any status → `blocked` (must note reason in Issue comment)
@@ -104,11 +104,40 @@ triage → ready-to-claim → design-pending → ready-to-develop → in-progres
 - **When:** PR creation
 - **Fail action:** Add `beaver/missing-context` label, list missing labels
 
-### G007: ready-to-claim requires Milestone
-- **Check:** Issue is associated with a Milestone
+### G007: ready-to-claim requires Iteration
+- **Check:** Issue is assigned to an Iteration entry on Project #14 (custom field "Iteration" non-null). Read via GraphQL `projectV2Item.fieldValueByName(name: "Iteration")`.
 - **When:** Transition to `status/ready-to-claim`
-- **Exempt:** `type/bug` issues (bugs skip Roadmap)
-- **Fail action:** Block transition, comment requesting Milestone assignment
+- **Exempt:** `type/bug` issues (bugs skip Iteration assignment)
+- **Fail action:** Block transition, comment requesting Iteration assignment
+
+**Read example:**
+
+```bash
+gh api graphql -f query='
+  query($owner: String!, $repo: String!, $number: Int!) {
+    repository(owner: $owner, name: $repo) {
+      issue(number: $number) {
+        projectItems(first: 10) {
+          nodes {
+            project { number }
+            fieldValueByName(name: "Iteration") {
+              ... on ProjectV2ItemFieldIterationValue {
+                title
+                startDate
+                duration
+              }
+            }
+          }
+        }
+      }
+    }
+  }' -f owner=primatrix -f repo=projects -F number=<issue_number> \
+  --jq '.data.repository.issue.projectItems.nodes
+        | map(select(.project.number == 14))
+        | .[0].fieldValueByName'
+```
+
+The Check fails when the result is `null` or absent (issue has no Iteration assignment on Project #14).
 
 ### G008: Bug forced size/S
 - **Check:** `type/bug` issues must have `size/S`, never `size/L`
@@ -122,7 +151,7 @@ triage → ready-to-claim → design-pending → ready-to-develop → in-progres
 
 ### G010: stale/overdue are flag labels
 - **Check:** `beaver/stale` and `beaver/overdue` are beaver flag labels, not status labels
-- **When:** beaver-roadmap applies stale/overdue flags
+- **When:** Applied by health-reporting tooling (not beaver-tracker, which only handles monthly tracker creation + Iteration sync)
 - **Note:** These labels coexist with any status label and do not participate in state machine transitions
 
 ## 4. Label Operations (gh command templates)
