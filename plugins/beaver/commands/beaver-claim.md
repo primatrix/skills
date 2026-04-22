@@ -15,7 +15,7 @@ Argument is required: the issue number to claim.
 1. **Load Issue**:
 
    ```bash
-   gh api repos/{org}/{issueRepo}/issues/{number} --jq '{number, title, state, labels: [.labels[].name], assignees: [.assignees[].login]}'
+   bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-claim.sh fetch {org} {issueRepo} {number}
    ```
 
 1. **Validate claimable status**:
@@ -34,15 +34,18 @@ Argument is required: the issue number to claim.
 1. **Assign current user**:
 
    ```bash
-   CURRENT_USER=$(gh api user --jq '.login')
-   gh api repos/{org}/{issueRepo}/issues/{number}/assignees --method POST \
-     -f "assignees[]=${CURRENT_USER}"
+   CURRENT_USER=$(bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-claim.sh whoami)
+   bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-claim.sh assign {org} {issueRepo} {number} "$CURRENT_USER"
    ```
 
 1. **Status transition** (engine §6):
    - size/S (including Bug) → `status/in-progress`
    - size/L → `status/design-pending`
    Execute atomic label swap per engine §4.
+
+   ```bash
+   bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-claim.sh swap-status {org} {issueRepo} {number} status/ready-to-claim status/in-progress
+   ```
 
 1. **Report**: Print updated Issue URL, new status, and next-step hint:
    - size/S: "Ready to develop. Use `/beaver-dev {number}` to start TDD development."

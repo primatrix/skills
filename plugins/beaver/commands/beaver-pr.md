@@ -12,13 +12,8 @@ Phase 6 of the Beaver development lifecycle.
 
 ### Phase 1: Context Gathering
 
-Run in parallel:
-
 ```bash
-git status
-git diff --stat HEAD
-git branch --show-current
-git log --oneline -10
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-pr.sh ctx
 ```
 
 ### Phase 2: Issue Association
@@ -33,17 +28,23 @@ git log --oneline -10
 
    ```bash
    BRANCH_NAME="{type}/{issue_number}-{short_desc}"
-   git checkout -b ${BRANCH_NAME} 2>/dev/null || true
+   bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-pr.sh create-branch "$BRANCH_NAME"
    ```
 
-1. Stage, commit (use conventional commit format), push:
+1. Stage, commit (use conventional commit format), push.
+
+   Write the conventional commit message to a temp file (e.g. `/tmp/beaver-pr-msg.txt`):
+
+   ```text
+   {type}({scope}): {description}
+
+   Closes #{issue_number}
+   ```
+
+   Then:
 
    ```bash
-   git add {relevant_files}
-   git commit -m "{type}({scope}): {description}
-
-   Closes #{issue_number}"
-   git push -u origin ${BRANCH_NAME}
+   bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-pr.sh commit-push "$BRANCH_NAME" /tmp/beaver-pr-msg.txt {relevant_files}
    ```
 
 ### Phase 4: Compliance Checks
@@ -57,21 +58,24 @@ Run guardrail checks and present as table:
 
 ```bash
 # G004: Check for test files in diff
-git diff --name-only origin/main...HEAD | grep -E '(test_|_test\.|/tests/)'
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-pr.sh check-tests
 
 # G006: Check issue labels
-gh api repos/{org}/{issueRepo}/issues/{issue_number}/labels --jq '.[].name'
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-pr.sh check-labels {org} {issueRepo} {issue_number}
 ```
 
 If G004 warns: add `beaver/missing-test` label to Issue.
 If G006 warns: add `beaver/missing-context` label, list missing labels.
 
+```bash
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-pr.sh add-label {org} {issueRepo} {issue_number} beaver/missing-test
+```
+
 ### Phase 5: Create Draft PR
 
-```bash
-gh pr create --draft \
-  --title "{type}({scope}): {description}" \
-  --body "$(cat <<'EOF'
+Write the PR body markdown to a temp file (e.g. `/tmp/beaver-pr-body.md`):
+
+```markdown
 ## Summary
 {2-3 bullet points of changes}
 
@@ -80,8 +84,12 @@ gh pr create --draft \
 - [ ] {verification steps}
 
 Closes #{issue_number}
-EOF
-)"
+```
+
+Then:
+
+```bash
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-pr.sh create-pr "{type}({scope}): {description}" /tmp/beaver-pr-body.md
 ```
 
 ### Phase 6: Completion Options
@@ -98,7 +106,7 @@ Draft PR created. What would you like to do?
 ```
 
 - Option 1 (default): Keep Draft. Print: "Self-review the Draft PR at {pr_url}. When ready, mark it Open for team review."
-- Option 2: `gh pr ready {pr_number}`. Print: "PR marked as Ready for Review."
+- Option 2: `bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-pr.sh mark-ready {pr_number}`. Print: "PR marked as Ready for Review."
 - Option 3: Print: "Branch and Draft PR preserved."
 - Option 4: Require typed "discard" confirmation. Delete branch + close PR.
 

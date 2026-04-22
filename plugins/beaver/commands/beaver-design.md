@@ -1,5 +1,5 @@
 ---
-allowed-tools: Bash(gh api:*), Bash(gh repo clone:*), Bash(gh pr create:*), Bash(git:*), Bash(cat > /tmp/*)
+allowed-tools: Bash(gh api:*), Bash(gh repo clone:*), Bash(gh pr create:*), Bash(git:*)
 description: Write and submit a design document for a Beaver size/L issue in status/design-pending. Trigger when the user wants to write a design doc, start design review, or work on a design-pending issue.
 argument-hint: "<issue-number>"
 ---
@@ -70,13 +70,7 @@ Argument is required: the issue number.
 1. **Prepare wiki repo**:
 
    ```bash
-   # Clone or pull wiki repo
-   if [ -d ~/Code/wiki ]; then
-     cd ~/Code/wiki && git checkout main && git pull
-   else
-     gh repo clone primatrix/wiki ~/Code/wiki
-     cd ~/Code/wiki
-   fi
+   bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-design.sh prepare-wiki
    ```
 
 1. **Determine RFC number**: Read `docs/rfc/index.md`, find next available NNNN.
@@ -84,7 +78,7 @@ Argument is required: the issue number.
 1. **Create branch**:
 
    ```bash
-   git checkout -b design/{issue_number}-{slug}
+   bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-design.sh create-branch ~/Code/wiki design/{issue_number}-{slug}
    ```
 
 1. **Write design doc** to `docs/rfc/NNNN-{slug}.md` following wiki RFC template:
@@ -129,24 +123,19 @@ Argument is required: the issue number.
 1. **Commit and push**:
 
    ```bash
-   git add docs/rfc/NNNN-{slug}.md
-   git commit -m "docs(rfc): add RFC-NNNN {title}"
-   git push -u origin design/{issue_number}-{slug}
+   bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-design.sh commit-push ~/Code/wiki docs/rfc/NNNN-{slug}.md "docs(rfc): add RFC-NNNN {title}" design/{issue_number}-{slug}
    ```
 
 1. **Create Draft PR**:
 
    ```bash
-   gh pr create --repo primatrix/wiki --draft \
-     --title "RFC-NNNN: {title}" \
-     --body "Design doc for {org}/{issueRepo}#{issue_number}"
+   bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-design.sh create-pr primatrix/wiki "RFC-NNNN: {title}" "Design doc for {org}/{issueRepo}#{issue_number}"
    ```
 
 1. **Comment on original Issue**:
 
    ```bash
-   gh api repos/{org}/{issueRepo}/issues/{issue_number}/comments --method POST \
-     --raw-field body="Design Doc PR: {pr_url}"
+   bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-design.sh comment-issue {org} {issueRepo} {issue_number} "Design Doc PR: {pr_url}"
    ```
 
 1. **Report**: Print PR URL and next-step hint:

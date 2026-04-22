@@ -36,18 +36,16 @@ Usage: /beaver-tracker <repo> [YYYY-MM]
 Idempotent label bootstrap (no-op if already present):
 
 ```bash
-gh label create tracker --repo primatrix/projects --color BFD4F2 --description "Monthly Iteration tracker issue" 2>/dev/null || true
-gh label create "tracker/<repo>" --repo primatrix/projects --color BFD4F2 --description "Tracker for <repo>" 2>/dev/null || true
-gh label create "tracker/<YYYY-MM>" --repo primatrix/projects --color BFD4F2 --description "Tracker for <YYYY-MM>" 2>/dev/null || true
-gh label create "tracker/<prevYYYY-MM>" --repo primatrix/projects --color BFD4F2 --description "Tracker for <prevYYYY-MM>" 2>/dev/null || true
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-tracker.sh ensure-label projects tracker BFD4F2 "Monthly Iteration tracker issue"
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-tracker.sh ensure-label projects "tracker/<repo>" BFD4F2 "Tracker for <repo>"
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-tracker.sh ensure-label projects "tracker/<YYYY-MM>" BFD4F2 "Tracker for <YYYY-MM>"
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-tracker.sh ensure-label projects "tracker/<prevYYYY-MM>" BFD4F2 "Tracker for <prevYYYY-MM>"
 ```
 
 ### Step 3: Locate prior month's tracker
 
 ```bash
-gh api -X GET search/issues \
-  -f q='repo:primatrix/projects is:issue label:"tracker/<repo>" label:"tracker/<prevYYYY-MM>"' \
-  --jq '{count: (.items | length), items: [.items[] | {number, state, title}]}'
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-tracker.sh find-tracker <repo> <prevYYYY-MM>
 ```
 
 - `count == 0` → `prev_number = null`, `carried = []`. Skip to Step 5.
@@ -61,9 +59,7 @@ gh api -X GET search/issues \
 ### Step 4: Collect open sub-issues from the prior tracker
 
 ```bash
-gh api repos/primatrix/projects/issues/<prev_number>/sub_issues \
-  -H "X-GitHub-Api-Version: 2026-03-10" \
-  --jq '[.[] | select(.state=="open") | {number, title}]'
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-tracker.sh list-carried <prev_number>
 ```
 
 Store as `carried` (array of `{number, title}`).
@@ -73,9 +69,7 @@ Store as `carried` (array of `{number, title}`).
 ### Step 5: Check whether current month's tracker already exists
 
 ```bash
-gh api -X GET search/issues \
-  -f q='repo:primatrix/projects is:issue label:"tracker/<repo>" label:"tracker/<YYYY-MM>"' \
-  --jq '{count: (.items | length), items: [.items[] | {number, title}]}'
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-tracker.sh find-tracker <repo> <YYYY-MM>
 ```
 
 - `count == 0` → continue to Step 6 (create).
@@ -128,33 +122,13 @@ Wait for explicit approval per engine §7.5 (only `y`/`yes`/`ok`/`approve`/`appr
 
 ### Step 7: Create the tracker issue
 
+Render the body template (see §Issue Body Template) with placeholders substituted, write it to a temp file via the `Write` tool (e.g. `/tmp/beaver-tracker-body.md`), then:
+
 ```bash
-BODY_FILE=$(mktemp)
-cat > "$BODY_FILE" << 'BEAVEREOF'
-## 月度 Tracker — <repo> <YYYY-MM>
+new_number=$(bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-tracker.sh create <repo> "[Iteration] <repo> <YYYY-MM>" /tmp/beaver-tracker-body.md)
 
-本 issue 作为 <repo> <YYYY-MM> 月度 tracking 容器。所有本月 task issue 作为 sub-issue 挂在下方。
-
-## 来源
-- 上月 tracker: #<prev_number 或 "无">（迁移 <K> 个未完成 task）
-
-<!-- beaver-tracker
-repo: <repo>
-month: <YYYY-MM>
-carried-from: #<prev_number 或 "none">
--->
-BEAVEREOF
-
-new_number=$(gh api repos/primatrix/projects/issues --method POST \
-  -f title="[Iteration] <repo> <YYYY-MM>" \
-  -F body=@"$BODY_FILE" \
-  --jq '.number')
-rm "$BODY_FILE"
-
-gh api repos/primatrix/projects/issues/$new_number/labels --method POST \
-  -f "labels[]=tracker" \
-  -f "labels[]=tracker/<repo>" \
-  -f "labels[]=tracker/<YYYY-MM>"
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-tracker.sh add-labels <repo> $new_number \
+  tracker "tracker/<repo>" "tracker/<YYYY-MM>"
 ```
 
 Set `target = $new_number`.
@@ -164,16 +138,14 @@ Set `target = $new_number`.
 For each `task` in `carried`:
 
 ```bash
-gh api repos/primatrix/projects/issues/<target>/sub_issues --method POST \
-  -H "X-GitHub-Api-Version: 2026-03-10" \
-  -F sub_issue_id=<task.id>
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-tracker.sh attach-sub <target> <task.id>
 ```
 
 > **Note:** GitHub's Sub-Issues API enforces one parent per issue. POSTing to the new parent automatically detaches from the prior parent. Use the issue **node ID / numeric DB id** (`.id`, not `.number`) per the API contract.
 
 To resolve `task.id` from `task.number`:
 ```bash
-gh api repos/primatrix/projects/issues/<task.number> --jq '.id'
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-tracker.sh resolve-issue-id projects <task.number>
 ```
 
 On per-task failure: record reason, do NOT abort the batch. Continue with the next task.
@@ -183,32 +155,7 @@ On per-task failure: record reason, do NOT abort the batch. Continue with the ne
 Query candidates: `status/triage` issues in `primatrix/projects` not yet assigned to any Iteration.
 
 ```bash
-gh api graphql -f query='
-  query {
-    organization(login: "primatrix") {
-      projectV2(number: 14) {
-        items(first: 100) {
-          nodes {
-            content {
-              ... on Issue {
-                number
-                title
-                repository { nameWithOwner }
-                labels(first: 30) { nodes { name } }
-              }
-            }
-            fieldValueByName(name: "Iteration") {
-              ... on ProjectV2ItemFieldIterationValue { title }
-            }
-          }
-        }
-      }
-    }
-  }' --jq '.data.organization.projectV2.items.nodes
-            | map(select(.content != null and .content.repository.nameWithOwner == "primatrix/projects"))
-            | map(select(.content.labels.nodes | map(.name) | index("status/triage")))
-            | map(select(.fieldValueByName == null))
-            | map({number: .content.number, title: .content.title})'
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-tracker.sh fetch-triage-backlog
 ```
 
 Print as numbered list:
@@ -228,7 +175,7 @@ If user inputs `skip` (case-insensitive) or empty → no-op for this step, conti
 
 Otherwise, parse the comma-separated indices, ignoring whitespace. If any index is out of range or non-numeric, print the offending input and re-prompt (do not silently drop). Accept literal `skip` (case-insensitive) to skip backlog selection entirely.
 
-For each selected issue, resolve `.number` → numeric DB `.id` via `gh api repos/primatrix/projects/issues/<number> --jq '.id'`, then POST to `/repos/primatrix/projects/issues/<tracker_number>/sub_issues` with `sub_issue_id=<id>` (same pattern as Step 8). After attachment, Step 8.6 will set the Iteration field.
+For each selected issue, resolve `.number` → numeric DB `.id` via `bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-tracker.sh resolve-issue-id projects <number>`, then attach via `bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-tracker.sh attach-sub <tracker_number> <id>` (same pattern as Step 8). After attachment, Step 8.6 will set the Iteration field.
 
 Per-issue failures: collect, do NOT abort batch; surface in Step 9.
 
@@ -237,25 +184,10 @@ Per-issue failures: collect, do NOT abort batch; surface in Step 9.
 Resolve current month's Iteration entry id:
 
 ```bash
-ITERATION_INFO=$(gh api graphql -f query='
-  query {
-    organization(login: "primatrix") {
-      projectV2(number: 14) {
-        id
-        field(name: "Iteration") {
-          ... on ProjectV2IterationField {
-            id
-            configuration { iterations { id title } }
-          }
-        }
-      }
-    }
-  }')
-PROJECT_ID=$(echo "$ITERATION_INFO" | jq -r '.data.organization.projectV2.id')
-ITERATION_FIELD_ID=$(echo "$ITERATION_INFO" | jq -r '.data.organization.projectV2.field.id')
-ITERATION_ID=$(echo "$ITERATION_INFO" | jq -r --arg yyyymm "<YYYY-MM>" \
-  '.data.organization.projectV2.field.configuration.iterations
-   | map(select(.title | startswith($yyyymm))) | .[0].id')
+eval $(bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-tracker.sh resolve-iteration <YYYY-MM>)
+PROJECT_ID=$project_id
+ITERATION_FIELD_ID=$field_id
+ITERATION_ID=$iteration_id
 ```
 
 If `ITERATION_ID` is `null` or empty, abort Step 8.6 with the following message and continue to Step 9 (do NOT abort the whole command — Steps 1-8 already succeeded):
@@ -266,70 +198,23 @@ Run /beaver-setup to extend iterations into <YYYY-MM>.
 Sub-issue iteration sync skipped — fix this and re-run /beaver-tracker if needed.
 ```
 
-For every sub-issue currently attached to the tracker (fetch fresh via `gh api /repos/primatrix/projects/issues/<tracker_number>/sub_issues --jq '.[].number'`), resolve its ProjectV2Item id and set the Iteration field:
+For every sub-issue currently attached to the tracker (fetch fresh via `bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-tracker.sh list-tracker-subs <tracker_number>`), resolve its ProjectV2Item id and set the Iteration field:
 
 ```bash
 # Resolve item id for an issue (assuming the issue is already on the project):
-read -r -d '' ITEM_QUERY <<'GRAPHQL'
-query($owner: String!, $repo: String!, $number: Int!) {
-  repository(owner: $owner, name: $repo) {
-    issue(number: $number) {
-      projectItems(first: 10) { nodes { id project { number } } }
-    }
-  }
-}
-GRAPHQL
-
-ITEM_ID=$(gh api graphql \
-  -f query="$ITEM_QUERY" \
-  -f owner=primatrix \
-  -f repo=projects \
-  -F number=<issue_number> \
-  --jq '.data.repository.issue.projectItems.nodes
-        | map(select(.project.number == 14)) | .[0].id')
+ITEM_ID=$(bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-tracker.sh resolve-item-id projects <issue_number>)
 
 # Set Iteration field
-read -r -d '' SET_ITERATION_MUTATION <<'GRAPHQL'
-mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $iterationId: String!) {
-  updateProjectV2ItemFieldValue(input: {
-    projectId: $projectId
-    itemId: $itemId
-    fieldId: $fieldId
-    value: { iterationId: $iterationId }
-  }) { projectV2Item { id } }
-}
-GRAPHQL
-
-gh api graphql \
-  -f query="$SET_ITERATION_MUTATION" \
-  -f projectId="$PROJECT_ID" \
-  -f itemId="$ITEM_ID" \
-  -f fieldId="$ITERATION_FIELD_ID" \
-  -f iterationId="$ITERATION_ID"
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-tracker.sh set-iteration "$PROJECT_ID" "$ITEM_ID" "$ITERATION_FIELD_ID" "$ITERATION_ID"
 ```
 
-> **Note (add-if-missing, then update):** A sub-issue parented via the Sub-Issues API is NOT auto-added to Project v2 #14. If `ITEM_ID` resolves to `null` for a given sub-issue, first add it to the project, then retry the field update:
+> **Note (add-if-missing, then update):** A sub-issue parented via the Sub-Issues API is NOT auto-added to Project v2 #14. If `ITEM_ID` resolves to empty/null for a given sub-issue, first add it to the project, then retry the field update:
 >
 > ```bash
-> # Resolve the issue's node id, then add to project
-> CONTENT_ID=$(gh api repos/primatrix/projects/issues/<issue_number> --jq '.node_id')
->
-> read -r -d '' ADD_ITEM_MUTATION <<'GRAPHQL'
-> mutation($projectId: ID!, $contentId: ID!) {
->   addProjectV2ItemById(input: { projectId: $projectId, contentId: $contentId }) {
->     item { id }
->   }
-> }
-> GRAPHQL
->
-> ITEM_ID=$(gh api graphql \
->   -f query="$ADD_ITEM_MUTATION" \
->   -f projectId="$PROJECT_ID" \
->   -f contentId="$CONTENT_ID" \
->   --jq '.data.addProjectV2ItemById.item.id')
+> ITEM_ID=$(bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-tracker.sh add-to-project "$PROJECT_ID" <issue_number>)
 > ```
 >
-> Then re-run the `updateProjectV2ItemFieldValue` mutation above with the new `ITEM_ID`. If the add itself fails, log the failure (per the existing "Per-issue failures: collect, do NOT abort" behavior below) and continue.
+> Then re-run the `set-iteration` invocation above with the new `ITEM_ID`. If the add itself fails, log the failure (per the existing "Per-issue failures: collect, do NOT abort" behavior below) and continue.
 
 Per-issue failures: collect, do NOT abort batch; surface in Step 9.
 

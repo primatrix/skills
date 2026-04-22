@@ -1,5 +1,5 @@
 ---
-allowed-tools: Bash(gh auth status:*), Bash(gh auth refresh:*), Bash(gh project edit:*), Bash(gh project field-create:*), Bash(gh project field-list:*), Bash(gh api:*), Bash(gh label create:*), Bash(cat > /tmp/*), Bash(date:*)
+allowed-tools: Bash(gh auth status:*), Bash(gh auth refresh:*), Bash(gh project edit:*), Bash(gh project field-create:*), Bash(gh project field-list:*), Bash(gh api:*), Bash(gh label create:*), Bash(date:*)
 description: "Initialize Beaver on primatrix/projects#14: update Status field to 7 options, create labels, and create Iteration field with monthly entries."
 ---
 
@@ -19,8 +19,10 @@ Idempotent initializer for the Beaver project at `primatrix` org, project #14. U
 
 ## Context
 
-! gh auth status
-! date +%Y-%m-%d
+```bash
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-setup.sh auth-status
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-setup.sh today
+```
 
 Verify token scopes include `project` and `admin:org`. If missing, prompt the user to run `gh auth refresh -h github.com -s project` and/or `gh auth refresh -h github.com -s admin:org`.
 
@@ -42,48 +44,40 @@ Wait for explicit user confirmation. If changes requested, adjust and re-preview
 
 **Level:**
 ```bash
-gh project field-create 14 --owner primatrix --name "Level" --data-type SINGLE_SELECT --single-select-options "Milestone,Task,SubTask"
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-setup.sh field-create primatrix 14 "Level" SINGLE_SELECT "Milestone,Task,SubTask"
 ```
 
 Skip if field already exists.
 
-**Status:** List fields with `gh project field-list 14 --owner primatrix --format json`, find the Status field ID, then update via GraphQL to exactly 7 options. This is a full replacement — any pre-existing options not in this list are removed.
+**Status:** List fields and find the Status field ID, then replace via GraphQL to exactly 7 options. This is a full replacement — any pre-existing options not in this list are removed.
 
 ```bash
-gh api graphql -f query='
-mutation {
-  updateProjectV2Field(input: {
-    fieldId: "{existing_status_field_id}"
-    singleSelectOptions: [
-      {name: "Triage", color: GRAY, description: "Awaiting triage"},
-      {name: "Ready to Claim", color: BLUE, description: "Added to Iteration, awaiting claim"},
-      {name: "Design Pending", color: PURPLE, description: "Design review in progress (size/L)"},
-      {name: "Ready to Develop", color: ORANGE, description: "Ready to code (size/L, design approved)"},
-      {name: "In Progress", color: YELLOW, description: "Active development"},
-      {name: "Blocked", color: RED, description: "Blocked"},
-      {name: "Done", color: GREEN, description: "Completed and merged"}
-    ]
-  }) {
-    projectV2Field {
-      ... on ProjectV2SingleSelectField {
-        name
-        options {
-          name
-        }
-      }
-    }
-  }
-}'
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-setup.sh field-list primatrix 14
 ```
+
+Find the Status field ID from the JSON output, then:
+
+```bash
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-setup.sh status-replace <existing_status_field_id>
+```
+
+The `status-replace` subcommand applies these 7 options exactly:
+- Triage (GRAY) — Awaiting triage
+- Ready to Claim (BLUE) — Added to Iteration, awaiting claim
+- Design Pending (PURPLE) — Design review in progress (size/L)
+- Ready to Develop (ORANGE) — Ready to code (size/L, design approved)
+- In Progress (YELLOW) — Active development
+- Blocked (RED) — Blocked
+- Done (GREEN) — Completed and merged
 
 If no Status field exists, create it:
 ```bash
-gh project field-create 14 --owner primatrix --name "Status" --data-type SINGLE_SELECT --single-select-options "Triage,Ready to Claim,Design Pending,Ready to Develop,In Progress,Blocked,Done"
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-setup.sh field-create primatrix 14 "Status" SINGLE_SELECT "Triage,Ready to Claim,Design Pending,Ready to Develop,In Progress,Blocked,Done"
 ```
 
 **Progress:**
 ```bash
-gh project field-create 14 --owner primatrix --name "Progress" --data-type NUMBER
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-setup.sh field-create primatrix 14 "Progress" NUMBER
 ```
 
 Skip any field that already exists and inform the user.
@@ -104,24 +98,10 @@ customFields:
 ```
 ````
 
-```bash
-cat > /tmp/beaver-project-readme.md << 'BEAVEREOF'
-# Primatrix Projects
-
-```yaml beaver-config
-repositories: all
-issueRepo: projects
-customFields:
-  level: Level
-  progress: Progress
-  status: Status
-  iteration: Iteration
-```
-BEAVEREOF
-```
+Claude renders the README content above to a temp file via `Write` (path `/tmp/beaver-project-readme.md`), then runs:
 
 ```bash
-gh project edit 14 --owner primatrix --readme "$(cat /tmp/beaver-project-readme.md)"
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-setup.sh edit-readme primatrix 14 /tmp/beaver-project-readme.md
 ```
 
 ### Create Issue Types
@@ -129,7 +109,7 @@ gh project edit 14 --owner primatrix --readme "$(cat /tmp/beaver-project-readme.
 Issue types are org-scoped. Requires `admin:org` scope and `X-GitHub-Api-Version: 2026-03-10` header. List existing first to avoid duplicates:
 
 ```bash
-gh api orgs/primatrix/issue-types -H "X-GitHub-Api-Version: 2026-03-10" --jq '.[].name'
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-setup.sh list-issue-types primatrix
 ```
 
 Create each if not already present:
@@ -141,14 +121,20 @@ Create each if not already present:
 | SubTask | gray | Finest granularity work item |
 
 ```bash
-gh api orgs/primatrix/issue-types --method POST -H "X-GitHub-Api-Version: 2026-03-10" -f name="{name}" -f color="{color}" -f description="{desc}" -F is_enabled=true
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-setup.sh create-issue-type primatrix <name> <color> <desc>
 ```
 
 Skip on 422 (already exists). Warn and continue on 404 (org plan may not support issue types).
 
 ### Create Labels
 
-Create on the issue repository. Skip any that already exist (on 422 error, continue to next label).
+Create on the issue repository. For each row in the label tables below, run:
+
+```bash
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-setup.sh ensure-label primatrix/projects <name> <color> <desc>
+```
+
+The `ensure-label` subcommand swallows duplicate-label errors so the loop is idempotent.
 
 **Type labels:**
 
@@ -206,61 +192,33 @@ Create on the issue repository. Skip any that already exist (on 422 error, conti
 |-------|-------|-------------|
 | Control-By-Beaver | 7B61FF | Issue managed by Beaver automation |
 
-```bash
-gh label create "{label}" --repo primatrix/projects --color "{color}" --description "{desc}"
-```
-
-Create all labels in sequence. Skip on error (label already exists).
-
 ### Create Iteration Field
 
 Create the Iteration custom field on Project #14 and populate one entry per natural month from the current month through December of the current year.
 
 **Field creation (skip if exists):**
 
+First fetch the project node id:
+
 ```bash
-PROJECT_ID=$(gh api graphql -f query='
-  query { organization(login: "primatrix") { projectV2(number: 14) { id } } }' \
-  --jq '.data.organization.projectV2.id')
-
-# GraphQL ITERATION input requires the full iterationConfiguration object inline,
-# so build the iterations array (one entry per month from current month through
-# December of the current year) and embed it as a JSON literal inside the mutation.
-# Each entry: {startDate: "YYYY-MM-01", duration: <days_in_month>, title: "YYYY-MM (MonthShort)"}
-# e.g. {startDate: "2026-04-01", duration: 30, title: "2026-04 (Apr)"}
-
-# Compose the mutation body via heredoc so single quotes inside (none today, but
-# safe for future edits) cannot break the shell parse. Pass scalars as GraphQL
-# variables through gh api flags (-f for strings).
-
-read -r -d '' MUTATION <<'GRAPHQL'
-mutation($projectId: ID!, $startDate: Date!, $duration: Int!, $iterations: [ProjectV2IterationFieldIterationInput!]!) {
-  createProjectV2Field(input: {
-    projectId: $projectId
-    dataType: ITERATION
-    name: "Iteration"
-    iterationConfiguration: {
-      startDate: $startDate
-      duration: $duration
-      iterations: $iterations
-    }
-  }) { projectV2Field { ... on ProjectV2IterationField { id name } } }
-}
-GRAPHQL
-
-# ITERATIONS_JSON is a JSON array of iteration entries, e.g.
-#   [{"startDate":"2026-04-01","duration":30,"title":"2026-04 (Apr)"}, ...]
-# Build it via jq from the computed month list rather than string concatenation.
-
-gh api graphql \
-  -f query="$MUTATION" \
-  -f projectId="$PROJECT_ID" \
-  -f startDate="<first_day_of_current_month>" \
-  -F duration=<days_in_current_month> \
-  -f iterations="$ITERATIONS_JSON"
+PROJECT_ID=$(bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-setup.sh project-id primatrix 14)
 ```
 
-Use `-f` for string fields and `-F` for typed values (integer `duration`). The `$iterations` variable is declared as a GraphQL list type so `gh api` parses the JSON string correctly.
+GraphQL ITERATION input requires the full iterationConfiguration object inline,
+so build the iterations array (one entry per month from current month through
+December of the current year) and embed it as a JSON literal inside the mutation.
+Each entry: `{startDate: "YYYY-MM-01", duration: <days_in_month>, title: "YYYY-MM (MonthShort)"}` —
+e.g. `{startDate: "2026-04-01", duration: 30, title: "2026-04 (Apr)"}`.
+
+`ITERATIONS_JSON` is a JSON array of iteration entries, e.g.
+`[{"startDate":"2026-04-01","duration":30,"title":"2026-04 (Apr)"}, ...]`.
+Build it via `jq` from the computed month list rather than string concatenation.
+
+```bash
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-setup.sh iteration-field-create "$PROJECT_ID" <first_day_of_current_month> <days_in_current_month> "$ITERATIONS_JSON"
+```
+
+The `iteration-field-create` subcommand passes scalars as GraphQL variables (`-f` for strings, `-F` for the integer `duration`); the `$iterations` variable is declared as a GraphQL list type so `gh api` parses the JSON string correctly.
 
 **Note:** The top-level `startDate` / `duration` in `iterationConfiguration` set the **default cadence** GitHub uses to auto-generate future iterations. The explicit `iterations` array fully defines the initial set — set top-level `startDate` to the first day of the current month and `duration` to that month's length so future auto-generated iterations align to month starts.
 
@@ -269,38 +227,18 @@ Build the `iterations` array by iterating from the current month to December of 
 If the Iteration field already exists, skip creation and instead read existing entries via:
 
 ```bash
-gh api graphql -f query='
-  query { organization(login: "primatrix") { projectV2(number: 14) {
-    field(name: "Iteration") {
-      ... on ProjectV2IterationField {
-        id
-        configuration { iterations { title startDate duration } }
-      }
-    }
-  } } }'
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-setup.sh iteration-field-list primatrix 14
 ```
 
-Compute which monthly entries are missing (compare titles to the expected `YYYY-MM (MonthShort)` set) and append only the missing ones via `updateProjectV2IterationField` (preserve existing entries).
+Compute which monthly entries are missing (compare titles to the expected `YYYY-MM (MonthShort)` set) and append only the missing ones via `iteration-field-append` (preserve existing entries).
 
 Use `additions` to append iterations without disturbing existing ones. Pass only the entries whose titles are absent from the current configuration.
 
+`ADDITIONS_JSON` contains only the entries whose titles are absent from the
+current configuration, e.g. `[{"startDate":"2026-05-01","duration":31,"title":"2026-05 (May)"}]`.
+
 ```bash
-read -r -d '' UPDATE_MUTATION <<'GRAPHQL'
-mutation($fieldId: ID!, $additions: [ProjectV2IterationFieldIterationInput!]!) {
-  updateProjectV2IterationField(input: {
-    iterationFieldId: $fieldId
-    additions: $additions
-  }) { iterationField { id } }
-}
-GRAPHQL
-
-# ADDITIONS_JSON contains only the entries whose titles are absent from the
-# current configuration, e.g. [{"startDate":"2026-05-01","duration":31,"title":"2026-05 (May)"}]
-
-gh api graphql \
-  -f query="$UPDATE_MUTATION" \
-  -f fieldId="<iteration_field_id>" \
-  -f additions="$ADDITIONS_JSON"
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-setup.sh iteration-field-append <iteration_field_id> "$ADDITIONS_JSON"
 ```
 
 ## Success Report
