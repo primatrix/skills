@@ -30,7 +30,7 @@ All labels use a `prefix/name` format:
 
 ### Status labels (`status/`)
 - `status/triage` — Initial state, awaiting triage
-- `status/ready-to-claim` — Added to Milestone, awaiting claim
+- `status/ready-to-claim` — Added to Iteration, awaiting claim
 - `status/design-pending` — (size/L only) Claimed, design review in progress
 - `status/ready-to-develop` — (size/L only) Design Doc PR merged, ready to decompose/code
 - `status/in-progress` — Active development
@@ -61,7 +61,7 @@ triage → ready-to-claim → design-pending → ready-to-develop → in-progres
 ### Bug track
 - All bugs forced `size/S`
 - `p0/blocker` bugs: created directly at `status/in-progress` (skip triage/ready-to-claim)
-- Other bugs: `triage → in-progress` (skip ready-to-claim, no Milestone required)
+- Other bugs: `triage → in-progress` (skip ready-to-claim, no Iteration required)
 
 ### Universal transitions
 - Any status → `blocked` (must note reason in Issue comment)
@@ -104,11 +104,11 @@ triage → ready-to-claim → design-pending → ready-to-develop → in-progres
 - **When:** PR creation
 - **Fail action:** Add `beaver/missing-context` label, list missing labels
 
-### G007: ready-to-claim requires Milestone
-- **Check:** Issue is associated with a Milestone
+### G007: ready-to-claim requires Iteration
+- **Check:** Issue is assigned to an Iteration entry on Project #14 (custom field "Iteration" non-null). Read via GraphQL `projectV2Item.fieldValueByName(name: "Iteration")`.
 - **When:** Transition to `status/ready-to-claim`
-- **Exempt:** `type/bug` issues (bugs skip Roadmap)
-- **Fail action:** Block transition, comment requesting Milestone assignment
+- **Exempt:** `type/bug` issues (bugs skip tracker)
+- **Fail action:** Block transition, comment requesting Iteration assignment
 
 ### G008: Bug forced size/S
 - **Check:** `type/bug` issues must have `size/S`, never `size/L`
