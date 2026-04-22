@@ -59,6 +59,7 @@ gh api graphql -f query='
     }
   }' -f owner=primatrix -F number=14 \
   --jq '.data.organization.projectV2.items.nodes
+        | map(select(.content != null and .content.state == "OPEN"))
         | map(select(.content.assignees.nodes | map(.login) | index("'"$CURRENT_USER"'")))
         | map(select(.content.labels.nodes | map(.name) | index("Control-By-Beaver")))
         | map({number: .content.number, title: .content.title,
