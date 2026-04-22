@@ -21,7 +21,7 @@ Show the current developer's personal work dashboard: active tasks, pending revi
 ### Step 1: Identify current user
 
 ```bash
-CURRENT_USER=$(gh api user --jq '.login')
+CURRENT_USER=$(bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-focus.sh whoami)
 ```
 
 ### Step 2: Load project config
@@ -31,43 +31,7 @@ Read `beaver-config` per engine Section 5.
 ### Step 3: Fetch my active issues
 
 ```bash
-gh api graphql -f query='
-  query($owner: String!, $number: Int!) {
-    organization(login: $owner) {
-      projectV2(number: $number) {
-        items(first: 100) {
-          nodes {
-            content {
-              ... on Issue {
-                number
-                title
-                state
-                labels(first: 30) { nodes { name } }
-                assignees(first: 10) { nodes { login } }
-              }
-            }
-            fieldValueByName(name: "Iteration") {
-              ... on ProjectV2ItemFieldIterationValue {
-                title
-                startDate
-                duration
-              }
-            }
-          }
-        }
-      }
-    }
-  }' -f owner=primatrix -F number=14 \
-  --jq '.data.organization.projectV2.items.nodes
-        | map(select(.content != null and .content.state == "OPEN"))
-        | map(select(.content.assignees.nodes | map(.login) | index("'"$CURRENT_USER"'")))
-        | map(select(.content.labels.nodes | map(.name) | index("Control-By-Beaver")))
-        | map({number: .content.number, title: .content.title,
-               labels: [.content.labels.nodes[].name],
-               iteration: (if .fieldValueByName then
-                 {title: .fieldValueByName.title,
-                  startDate: .fieldValueByName.startDate,
-                  duration: .fieldValueByName.duration} else null end)})'
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-focus.sh fetch-my-issues "$CURRENT_USER"
 ```
 
 Parse labels per engine Section 4. Group by status.
@@ -77,8 +41,7 @@ Within each group, sort p/0-blocker bugs to the TOP of results. For any p/0-bloc
 ### Step 4: Fetch PRs needing my review
 
 ```bash
-gh api "search/issues?q=is:pr+is:open+review-requested:$CURRENT_USER" \
-  --jq '.items[] | {number, title, repository_url, created_at, user: .user.login}'
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-focus.sh fetch-review-prs "$CURRENT_USER"
 ```
 
 ### Step 5: Compute DDL warnings
