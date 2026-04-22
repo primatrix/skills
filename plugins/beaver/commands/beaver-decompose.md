@@ -1,5 +1,5 @@
 ---
-allowed-tools: Bash(gh api:*), Bash(gh project:*), Bash(cat > /tmp/*)
+allowed-tools: Bash(gh api:*), Bash(gh project:*)
 description: Decompose a Beaver Goal into Tasks (size/L) or a Task into SubTasks (size/S), guided by a design doc. Trigger when the user wants to split, breakdown, or decompose an issue into sub-issues.
 argument-hint: "<issue-number> --design-doc <url-or-path>"
 ---
@@ -19,7 +19,7 @@ Arguments required: parent issue number AND design doc reference (`--design-doc 
 1. Fetch parent Issue:
 
    ```bash
-   gh api repos/{org}/{issueRepo}/issues/{number} --jq '{number, title, body, labels: [.labels[].name]}'
+   bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-decompose.sh fetch-parent {org} {issueRepo} {number}
    ```
 
 1. Validate:
@@ -30,7 +30,7 @@ Arguments required: parent issue number AND design doc reference (`--design-doc 
 1. Fetch existing sub-issues to avoid duplication:
 
    ```bash
-   gh api repos/{org}/{issueRepo}/issues/{number}/sub_issues --jq '.[].title'
+   bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-decompose.sh list-sub-titles {org} {issueRepo} {number}
    ```
 
 ### Phase 2: Read Design Doc
@@ -69,10 +69,15 @@ Engine §7 applies. For each proposed child issue:
 
 For each approved child, sequentially:
 
-1. Write Issue body to temp file:
+1. Render the body template (shown below) via Write tool to a temp file (e.g. `/tmp/beaver-sub-issue.md`), then create the Issue:
 
    ```bash
-   cat > /tmp/beaver-sub-issue.md << 'BODY'
+   bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-decompose.sh create-child {org} {issueRepo} "{title}" /tmp/beaver-sub-issue.md
+   ```
+
+   Body template:
+
+   ```markdown
    ## 目标
    {objective}
 
@@ -85,39 +90,24 @@ For each approved child, sequentially:
    parent: #{parent_number}
    created-by: beaver-decompose
    -->
-   BODY
-   ```
-
-1. Create Issue:
-
-   ```bash
-   gh api repos/{org}/{issueRepo}/issues --method POST \
-     -f title="{title}" \
-     -F body=@/tmp/beaver-sub-issue.md \
-     --jq '.number'
    ```
 
 1. Add labels:
 
    ```bash
-   gh api repos/{org}/{issueRepo}/issues/{child_number}/labels --method POST \
-     -f "labels[]=Control-By-Beaver" \
-     -f "labels[]={type_label}" \
-     -f "labels[]={size_label}" \
-     -f "labels[]=status/triage"
+   bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-decompose.sh add-labels {org} {issueRepo} {child_number} Control-By-Beaver {type_label} {size_label} status/triage
    ```
 
 1. Link to parent:
 
    ```bash
-   gh api repos/{org}/{issueRepo}/issues/{parent_number}/sub_issues --method POST \
-     -F sub_issue_id={child_issue_id}
+   bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-decompose.sh link-parent {org} {issueRepo} {parent_number} {child_issue_id}
    ```
 
 1. Add to Project V2:
 
    ```bash
-   gh project item-add {project_number} --owner {org} --url {child_url}
+   bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-decompose.sh add-to-project {project_number} {org} {child_url}
    ```
 
 1. For Goal → Task children only: set initial status to `status/triage`. Note: these children are size/L and will need to be added to an Iteration (-> ready-to-claim) and claimed (-> design-pending) before design work begins. Do NOT auto-transition to design-pending directly — that would skip the ready-to-claim state.
