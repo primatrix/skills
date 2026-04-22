@@ -107,8 +107,37 @@ triage → ready-to-claim → design-pending → ready-to-develop → in-progres
 ### G007: ready-to-claim requires Iteration
 - **Check:** Issue is assigned to an Iteration entry on Project #14 (custom field "Iteration" non-null). Read via GraphQL `projectV2Item.fieldValueByName(name: "Iteration")`.
 - **When:** Transition to `status/ready-to-claim`
-- **Exempt:** `type/bug` issues (bugs skip tracker)
+- **Exempt:** `type/bug` issues (bugs skip Iteration assignment)
 - **Fail action:** Block transition, comment requesting Iteration assignment
+
+**Read example:**
+
+```bash
+gh api graphql -f query='
+  query($owner: String!, $repo: String!, $number: Int!) {
+    repository(owner: $owner, name: $repo) {
+      issue(number: $number) {
+        projectItems(first: 10) {
+          nodes {
+            project { number }
+            fieldValueByName(name: "Iteration") {
+              ... on ProjectV2ItemFieldIterationValue {
+                title
+                startDate
+                duration
+              }
+            }
+          }
+        }
+      }
+    }
+  }' -f owner=primatrix -f repo=projects -F number=<issue_number> \
+  --jq '.data.repository.issue.projectItems.nodes
+        | map(select(.project.number == 14))
+        | .[0].fieldValueByName'
+```
+
+The Check fails when the result is `null` or absent (issue has no Iteration assignment on Project #14).
 
 ### G008: Bug forced size/S
 - **Check:** `type/bug` issues must have `size/S`, never `size/L`
