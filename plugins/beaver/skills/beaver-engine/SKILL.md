@@ -151,7 +151,7 @@ The Check fails when the result is `null` or absent (issue has no Iteration assi
 
 ### G010: stale/overdue are flag labels
 - **Check:** `beaver/stale` and `beaver/overdue` are beaver flag labels, not status labels
-- **When:** beaver-tracker applies stale/overdue flags
+- **When:** Applied by health-reporting tooling (not beaver-tracker, which only handles monthly tracker creation + Iteration sync)
 - **Note:** These labels coexist with any status label and do not participate in state machine transitions
 
 ## 4. Label Operations (gh command templates)

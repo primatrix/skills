@@ -222,10 +222,13 @@ Print as numbered list:
 请输入要纳入本月 tracker 的编号（逗号分隔，如 "1,3,5"），或输入 "skip" 跳过：
 ```
 
-If user inputs `skip` or empty → no-op for this step. Otherwise, parse comma-separated indices, resolve to issue numbers, and for each:
+If the candidate list is empty after filtering, print `No triage candidates without Iteration found.` and skip directly to Step 8.6.
 
-1. Attach as sub-issue of the tracker (same `sub_issues` API as Step 8).
-2. Continue to Step 8.6 to set Iteration field.
+If user inputs `skip` (case-insensitive) or empty → no-op for this step, continue to Step 8.6.
+
+Otherwise, parse the comma-separated indices, ignoring whitespace. If any index is out of range or non-numeric, print the offending input and re-prompt (do not silently drop). Accept literal `skip` (case-insensitive) to skip backlog selection entirely.
+
+For each selected issue, resolve `.number` → numeric DB `.id` via `gh api repos/primatrix/projects/issues/<number> --jq '.id'`, then POST to `/repos/primatrix/projects/issues/<tracker_number>/sub_issues` with `sub_issue_id=<id>` (same pattern as Step 8). After attachment, Step 8.6 will set the Iteration field.
 
 Per-issue failures: collect, do NOT abort batch; surface in Step 9.
 
@@ -255,7 +258,15 @@ ITERATION_ID=$(echo "$ITERATION_INFO" | jq -r --arg yyyymm "<YYYY-MM>" \
    | map(select(.title | startswith($yyyymm))) | .[0].id')
 ```
 
-For each sub-issue under the tracker (carried + backlog-added), resolve its ProjectV2Item id and set the Iteration field:
+If `ITERATION_ID` is `null` or empty, abort Step 8.6 with the following message and continue to Step 9 (do NOT abort the whole command — Steps 1-8 already succeeded):
+
+```
+Iteration entry for <YYYY-MM> not found on Project #14.
+Run /beaver-setup to extend iterations into <YYYY-MM>.
+Sub-issue iteration sync skipped — fix this and re-run /beaver-tracker if needed.
+```
+
+For every sub-issue currently attached to the tracker (fetch fresh via `gh api /repos/primatrix/projects/issues/<tracker_number>/sub_issues --jq '.[].number'`), resolve its ProjectV2Item id and set the Iteration field:
 
 ```bash
 # Resolve item id for an issue (assuming the issue is already on the project):
@@ -282,6 +293,22 @@ gh api graphql -f query="
     }) { projectV2Item { id } }
   }"
 ```
+
+> **Note (add-if-missing, then update):** A sub-issue parented via the Sub-Issues API is NOT auto-added to Project v2 #14. If `ITEM_ID` resolves to `null` for a given sub-issue, first add it to the project, then retry the field update:
+>
+> ```bash
+> # Resolve the issue's node id, then add to project
+> CONTENT_ID=$(gh api repos/primatrix/projects/issues/<issue_number> --jq '.node_id')
+> ITEM_ID=$(gh api graphql -f query="
+>   mutation {
+>     addProjectV2ItemById(input: {
+>       projectId: \"$PROJECT_ID\"
+>       contentId: \"$CONTENT_ID\"
+>     }) { item { id } }
+>   }" --jq '.data.addProjectV2ItemById.item.id')
+> ```
+>
+> Then re-run the `updateProjectV2ItemFieldValue` mutation above with the new `ITEM_ID`. If the add itself fails, log the failure (per the existing "Per-issue failures: collect, do NOT abort" behavior below) and continue.
 
 Per-issue failures: collect, do NOT abort batch; surface in Step 9.
 
