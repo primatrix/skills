@@ -1,12 +1,14 @@
 ---
 allowed-tools: Bash(gh api:*), Bash(git:*)
-description: TDD development with subagent dispatch for a Beaver-tracked Issue. Trigger when the user wants to start coding, implement, or develop a claimed task.
+description: TDD development for a Beaver-tracked Issue. Trigger when the user wants to start coding, implement, or develop a claimed Size=S task.
 argument-hint: "<issue-number>"
 ---
 
 # /beaver-dev — TDD 开发
 
-Phase 3+ of the Beaver development lifecycle (development stage).
+Phase 3+ of the Beaver development lifecycle.
+
+Only `Size=S` issues are supported by this command.
 
 ## Workflow
 
@@ -14,137 +16,131 @@ Argument is required: the issue number to develop.
 
 ### Phase 1: Load Context
 
-1. Fetch Issue:
+1. Fetch the Issue together with Beaver Project V2 context. `beaver-dev.sh` must load the Project item fields through `beaver-lib.sh`, not by reading Issue labels directly.
 
    ```bash
    bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-dev.sh fetch-issue {org} {issueRepo} {number}
    ```
 
-1. Extract from Issue body:
-   - Objective
+1. Extract and print:
+   - Issue title and objective
    - Acceptance criteria
-   - Design doc link (if referenced)
-
-1. If size/L: fetch sub-issues list:
-
-   ```bash
-   bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-dev.sh fetch-sub-issues {org} {issueRepo} {number}
-   ```
+   - Issue type (used for branch naming)
+   - Project V2 fields: `Size`, `Status`
+   - Current assignee
+   - Design doc link, if present
 
 ### Phase 2: Guardrail Check
 
-- G009: If size/L, verify:
-  - Issue has `status/ready-to-develop` (or `status/in-progress` if already started)
-  - Issue has at least one sub-issue
-  - If checks fail: stop with message directing user to `/beaver-design` or `/beaver-decompose`
+Reject immediately unless all of the following are true:
 
-- If size/S: verify Issue has `status/in-progress`
-  - If not: stop with message directing user to `/beaver-claim`
+1. `Size = S`
+1. `Status = In Progress`
+1. Assignee is the current GitHub user
+
+Failure handling:
+
+- If `Size != S`: stop and print `本命令仅处理 Size=S`
+- If `Status != In Progress`: stop and tell the user to return the Issue to `In Progress` before using `/beaver-dev`
+- If assignee is not the current user: stop and tell the user to claim the Issue first
+
+Do not change the Project `Status` field in this command. If the work becomes blocked, the user must update it manually in the GitHub UI.
 
 ### Phase 3: Workspace Setup
 
-1. Create git worktree for isolation:
+1. Create an isolated worktree with branch name `<type>/<n>-<short_desc>`:
 
    ```bash
-   BRANCH_NAME="{type}/{issue_number}-{short_desc}"
+   BRANCH_NAME="<type>/{issue_number}-{short_desc}"
    bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-dev.sh add-worktree "$BRANCH_NAME"
    ```
 
-1. Transition size/L issues from `status/ready-to-develop` to `status/in-progress` (first-time only):
+1. Enter the worktree and keep all coding there. The main worktree must remain clean.
 
-   ```bash
-   # Only if current status is ready-to-develop
-   bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-dev.sh swap-to-in-progress {org} {issueRepo} {number}
-   ```
+1. Generate an implementation plan before editing code. The plan should include:
+   - Which acceptance criteria will be addressed
+   - Expected test coverage
+   - Files likely to change
+   - Verification commands to run
+   - Any known risks or open questions
+
+1. Show the plan to the user and require confirmation before starting implementation. If the user requests adjustments, revise the plan first.
 
 ### Phase 4: Subagent-Driven Development
 
-For each work unit (SubTask if size/L, or the task itself if size/S):
+Use the Beaver issue context, acceptance criteria, and worktree path as shared inputs for all subagents. Run implementation sequentially inside the same worktree.
 
-#### 4.1 Dispatch TDD Subagent
+#### 4.1 TDD Implementer
 
-Dispatch a subagent with the following context:
+Dispatch the `test-driven-development` superpower first.
 
-- Work unit: title, objective, acceptance criteria
-- Codebase location (worktree path)
-- TDD discipline (absorbed from superpowers:test-driven-development):
+Required discipline:
 
-**TDD Iron Law: NO PRODUCTION CODE WITHOUT A FAILING TEST FIRST.**
+- No production code before a failing test
+- Follow Red → Green → Refactor strictly
+- After each Green step, rerun the relevant tests
+- Keep the implementation minimal and acceptance-criteria driven
 
-Red-Green-Refactor cycle:
+#### 4.2 Debugging Fallback
 
-1. **RED**: Write one minimal failing test showing desired behavior
-1. **Verify RED**: Run test, confirm it fails for the right reason (missing feature, not typo)
-1. **GREEN**: Write simplest code to pass the test
-1. **Verify GREEN**: Run test, confirm pass. Run all tests, confirm no regressions.
-1. **REFACTOR**: Clean up (remove duplication, improve names). Keep tests green.
-1. **Commit**: `git add` changed files, `git commit -m "{message}"`
+If implementation hits an unexpected failure, dispatch the `systematic-debugging` superpower before attempting more fixes.
 
-Red flags that mean STOP and restart:
+Required discipline:
 
-- Code written before test → delete code, start over
-- Test passes immediately → testing wrong thing, fix test
-- "Too simple to test" → simple code breaks, test takes 30 seconds
-- "I'll test after" → tests-after prove nothing
+- Investigate root cause first
+- Compare against known-good behavior or references
+- Test one hypothesis at a time
+- Return to TDD once the root cause is confirmed
 
-#### 4.2 On Failure: Dispatch Debugging Subagent
+#### 4.3 Code Review Gate
 
-If tests fail unexpectedly during implementation, dispatch a debugging subagent with systematic debugging discipline (absorbed from superpowers:systematic-debugging):
+After implementation is complete, dispatch the `requesting-code-review` superpower.
 
-**Debugging Iron Law: NO FIXES WITHOUT ROOT CAUSE INVESTIGATION FIRST.**
+Review must happen in two stages:
 
-Four phases:
+1. Spec compliance review
+1. Code quality review
 
-1. **Root Cause Investigation**: Read errors carefully, reproduce consistently, check recent changes, trace data flow
-1. **Pattern Analysis**: Find working examples, compare against references, identify differences
-1. **Hypothesis Testing**: Form single hypothesis, test minimally, verify before continuing
-1. **Implementation**: Create failing test, single fix, verify
-
-If 3+ fixes fail: STOP. Question the architecture. Escalate to user.
-
-#### 4.3 After Implementation: Dispatch Code Review Subagent
-
-Two-stage review per work unit:
-
-**Stage 1 — Spec Compliance Review**:
-
-- Does the implementation match the acceptance criteria?
-- Is anything missing? Is anything extra (not requested)?
-- If issues found: implementer subagent fixes, re-review
-
-**Stage 2 — Code Quality Review**:
-
-- Issue severity: Critical (must fix) / Important (fix before proceeding) / Minor (note for later)
-- Only after spec compliance is ✅
-
-#### 4.4 Parallel Agents for Independent Failures
-
-If multiple independent test failures occur in different subsystems, dispatch debugging subagents in parallel (one per failure domain). Do NOT dispatch multiple implementation subagents in parallel (conflict risk).
+Fix all Critical and Important findings before proceeding to final verification.
 
 ### Phase 5: Verification
 
-Before claiming completion (absorbed from superpowers:verification-before-completion):
+Before claiming completion, enforce the Verification Iron Law:
 
-**Verification Iron Law: NO COMPLETION CLAIMS WITHOUT FRESH VERIFICATION EVIDENCE.**
+**NO COMPLETION CLAIMS WITHOUT FRESH VERIFICATION EVIDENCE.**
 
-1. Run the full test suite fresh
-1. Read complete output, check exit code, count failures
-1. Only claim "all tests pass" if output shows 0 failures
-1. Forbidden words: "should", "probably", "seems to"
+1. Run the project's full test suite from the worktree
+1. Read the full output and exit code
+1. Only enter the completion branch if the result is `0 failures`
+1. If any test fails, return to TDD or systematic debugging
 
-### Phase 6: Report
+Do not use tentative wording such as `should`, `probably`, or `seems to` when reporting verification status.
 
-Print completion status:
+### Phase 6: Completion Branch
 
-- Tests passing (with evidence)
-- Files changed
-- Commits made
-- Next-step hint: "Use `/beaver-pr {number}` to create a Draft PR."
+1. Re-read the Project V2 item through `beaver-lib.sh` and assert that `Status` is still `In Progress`
+1. Print:
+   - Test results with concrete evidence
+   - Files changed
+   - Worktree path
+1. Ask the user exactly:
+
+   ```text
+   是否直接 /beaver-pr {number}？(y/N)
+   ```
+
+1. If the user answers `y`, invoke `/beaver-pr {number}` directly
+1. Otherwise, print a manual next step hint:
+
+   ```text
+   Use /beaver-pr {number} when you are ready to open the Draft PR.
+   ```
 
 ## Constraints
 
-- TDD is mandatory, not optional. No exceptions without user's explicit permission.
-- Subagents get fresh context (no session history leakage)
-- Subagents are dispatched sequentially (no parallel implementation)
-- Debugging subagents may be dispatched in parallel for independent failures
-- §7 QA loop does NOT apply (this is local development, not Issue content creation)
+- This command only handles `Size=S`
+- Project V2 field reads must come from `beaver-lib.sh`
+- `Status` must remain `In Progress` throughout the command
+- Blocked transitions are manual in the GitHub UI
+- TDD is mandatory
+- The full test suite must pass with `0 failures` before completion
