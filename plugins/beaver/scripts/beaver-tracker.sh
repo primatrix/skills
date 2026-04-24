@@ -124,7 +124,7 @@ case "${1:-}" in
           }
         }
       }' -f owner="$ORG" -F number="$PROJECT_NUM" \
-      --jq '.data.organization.projectV2.items.nodes
+      --jq '(.data.organization.projectV2.items.nodes // [])
             | map(select(.content != null
                          and .content.repository.name == "'"$repo"'"
                          and .iter == null
