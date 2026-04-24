@@ -1,5 +1,5 @@
 ---
-allowed-tools: Bash(gh api:*), Bash(gh pr:*), Bash(git:*)
+allowed-tools: Bash(gh api:*), Bash(gh pr:*), Bash(gh issue:*), Bash(git:*)
 description: Commit, push, and open a Draft PR with Beaver compliance checks. Trigger when the user wants to commit, push, or create a pull request.
 argument-hint: "[issue-number]"
 ---
@@ -18,9 +18,18 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-pr.sh ctx
 
 ### Phase 2: Issue Association
 
-1. If argument provided: use that issue number.
-1. Otherwise: detect from branch name (pattern: `{type}/{issue_number}-{desc}`) or commit messages (`#{number}`).
-1. If not found: ask user for issue number.
+按以下顺序推断 Issue 编号；任何一步成功即停止：
+
+1. 命令参数（`/beaver-pr <number>`）。
+2. 分支前缀：`<type>/<number>-<desc>` 形式的 branch name。
+3. 最近 20 条 commit message 中第一个 `#<number>` 引用。
+4. 以上都缺失：提示用户输入 Issue 编号（不可省略）。
+
+```bash
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-pr.sh infer-issue
+```
+
+PR body 必须包含 `Closes #<issue_number>` 一行，确保 PR merge 时 Issue 自动关闭。
 
 ### Phase 3: Branch + Commit + Push
 
@@ -31,9 +40,9 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-pr.sh ctx
    bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-pr.sh create-branch "$BRANCH_NAME"
    ```
 
-1. Stage, commit (use conventional commit format), push.
+1. Stage, conventional-commit, push.
 
-   Write the conventional commit message to a temp file (e.g. `/tmp/beaver-pr-msg.txt`):
+   把 conventional commit 信息写入唯一命名的临时文件（`mktemp` 或 `/tmp/beaver-pr-msg-$$-$RANDOM.txt`），格式：
 
    ```text
    {type}({scope}): {description}
@@ -41,39 +50,48 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-pr.sh ctx
    Closes #{issue_number}
    ```
 
-   Then:
+   然后：
 
    ```bash
-   bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-pr.sh commit-push "$BRANCH_NAME" /tmp/beaver-pr-msg.txt {relevant_files}
+   bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-pr.sh commit-push "$BRANCH_NAME" /tmp/beaver-pr-msg-$$-$RANDOM.txt {relevant_files}
    ```
 
-### Phase 4: Compliance Checks
+### Phase 4: Compliance Checks (PR-body warnings, never Issue labels)
 
-Run guardrail checks and present as table:
+G004 / G006 仅产生 PR body 警告附加段；不在原 Issue 上贴任何 `beaver/*` 审计标签。
 
-| Check | Result | Details |
-|---|---|---|
-| G004: Test evidence | ✅ PASS / ⚠️ WARN | {test files found / CI status} |
-| G006: Label completeness | ✅ PASS / ⚠️ WARN | {type/ + size/ present on issue} |
+#### G004 — Test evidence
 
 ```bash
-# G004: Check for test files in diff
-bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-pr.sh check-tests
-
-# G006: Check issue labels
-bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-pr.sh check-labels {org} {issueRepo} {issue_number}
+if ! bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-pr.sh check-tests; then
+  # 触发 G004：在 PR body 末尾追加一行
+  printf '\n> ⚠️ Beaver audit: 本次 PR 未包含 test 文件改动\n' >> "$pr_body_file"
+fi
 ```
 
-If G004 warns: add `beaver/missing-test` label to Issue.
-If G006 warns: add `beaver/missing-context` label, list missing labels.
+#### G006 — Type / Size 自动补齐
+
+读取 Issue 当前 Type / Size：
 
 ```bash
-bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-pr.sh add-label {org} {issueRepo} {issue_number} beaver/missing-test
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-pr.sh check-fields {org} {issueRepo} {issue_number}
 ```
+
+若任一为空，调用 `beaver-lib.sh::set_type` / `set_size` 自动补齐（`Type` 默认补 `Task`，`Size` 默认补 `S`）：
+
+```bash
+if ! bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-pr.sh autofill-fields {issue_number} S; then
+  # auto-fill failure → 在 PR body 末尾追加警告
+  printf '\n> ⚠️ Beaver audit: Issue #%s missing Type/Size fields and auto-fill failed\n' \
+    {issue_number} >> "$pr_body_file"
+fi
+```
+
+> 注意：除 G006 触发的 `set_type` / `set_size` 外，本命令不修改 Issue 的任何 Project V2 字段（不写 `Status` / `Iteration`，不发起任何字段写入的 `gh api graphql` 调用）。
 
 ### Phase 5: Create Draft PR
 
-Write the PR body markdown to a temp file (e.g. `/tmp/beaver-pr-body.md`):
+把 PR body 内容（含上面 Phase 4 追加的警告段）以字符串形式传给 `create-pr`；脚本内部走 `mktemp` 生成唯一临时文件后 `--body-file`：
 
 ```markdown
 ## Summary
@@ -86,53 +104,60 @@ Write the PR body markdown to a temp file (e.g. `/tmp/beaver-pr-body.md`):
 Closes #{issue_number}
 ```
 
-Then:
-
 ```bash
-bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-pr.sh create-pr "{type}({scope}): {description}" /tmp/beaver-pr-body.md
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-pr.sh create-pr \
+  "{type}({scope}): {description}" \
+  "$pr_body_string"
 ```
 
-### Phase 6: Completion Options
+### Phase 6: Completion Options (4 互斥选项)
 
-Present exactly 4 options (absorbed from superpowers:finishing-a-development-branch):
+打印恰好 4 个互斥选项（absorbed from superpowers:finishing-a-development-branch）：
 
 ```text
 Draft PR created. What would you like to do?
 
 1. Keep as Draft PR (self-review first, then mark Open)
 1. Mark PR as Ready for Review immediately
-1. Keep the branch as-is (I'll handle it later)
+1. Keep the branch as-is (我稍后处理)
 1. Discard this work
 ```
 
-- Option 1 (default): Keep Draft. Print: "Self-review the Draft PR at {pr_url}. When ready, mark it Open for team review."
-- Option 2: `bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-pr.sh mark-ready {pr_number}`. Print: "PR marked as Ready for Review."
-- Option 3: Print: "Branch and Draft PR preserved."
-- Option 4: Require typed "discard" confirmation. Delete branch + close PR.
+- Option 1（默认）: Keep Draft. 输出 `Self-review the Draft PR at {pr_url}. When ready, mark it Open for team review.`
+- Option 2: `bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-pr.sh mark-ready {pr_number}`. 输出 `PR marked as Ready for Review.`
+- Option 3: 保留分支与 Draft PR；输出 `Branch and Draft PR preserved.`
+- Option 4: Discard this work — 必须二次确认。提示用户键入字面字符串 `discard` 才执行；任何其它输入视为取消，回到 Option 1。
+
+  ```bash
+  # 用户输入 "discard" 后：
+  gh pr close {pr_number}
+  bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-pr.sh delete-branch "$BRANCH_NAME"
+  ```
 
 ### Phase 7: Worktree Cleanup
 
-If working in a worktree:
+如果在 worktree 中执行：
 
-- Options 1, 2: keep worktree (PR still open)
-- Option 3: keep worktree
-- Option 4: remove worktree
+- Options 1, 2, 3：保留 worktree（PR 仍存在或分支保留）
+- Option 4：移除 worktree
 
 ## Code Review Reception (absorbed from superpowers:receiving-code-review)
 
-When the user receives review feedback on the PR, follow these rules:
+收到 review 反馈后：
 
 - **Read** complete feedback without reacting
 - **Verify** against codebase reality before implementing
 - **Push back** with technical reasoning if feedback is wrong
 - **Never** use performative agreement ("You're absolutely right!", "Great point!")
 - **Just fix** and show in the code — actions speak louder than words
-- When feedback is from external reviewers: verify technically, be skeptical
-- When feedback conflicts with prior decisions: stop and discuss with user first
+- 来自外部 reviewer 的反馈：保持技术怀疑、先验证再实施
+- 反馈与已确定决策冲突：停下来与用户讨论
 
 ## Constraints
 
-- PR is created as **Draft** by default (user self-reviews before marking Open)
-- `Closes #{issue_number}` in PR body ensures Issue auto-closes on merge → `status/done`
-- G004 and G006 are warning-only (do not block PR creation)
-- §7 QA loop does NOT apply (PR content is generated from git diff, not user Q&A)
+- PR 默认创建为 **Draft**（用户 self-review 后 mark Open）
+- `Closes #{issue_number}` 写入 PR body，merge 时 Issue 自动关闭
+- G004 / G006 都是 warning-only（不阻断 PR 创建，不在 Issue 上贴 `beaver/*` 标签）
+- 除 G006 触发的 Type/Size 自动补齐外，命令不修改任何 Project V2 字段
+- 所有 `--body-file` 传给 `gh` CLI 的临时文件必须使用唯一文件名（`mktemp` 或 `/tmp/beaver-pr-body-$$-$RANDOM.md` 等）；该约束由 `beaver-pr.sh` 在内部统一处理
+- §7 QA loop 不适用（PR 内容由 git diff 生成，不走用户 Q&A）
