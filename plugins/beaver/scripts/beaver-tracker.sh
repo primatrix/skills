@@ -9,7 +9,7 @@ Subcommands:
   ensure-label <repo> <name> <color> <description>
                                 Idempotent label-create (skip on dup)
   find-tracker <repo> <yyyymm>  Search for tracker issue, echo JSON {count, items:[{number,title}]}
-  list-carried <prev-number>    Open sub-issues of prior tracker, echo [{number, title}]
+  list-carried <prev-number>    Open sub-issues of prior tracker, echo [{number, title, id}]
   create <repo> <title> <body-file>
                                 Create tracker issue, echo .number
   add-labels <repo> <number> <label> [<label> ...]
@@ -17,22 +17,31 @@ Subcommands:
                                 Echo numeric DB .id of issue
   attach-sub <tracker-number> <child-id>
                                 Attach via sub_issues API
-  fetch-triage-backlog          GraphQL fetch primatrix/projects status/triage no-iteration items
+  detach-sub <tracker-number> <child-id>
+                                Detach via sub_issues API DELETE
+  fetch-backlog <repo>          GraphQL fetch Project V2 candidates:
+                                Iteration empty AND Status=Triage AND
+                                repo matches AND issueType in {Task, Bug}.
+                                Echo [{number, title, repo}].
   list-tracker-subs <tracker-number>
                                 Echo .[].number of sub-issues
-  resolve-iteration <yyyymm>    Echo "project_id=ID field_id=ID iteration_id=ID"
-  resolve-item-id <repo> <issue-number>
-                                Echo ProjectV2Item id for project #14 (empty if not on project)
-  add-to-project <project-id> <issue-number>
-                                addProjectV2ItemById, echo new item id
-  set-iteration <project-id> <item-id> <field-id> <iteration-id>
-                                updateProjectV2ItemFieldValue
+  list-tracker-subs-meta <tracker-number> <repo>
+                                Echo [{number, id, iteration_title, repo, repo_match, iteration_match}]
+                                where matches are evaluated against expected repo and iteration title prefix YYYY-MM (passed via env BEAVER_EXPECTED_YYYYMM).
+  set-tracker-iteration <tracker-number> <yyyymm>
+                                Write Iteration field on tracker issue via beaver-lib.sh::set_iteration.
+  set-issue-iteration <issue-number> <yyyymm>
+                                Write Iteration field on a sub-issue via beaver-lib.sh::set_iteration.
 EOF
 }
 
 ORG=primatrix
 PROJECT_REPO=projects
 PROJECT_NUM=14
+
+# Resolve sibling beaver-lib.sh for delegating Project V2 field writes.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+BEAVER_LIB="${SCRIPT_DIR}/beaver-lib.sh"
 
 case "${1:-}" in
   ensure-label)
@@ -49,7 +58,7 @@ case "${1:-}" in
     prev=$2
     gh api "repos/${ORG}/${PROJECT_REPO}/issues/${prev}/sub_issues" \
       -H "X-GitHub-Api-Version: 2026-03-10" \
-      --jq '[.[] | select(.state=="open") | {number, title}]'
+      --jq '[.[] | select(.state=="open") | {number, title, id}]'
     ;;
   create)
     repo=$2; title=$3; body_file=$4
@@ -76,33 +85,55 @@ case "${1:-}" in
       -H "X-GitHub-Api-Version: 2026-03-10" \
       -F sub_issue_id="$child_id"
     ;;
-  fetch-triage-backlog)
-    gh api graphql -f query='
-      query {
-        organization(login: "primatrix") {
-          projectV2(number: 14) {
-            items(first: 100) {
+  detach-sub)
+    tracker=$2; child_id=$3
+    gh api "repos/${ORG}/${PROJECT_REPO}/issues/${tracker}/sub_issue" --method DELETE \
+      -H "X-GitHub-Api-Version: 2026-03-10" \
+      -F sub_issue_id="$child_id"
+    ;;
+  fetch-backlog)
+    # Backlog candidates: Project V2 #14 items where
+    #   - Iteration is unset (fieldValueByName(Iteration) == null)
+    #   - Status == "Triage"
+    #   - issueType.name ∈ {Task, Bug}
+    #   - repository.name == <repo>
+    # Output: [{number, title, repo}]
+    repo=$2
+    gh api -H "GraphQL-Features: issue_types" graphql -f query='
+      query($owner: String!, $number: Int!) {
+        organization(login: $owner) {
+          projectV2(number: $number) {
+            items(first: 200) {
               nodes {
                 content {
                   ... on Issue {
                     number
                     title
-                    repository { nameWithOwner }
-                    labels(first: 30) { nodes { name } }
+                    issueType { name }
+                    repository { name nameWithOwner }
                   }
                 }
-                fieldValueByName(name: "Iteration") {
+                iter: fieldValueByName(name: "Iteration") {
                   ... on ProjectV2ItemFieldIterationValue { title }
+                }
+                stat: fieldValueByName(name: "Status") {
+                  ... on ProjectV2ItemFieldSingleSelectValue { name }
                 }
               }
             }
           }
         }
-      }' --jq '.data.organization.projectV2.items.nodes
-                | map(select(.content != null and .content.repository.nameWithOwner == "primatrix/projects"))
-                | map(select(.content.labels.nodes | map(.name) | index("status/triage")))
-                | map(select(.fieldValueByName == null))
-                | map({number: .content.number, title: .content.title})'
+      }' -f owner="$ORG" -F number="$PROJECT_NUM" \
+      --jq '.data.organization.projectV2.items.nodes
+            | map(select(.content != null
+                         and .content.repository.name == "'"$repo"'"
+                         and .iter == null
+                         and (.stat.name // "") == "Triage"
+                         and ((.content.issueType.name // "") == "Task"
+                              or (.content.issueType.name // "") == "Bug")))
+            | map({number: .content.number,
+                   title: .content.title,
+                   repo: .content.repository.name})'
     ;;
   list-tracker-subs)
     tracker=$2
@@ -110,82 +141,65 @@ case "${1:-}" in
       -H "X-GitHub-Api-Version: 2026-03-10" \
       --jq '.[].number'
     ;;
-  resolve-iteration)
-    yyyymm=$2
-    info=$(gh api graphql -f query='
-      query {
-        organization(login: "primatrix") {
-          projectV2(number: 14) {
-            id
-            field(name: "Iteration") {
-              ... on ProjectV2IterationField {
-                id
-                configuration { iterations { id title } }
+  list-tracker-subs-meta)
+    # For each sub-issue under the tracker, fetch its Project V2 Iteration
+    # title and home repo, plus boolean matches against the expected
+    # YYYY-MM (env BEAVER_EXPECTED_YYYYMM) and expected <repo> (arg 3).
+    tracker=$2
+    expected_repo=$3
+    expected_yyyymm="${BEAVER_EXPECTED_YYYYMM:-}"
+    if [ -z "$expected_yyyymm" ]; then
+      echo "list-tracker-subs-meta: BEAVER_EXPECTED_YYYYMM not set" >&2
+      exit 1
+    fi
+    sub_numbers=$(gh api "repos/${ORG}/${PROJECT_REPO}/issues/${tracker}/sub_issues" \
+      -H "X-GitHub-Api-Version: 2026-03-10" \
+      --jq '[.[] | {number, id, repo: .repository.name}]')
+    # For each sub, lookup Iteration title via Project V2.
+    echo "$sub_numbers" | jq -c '.[]' | while IFS= read -r row; do
+      number=$(echo "$row" | jq -r '.number')
+      id=$(echo "$row" | jq -r '.id')
+      repo=$(echo "$row" | jq -r '.repo')
+      iter=$(gh api graphql -f query='
+        query($owner: String!, $repo: String!, $number: Int!) {
+          repository(owner: $owner, name: $repo) {
+            issue(number: $number) {
+              projectItems(first: 20) {
+                nodes {
+                  project { number }
+                  fieldValueByName(name: "Iteration") {
+                    ... on ProjectV2ItemFieldIterationValue { title }
+                  }
+                }
               }
             }
           }
-        }
-      }')
-    project_id=$(echo "$info" | jq -r '.data.organization.projectV2.id')
-    field_id=$(echo "$info" | jq -r '.data.organization.projectV2.field.id')
-    iteration_id=$(echo "$info" | jq -r --arg yyyymm "$yyyymm" \
-      '.data.organization.projectV2.field.configuration.iterations
-       | map(select(.title | startswith($yyyymm))) | .[0].id // ""')
-    echo "project_id=${project_id} field_id=${field_id} iteration_id=${iteration_id}"
+        }' -f owner="$ORG" -f repo="$repo" -F number="$number" \
+        --jq ".data.repository.issue.projectItems.nodes
+              | map(select(.project.number == ${PROJECT_NUM}))
+              | .[0].fieldValueByName.title // \"\"" 2>/dev/null || echo "")
+      jq -n \
+        --argjson number "$number" \
+        --argjson id "$id" \
+        --arg iter "$iter" \
+        --arg repo "$repo" \
+        --arg expected_repo "$expected_repo" \
+        --arg expected_yyyymm "$expected_yyyymm" \
+        '{number: $number,
+          id: $id,
+          iteration_title: $iter,
+          repo: $repo,
+          repo_match: ($repo == $expected_repo),
+          iteration_match: ($iter | startswith($expected_yyyymm))}'
+    done | jq -s '.'
     ;;
-  resolve-item-id)
-    repo=$2; num=$3
-    read -r -d '' Q <<'GRAPHQL' || true
-query($owner: String!, $repo: String!, $number: Int!) {
-  repository(owner: $owner, name: $repo) {
-    issue(number: $number) {
-      projectItems(first: 10) { nodes { id project { number } } }
-    }
-  }
-}
-GRAPHQL
-    gh api graphql \
-      -f query="$Q" \
-      -f owner="$ORG" \
-      -f repo="$repo" \
-      -F number="$num" \
-      --jq '.data.repository.issue.projectItems.nodes
-            | map(select(.project.number == 14)) | .[0].id // ""'
+  set-tracker-iteration)
+    tracker=$2; yyyymm=$3
+    bash "$BEAVER_LIB" set_iteration "$tracker" "$yyyymm"
     ;;
-  add-to-project)
-    project_id=$2; num=$3
-    content_id=$(gh api "repos/${ORG}/${PROJECT_REPO}/issues/${num}" --jq '.node_id')
-    read -r -d '' M <<'GRAPHQL' || true
-mutation($projectId: ID!, $contentId: ID!) {
-  addProjectV2ItemById(input: { projectId: $projectId, contentId: $contentId }) {
-    item { id }
-  }
-}
-GRAPHQL
-    gh api graphql \
-      -f query="$M" \
-      -f projectId="$project_id" \
-      -f contentId="$content_id" \
-      --jq '.data.addProjectV2ItemById.item.id'
-    ;;
-  set-iteration)
-    project_id=$2; item_id=$3; field_id=$4; iteration_id=$5
-    read -r -d '' M <<'GRAPHQL' || true
-mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $iterationId: String!) {
-  updateProjectV2ItemFieldValue(input: {
-    projectId: $projectId
-    itemId: $itemId
-    fieldId: $fieldId
-    value: { iterationId: $iterationId }
-  }) { projectV2Item { id } }
-}
-GRAPHQL
-    gh api graphql \
-      -f query="$M" \
-      -f projectId="$project_id" \
-      -f itemId="$item_id" \
-      -f fieldId="$field_id" \
-      -f iterationId="$iteration_id"
+  set-issue-iteration)
+    issue=$2; yyyymm=$3
+    bash "$BEAVER_LIB" set_iteration "$issue" "$yyyymm"
     ;;
   --help|"")
     usage
