@@ -51,7 +51,11 @@ _make_unique_body_file() {
   local purpose=${1:-body}
   local epoch
   epoch=$(date +%s%N 2>/dev/null || date +%s)
-  mktemp "/tmp/beaver-design-${purpose}-$$-${RANDOM}-${epoch}.XXXXXX.md"
+  # NOTE: BSD `mktemp` (macOS) requires the `XXXXXX` placeholder to be the
+  # final component of the template — any suffix after it (e.g. `.md`) is
+  # treated as part of the literal name and the placeholder is NOT randomized,
+  # which silently breaks within-loop uniqueness. Keep `XXXXXX` at the end.
+  mktemp "/tmp/beaver-design-${purpose}-$$-${RANDOM}-${epoch}.XXXXXX"
 }
 
 case "${1:-}" in
@@ -82,17 +86,24 @@ case "${1:-}" in
     ;;
   create-pr)
     repo=$2; title=$3; body=$4
-    body_file=$(_make_unique_body_file pr)
-    printf '%s\n' "$body" > "$body_file"
-    gh pr create --repo "$repo" --draft --title "$title" --body-file "$body_file"
-    rm -f "$body_file"
+    # Subshell + EXIT trap ensures the tempfile is removed even if `gh pr
+    # create` fails (the script's `set -e` would otherwise abort before our
+    # explicit `rm`).
+    (
+      body_file=$(_make_unique_body_file pr)
+      trap 'rm -f "$body_file"' EXIT
+      printf '%s\n' "$body" > "$body_file"
+      gh pr create --repo "$repo" --draft --title "$title" --body-file "$body_file"
+    )
     ;;
   comment-issue)
     org=$2; repo=$3; num=$4; body=$5
-    body_file=$(_make_unique_body_file comment)
-    printf '%s\n' "$body" > "$body_file"
-    gh issue comment "$num" --repo "${org}/${repo}" --body-file "$body_file"
-    rm -f "$body_file"
+    (
+      body_file=$(_make_unique_body_file comment)
+      trap 'rm -f "$body_file"' EXIT
+      printf '%s\n' "$body" > "$body_file"
+      gh issue comment "$num" --repo "${org}/${repo}" --body-file "$body_file"
+    )
     ;;
   --help|"")
     usage
