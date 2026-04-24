@@ -121,7 +121,7 @@ field_ops_block=$(awk '
 if [ -z "$field_ops_block" ]; then
   report_fail "AC3c: §4 body empty"
 else
-  for fn in set_status set_size set_type get_iteration set_iteration latest_iteration_for_repo; do
+  for fn in set_status set_size set_type get_type get_iteration set_iteration latest_iteration_for_repo _get_single_select_value; do
     if echo "$field_ops_block" | grep -q "$fn"; then
       report_pass "AC3c.${fn}: §4 references beaver-lib.sh::${fn}"
     else

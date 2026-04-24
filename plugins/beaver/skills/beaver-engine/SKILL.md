@@ -7,7 +7,7 @@ description: "Internal engine for Beaver commands. DO NOT trigger directly. Prov
 
 Internal skill. Do not invoke directly. Other beaver skills reference these rules and command templates.
 
-Single source of truth for an Issue's lifecycle metadata is **GitHub Projects V2 #14** custom fields and the **native GitHub Issue Type** — not labels. All read/write operations go through `plugins/beaver/scripts/beaver-lib.sh` (see §4 Field Operations).
+Single source of truth for an Issue's lifecycle metadata is **GitHub Projects V2 #14** custom fields and the **native GitHub Issue Type** — not labels. All read/write operations on lifecycle metadata go through `plugins/beaver/scripts/beaver-lib.sh` (see §4 Field Operations). Native GitHub Issues APIs that fall outside the lifecycle-metadata surface (e.g., the sub-issues API used by G009, the labels API used for `beaver/*` flag labels in §4) are called directly with `gh api` since they do not correspond to Project V2 fields or Issue Type.
 
 <!-- BEGIN 废弃说明 -->
 ## 废弃说明 (Deprecation Notice)
@@ -460,7 +460,7 @@ If ANY row is ☐, the caller MUST revise the section first, then re-present the
 Issue bodies (created by `beaver-create`) do not require a Provenance block but MUST satisfy:
 
 - **Objective**: one sentence stating the user-facing outcome (not the implementation).
-- **Acceptance criteria**: ≥ 2 items, each starting with a verb that yields a verifiable check (`运行 X 返回 Y` / `打开 URL Z 看到 W` / `pytest tests/foo.py 全部通过`). Avoid the verbs "improve" / "refactor" / "optimize" as acceptance-criterion phrasing without a measurable target. (The Issue Type label "refactor" semantics are unaffected — the prohibition is only on the verb appearing in acceptance criteria.)
+- **Acceptance criteria**: ≥ 2 items, each starting with a verb that yields a verifiable check (`运行 X 返回 Y` / `打开 URL Z 看到 W` / `pytest tests/foo.py 全部通过`). Avoid the verbs "improve" / "refactor" / "optimize" as acceptance-criterion phrasing without a measurable target. (The underlying intent of a "refactor" task is unaffected — the prohibition is only on the verb appearing in acceptance criteria; a Task whose work is structural cleanup remains a valid native Issue Type = `Task`.)
 - **No invented file paths**: every path mentioned must appear in the Discovery Brief D2 hits or D3 file list.
 
 ### 9.5 Bug-mode adjustment
