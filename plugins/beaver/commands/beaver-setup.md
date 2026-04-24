@@ -1,6 +1,6 @@
 ---
 allowed-tools: Bash(gh auth status:*), Bash(gh auth refresh:*), Bash(gh project edit:*), Bash(gh project field-create:*), Bash(gh project field-list:*), Bash(gh api:*), Bash(gh label create:*), Bash(date:*)
-description: "Initialize Beaver on primatrix/projects#14: update Status field to 7 options, create labels, and create Iteration field with monthly entries."
+description: "Initialize Beaver on primatrix/projects#14: ensure native Issue Types (Bug/Task/SubTask), Status (7), Size (5), Priority (3), Progress, Iteration fields, and labels."
 ---
 
 # Initialize Beaver Project
@@ -31,31 +31,27 @@ Verify token scopes include `project` and `admin:org`. If missing, prompt the us
 Show a full preview before executing. Include:
 
 - All constants above
-- Custom fields: Level (Single Select: Milestone, Task, SubTask), Status (Single Select: 7 options — see below), Progress (Number: 0-100), Iteration (Iteration: monthly entries from current month to year-end)
+- Custom fields: Status (Single Select: 7 options — see below), Size (Single Select: XS, S, M, L, XL), Priority (Single Select: P0, P1, P2), Progress (Number: 0-100), Iteration (Iteration: monthly entries from current month to year-end)
+- Native Issue Types: Bug, Task, SubTask
 - README beaver-config block
-- Issue types and labels to create
+- Labels to create
 - Iteration field with N monthly entries (YYYY-MM ... YYYY-12)
 
 Wait for explicit user confirmation. If changes requested, adjust and re-preview.
+
+**Note on the legacy Project V2 field**: Earlier Beaver iterations created a single-select project field named `Level`. Per RFC-0013, that field is superseded by native GitHub Issue Types. This command does **not** create or read it; if it already exists on Project #14 it is left untouched (the field carries no semantic meaning for current Beaver commands).
 
 ## Execution
 
 ### Update Custom Fields
 
-**Level:**
-```bash
-bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-setup.sh field-create primatrix 14 "Level" SINGLE_SELECT "Milestone,Task,SubTask"
-```
-
-Skip if field already exists.
-
-**Status:** List fields and find the Status field ID, then replace via GraphQL to exactly 7 options. This is a full replacement — any pre-existing options not in this list are removed.
+List existing fields once and reuse the result to decide which create/replace calls to issue:
 
 ```bash
 bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-setup.sh field-list primatrix 14
 ```
 
-Find the Status field ID from the JSON output, then:
+**Status:** find the Status field id from the JSON output and replace its options with the 7 RFC values:
 
 ```bash
 bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-setup.sh status-replace <existing_status_field_id>
@@ -70,17 +66,33 @@ The `status-replace` subcommand applies these 7 options exactly:
 - Blocked (RED) — Blocked
 - Done (GREEN) — Completed and merged
 
-If no Status field exists, create it:
+If no Status field exists, create it first:
+
 ```bash
 bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-setup.sh field-create primatrix 14 "Status" SINGLE_SELECT "Triage,Ready to Claim,Design Pending,Ready to Develop,In Progress,Blocked,Done"
 ```
 
-**Progress:**
+**Size:** if absent in the field-list output, create it. Skip if already present:
+
+```bash
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-setup.sh field-create primatrix 14 "Size" SINGLE_SELECT "XS,S,M,L,XL"
+```
+
+The five options match the spec; the current Beaver command surface uses only `S` and `L`, but the field carries the full set so the spec stays addressable from Project #14 UI.
+
+**Priority:** if absent, create it. Skip if already present:
+
+```bash
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-setup.sh field-create primatrix 14 "Priority" SINGLE_SELECT "P0,P1,P2"
+```
+
+**Progress:** if absent, create it. Skip if already present:
+
 ```bash
 bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-setup.sh field-create primatrix 14 "Progress" NUMBER
 ```
 
-Skip any field that already exists and inform the user.
+For every field, skip creation when it already exists and inform the user.
 
 ### Write README with beaver-config
 
@@ -91,9 +103,10 @@ Skip any field that already exists and inform the user.
 repositories: all
 issueRepo: projects
 customFields:
-  level: Level
-  progress: Progress
   status: Status
+  size: Size
+  priority: Priority
+  progress: Progress
   iteration: Iteration
 ```
 ````
@@ -104,7 +117,7 @@ Claude renders the README content above to a temp file via `Write` (path `/tmp/b
 bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-setup.sh edit-readme primatrix 14 /tmp/beaver-project-readme.md
 ```
 
-### Create Issue Types
+### Create Native Issue Types
 
 Issue types are org-scoped. Requires `admin:org` scope and `X-GitHub-Api-Version: 2026-03-10` header. List existing first to avoid duplicates:
 
@@ -116,15 +129,17 @@ Create each if not already present:
 
 | Name | Color | Description |
 |------|-------|-------------|
-| Milestone | blue | High-level objective |
-| Task | green | Breakdown of a Milestone |
+| Bug | red | Defect or regression |
+| Task | green | Top-level deliverable (S or L) |
 | SubTask | gray | Finest granularity work item |
 
 ```bash
 bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-setup.sh create-issue-type primatrix <name> <color> <desc>
 ```
 
-Skip on 422 (already exists). Warn and continue on 404 (org plan may not support issue types).
+The `create-issue-type` subcommand swallows duplicate (422) errors so the loop is idempotent. Warn and continue on 404 (org plan may not support issue types).
+
+**Definition vs assignment**: this `create-issue-type` path defines the org-level Type taxonomy. Per-issue Type assignment (e.g. setting `Type=Bug` on a specific issue) goes through `beaver-lib.sh::set_type`, never through this command.
 
 ### Create Labels
 
@@ -136,7 +151,7 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-setup.sh ensure-label primatrix/projec
 
 The `ensure-label` subcommand swallows duplicate-label errors so the loop is idempotent.
 
-**Type labels:**
+**Type labels (legacy parity, retained for repo-level coloring; Beaver commands no longer read these):**
 
 | Label | Color | Description |
 |-------|-------|-------------|
@@ -146,7 +161,7 @@ The `ensure-label` subcommand swallows duplicate-label errors so the loop is ide
 | type/docs | 0075CA | Documentation |
 | type/chore | BFD4F2 | Infrastructure, build, misc |
 
-**Priority labels:**
+**Priority labels (legacy parity, retained for repo-level coloring; Beaver commands now read the Project V2 Priority field):**
 
 | Label | Color | Description |
 |-------|-------|-------------|
@@ -155,14 +170,14 @@ The `ensure-label` subcommand swallows duplicate-label errors so the loop is ide
 | p2/high | FBCA04 | High priority |
 | p3/normal | C2E0C6 | Normal priority |
 
-**Size labels:**
+**Size labels (legacy parity, retained for repo-level coloring; Beaver commands now read the Project V2 Size field):**
 
 | Label | Color | Description |
 |-------|-------|-------------|
 | size/S | C5DEF5 | Small task — fast-track SOP |
 | size/L | 1D76DB | Large task — full lifecycle SOP |
 
-**Status labels:**
+**Status labels (legacy parity, retained for repo-level coloring; Beaver commands now read the Project V2 Status field):**
 
 | Label | Color | Description |
 |-------|-------|-------------|
@@ -243,15 +258,16 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-setup.sh iteration-field-append <itera
 
 ## Success Report
 
-Print summary with: project URL (`https://github.com/orgs/primatrix/projects/14`), custom fields (Level, Status with 7 options, Progress, Iteration), issue types, label count, Iteration entry count and range. Inform the user they can now use `beaver-issue` with project identifier `primatrix/14`.
+Print summary with: project URL (`https://github.com/orgs/primatrix/projects/14`), custom fields (Status with 7 options, Size with 5 options, Priority with 3 options, Progress, Iteration), native Issue Types (Bug / Task / SubTask), label count, Iteration entry count and range. Inform the user they can now use `beaver-create` against `primatrix/14`.
 
 ## Constraints
 
 - Idempotent — safe to run multiple times; skips existing fields, labels, Iteration entries
 - Organization: `primatrix` only
 - Project: `#14` only (does not create new projects)
-- Fixed field names: Level, Status (7 options), Progress, Iteration
+- Fixed field names: Status (7 options), Size (5 options: XS/S/M/L/XL), Priority (3 options: P0/P1/P2), Progress, Iteration
 - Status field is a full replacement — only the 7 specified options will exist after update
 - Iteration field — only missing months are appended; existing entries preserved
+- Native Issue Types — Bug / Task / SubTask defined here; per-issue assignment goes through `beaver-lib.sh::set_type`
 - Always confirm before executing — never execute without preview and approval
 - On failure, report the error and let the user decide how to proceed (no auto-retry)
