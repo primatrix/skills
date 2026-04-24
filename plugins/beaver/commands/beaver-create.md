@@ -158,7 +158,7 @@ Phase 1 of the Beaver development lifecycle. All lifecycle metadata is written t
 
 1. **Initial Status summary**: All Tasks / SubTasks land at `Status = Triage`. Bug routes per priority (P0 → In Progress, P1/P2 → Ready to Claim). The native Issue Type (`Task` / `SubTask` / `Bug`) plus Status / Size (Task/SubTask only) / Priority (Bug only) / Iteration (Bug always; Task/SubTask optional) are now written. No `status/* / type/* / size/*` repository labels are touched.
 
-1. **Report**: Print the created Issue URL, native Issue Type, Status, Size (if applicable), Priority (if Bug), Iteration (if assigned, else `unassigned`), and the next-step hint (e.g., `/beaver-claim` for Ready to Claim, or "wait for triage" for Triage).
+1. **Report**: Print the created Issue URL, native Issue Type, Status, Size (if applicable), Priority (if Bug), Iteration (if assigned, else `unassigned`), and the next-step hint: "`/beaver-claim` 已删除（见 RFC-0013 §3）：对于 Ready to Claim 的 Issue，请在 GitHub UI assign 自己后手动将 Status 切到对应值；Triage 状态则等待 triage。"
 
 ## Bug Submode
 

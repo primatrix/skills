@@ -142,7 +142,7 @@ Print summary:
 
 - Number of children created
 - Audit results
-- Next-step hint: "Children are in `status/triage`. Add them to an Iteration, then team members can claim with `/beaver-claim <number>`."
+- Next-step hint: "Children are in `status/triage`. Add them to an Iteration. `/beaver-claim` 已删除（见 RFC-0013 §3）：team members 请在 GitHub UI assign 自己后手动将 Status 切到对应值。"
 
 ## Constraints
 
