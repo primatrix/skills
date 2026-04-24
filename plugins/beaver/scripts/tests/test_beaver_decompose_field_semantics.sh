@@ -162,7 +162,7 @@ fi
 # Either the body template literal contains `> Design Doc: ` at the very top,
 # or the doc/sh explicitly states that this prefix is prepended for every
 # child (verbatim, no normalization).
-if grep -qE '^>?\s*Design Doc:' "$decompose_md"; then
+if grep -qE '^\s*>?\s*Design Doc:' "$decompose_md"; then
   report_pass 'AC3.template: beaver-decompose.md template contains the "Design Doc:" blockquote line'
 else
   report_fail 'AC3.template: beaver-decompose.md must show a "Design Doc: <url>" blockquote at top of each child body'
