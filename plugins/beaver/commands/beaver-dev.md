@@ -39,7 +39,7 @@ Argument is required: the issue number to develop.
   - If checks fail: stop with message directing user to `/beaver-design` or `/beaver-decompose`
 
 - If size/S: verify Issue has `status/in-progress`
-  - If not: stop with message directing user to `/beaver-claim`
+  - If not: stop with message — `/beaver-claim` 已删除（见 RFC-0013 §3），请在 GitHub UI assign 自己后手动将 Status 切到 `status/in-progress`，再重新执行 `/beaver-dev`。
 
 ### Phase 3: Workspace Setup
 
