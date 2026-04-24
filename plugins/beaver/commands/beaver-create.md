@@ -1,68 +1,139 @@
 ---
-allowed-tools: Bash(gh api:*), Bash(gh project:*), Bash(gh label:*), Bash(cat > /tmp/*), Bash(git log:*), Bash(git diff:*)
+allowed-tools: Bash(gh api:*), Bash(gh project:*), Bash(gh issue:*), Bash(mktemp:*), Bash(git log:*), Bash(git diff:*), Bash(bash:*)
 description: Create a Beaver-tracked GitHub Issue with brainstorming QA, automatic status transitions and guardrail checks. Trigger when the user wants to create a GitHub issue or report a bug.
-argument-hint: "[issue-type]"
+argument-hint: "[--type task|subtask|bug]"
 ---
 
-# /beaver-create — Task/Bug 创建
+# /beaver-create — Task / SubTask / Bug 创建
 
-Phase 1 of the Beaver development lifecycle.
+Phase 1 of the Beaver development lifecycle. All lifecycle metadata is written to **Project V2 #14** custom fields and the **native GitHub Issue Type** through `beaver-lib.sh` — never via repository labels. See `plugins/beaver/skills/beaver-engine/SKILL.md` §1 (Field Taxonomy) and §4 (Field Operations).
 
 ## Workflow
 
-1. **Type detection**: Determine issue type (feat/bug/refactor/docs/chore). If argument provided, use it. Otherwise ask.
-   - `type/bug` → enter Bug Submode (see §Bug below)
+1. **Type inference + override**
 
-1. **Load project config**: Read beaver-config from Project V2 README per engine §5.
+   Determine the Issue Type as one of `task / subtask / bug` (these are the three native Issue Types created by `/beaver-setup`). The user may either:
 
-1. **Discovery Triad**: Execute engine §8 (D1 recent activity, D2 keyword search, D3 project conventions). Print Discovery Brief before first question.
+   - pass `--type task`, `--type subtask`, or `--type bug` explicitly on the slash command, in which case that value is used verbatim, or
+   - omit `--type`, in which case Claude infers the Type from the user's request:
+     - mention of defect / 复现 / regression / "broken" → `bug`
+     - mention of an existing parent Goal/Task being decomposed → `subtask`
+     - otherwise → `task`
+
+   When `--type bug`, enter **Bug Submode** (see §Bug Submode).
+
+1. **Load project config**: Read `beaver-config` from the Project V2 README per engine §5.
+
+1. **Discovery Triad**: Execute engine §8 (D1 recent activity, D2 keyword search, D3 project conventions). Print the Discovery Brief before the first question.
 
 1. **Iterative QA**: Follow engine §7 strictly.
-   - **size/S path** (3 questions minimum):
+   - **Size=S path** (3 questions minimum):
      1. Title (one-line, imperative)
      2. Objective (one user-facing outcome sentence)
      3. Acceptance criteria (≥ 2 verifiable items)
-   - **size/L path** (4 sectional approvals):
-     1. Level + parent Issue (Goal/Task/SubTask hierarchy)
+   - **Size=L path** (4 sectional approvals):
+     1. Type + parent Issue (Task/SubTask hierarchy via native Issue Type)
      2. Title
      3. Objective + scope
      4. Acceptance criteria + stakeholders
-   - System auto-suggests size (S/L) with reasoning after collecting objective. User confirms or overrides.
+   - The system auto-suggests Size (S/L) with reasoning after collecting the objective. The user confirms or overrides.
 
-1. **Preview + approval gate**: Engine §7.2 HARD-GATE. Present full Issue preview with §9.4 checklist. Wait for explicit approval per §7.5.
+1. **Preview + approval gate**: Engine §7.2 HARD-GATE. Present the full Issue preview with the §9.4 checklist. Wait for explicit approval per §7.5.
 
-1. **Create Issue**:
+1. **落库 (Issue creation + field writes)**
 
-   The POST response body contains the issue body Markdown with embedded newlines. Capturing the whole JSON into a shell variable and then re-parsing with `jq` corrupts those control chars and yields empty fields. Always extract each field via `--jq` directly on the `gh api` call — never round-trip through a captured variable. To avoid losing the issue id when only `--jq '.number'` is requested, perform the POST once for `.number`, then a single follow-up GET for `.id` / `.node_id` / `.html_url`. Render the issue body to a temp file (e.g. `/tmp/beaver-issue-body.md`) using the templates in §Issue Body Templates, then:
+   Per RFC-0013 §1 step 9, perform exactly this ordered sequence. Each step has a single owner — never duplicate field writes inside this command, all metadata writes flow through `beaver-lib.sh`.
 
-   ```bash
-   # Create issue (extracts .number)
-   NEW_NUM=$(bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-create.sh create-issue {org} {issueRepo} "{title}" /tmp/beaver-issue-body.md)
+   1. **9a — Create the Issue.**
 
-   # Re-fetch to obtain remaining ids (cheap GET, idempotent)
-   eval $(bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-create.sh fetch-ids {org} {issueRepo} $NEW_NUM)
-   NEW_ID=$id; NEW_NODE_ID=$node_id; NEW_URL=$html_url
+      Render the Issue body to a *unique* temp file (use `mktemp` — never reuse a fixed path; concurrent invocations would clobber each other) using the templates in §Issue Body Templates. The body includes `@CODEOWNERS` only for the P0 Bug case (see Bug Submode).
 
-   # Add labels
-   bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-create.sh add-labels {org} {issueRepo} $NEW_NUM \
-     Control-By-Beaver {type_label} {size_label} status/triage
+      ```bash
+      BODY_FILE=$(mktemp -t beaver-create-body.XXXXXX)
+      # ... render the chosen template into "$BODY_FILE" ...
 
-   # Link to parent FIRST (if Task or SubTask) — must precede add-to-project so
-   # Projects V2 emits the parent→child rollup when the project item is created.
-   # If skipped, the parent's project card shows "1 sub-issue not in this project".
-   # (Top-level Goals have no parent; skip this step for them.)
-   bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-create.sh link-parent {org} {issueRepo} {parent_number} $NEW_ID
+      # Create the Issue (POST returns only .number — re-fetch ids next).
+      NEW_NUM=$(bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-create.sh \
+        create-issue {org} {issueRepo} "{title}" "$BODY_FILE")
 
-   # Add to Project V2 (capture the project item id for the field-edit step)
-   ITEM_ID=$(bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-create.sh add-to-project {project_number} {org} "$NEW_URL")
+      # Re-fetch to obtain remaining ids (cheap GET, idempotent).
+      eval $(bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-create.sh \
+        fetch-ids {org} {issueRepo} $NEW_NUM)
+      NEW_ID=$id; NEW_NODE_ID=$node_id; NEW_URL=$html_url
 
-   # Set custom fields (Level, Status, Progress)
-   bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-create.sh set-field "$ITEM_ID" {project_id} {level_field_id} {level_option_id}
-   ```
+      rm -f "$BODY_FILE"
+      ```
 
-1. **Iteration assignment (interactive)** — skipped in Bug Submode (G007 exempts bugs):
+      Do not capture the POST response into a shell variable and re-parse with `jq` — embedded newlines in the body Markdown corrupt control characters. Always use `--jq` directly on each `gh api` call.
 
-   Ask the user:
+   2. **9b — Link to parent (SubTask only).**
+
+      For SubTasks, link via the Sub-Issues API **before** add-to-project. If add-to-project runs first, the parent's project card shows "1 sub-issue not in this project" because Projects V2 emits the parent→child rollup at the moment the project item is created. Top-level Tasks and Bugs have no parent and skip this step.
+
+      ```bash
+      bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-create.sh link-parent \
+        {org} {issueRepo} {parent_number} $NEW_ID
+      ```
+
+   3. **9c — Add to Project V2 #14.**
+
+      ```bash
+      ITEM_ID=$(bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-create.sh \
+        add-to-project {project_number} {org} "$NEW_URL")
+      ```
+
+   4. **9d — Write Project V2 fields via `beaver-lib.sh`.**
+
+      Two branches based on the Type chosen in step 1.
+
+      **Task / SubTask** — write Type, Size, Status=Triage, and (optionally) Iteration:
+
+      ```bash
+      source ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-lib.sh
+
+      set_type      "$NEW_NUM" "{Task|SubTask}"   # native Issue Type
+      set_size      "$NEW_NUM" "{S|L}"             # Project V2 Size
+      set_status    "$NEW_NUM" "Triage"            # Project V2 Status
+      # Iteration is optional for Task/SubTask — see §Iteration assignment.
+      ```
+
+      **Bug** — write Type=Bug, Priority, Status, and Iteration. The Bug path **does NOT write Size** (Size has no Bug semantics in RFC-0013):
+
+      ```bash
+      source ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-lib.sh
+
+      set_type   "$NEW_NUM" "Bug"
+      # Priority is mandatory for Bug — value ∈ { P0, P1, P2 } collected in QA.
+      # set_priority is currently called via the generic single-select path:
+      PRIORITY_FIELD_ID=$(get_field_id "Priority")
+      PRIORITY_OPT_ID=$(get_option_id "Priority" "{P0|P1|P2}")
+      ITEM_ID_FOR_PRIO=$(resolve_item_id "$NEW_URL")
+      _set_single_select "$ITEM_ID_FOR_PRIO" "$PRIORITY_FIELD_ID" "$PRIORITY_OPT_ID"
+
+      # Status mapping (RFC-0013 §3 Bug path):
+      #   P0       → "In Progress"  (fast-path, work begins immediately)
+      #   P1 / P2  → "Ready to Claim"
+      if [ "$priority" = "P0" ]; then
+        set_status "$NEW_NUM" "In Progress"
+      else
+        set_status "$NEW_NUM" "Ready to Claim"
+      fi
+
+      # Iteration is MANDATORY for Bug — resolved by G011.
+      ITER_TITLE=$(latest_iteration_for_repo {issueRepo})
+      if [ -z "$ITER_TITLE" ]; then
+        echo "G011 fail: no current or future Iteration on Project #14 for {issueRepo}." >&2
+        echo "Run /beaver-tracker {issueRepo} to create this month's Iteration entry, then retry." >&2
+        exit 1
+      fi
+      set_iteration "$NEW_NUM" "$ITER_TITLE"
+      ```
+
+   5. **9e — Parent-tracker linkage (out of scope for this step; handled by `/beaver-tracker`).**
+
+1. **Iteration assignment (Task / SubTask interactive path)**
+
+   For Task / SubTask only — Bug already wrote Iteration via G011 in step 9d. Ask the user:
 
    ```
    将本 Issue 加入哪个 Iteration？
@@ -71,58 +142,48 @@ Phase 1 of the Beaver development lifecycle.
      - YYYY-MM   指定月份（如 2026-05）
    ```
 
-   - `skip` (case-insensitive) or empty → no-op, continue to next step.
-   - `current` → set `target_yyyymm` to local current year-month.
-   - `YYYY-MM` literal → use as `target_yyyymm`.
+   - `skip` (case-insensitive) or empty → no-op, continue.
+   - `current` → `target=$(date -u +%Y-%m)`.
+   - `YYYY-MM` literal → use as `target`.
 
-   Resolve the Iteration field id and target iteration id (mirrors beaver-tracker §8.6):
-
-   ```bash
-   eval $(bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-create.sh resolve-iteration primatrix 14 "$target_yyyymm")
-   PROJECT_ID=$project_id
-   ITERATION_FIELD_ID=$field_id
-   ITERATION_ID=$iteration_id
-   ```
-
-   If `ITERATION_ID` is empty, warn (do NOT abort the whole command — the issue already exists):
-
-   ```
-   Iteration entry for <target_yyyymm> not found on Project #14.
-   Run /beaver-setup to extend iterations into <target_yyyymm>.
-   Iteration assignment skipped — assign manually or re-run after setup.
-   ```
-
-   Otherwise apply the mutation against the project item created above:
+   Then:
 
    ```bash
-   bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-create.sh set-iteration "$PROJECT_ID" "$ITEM_ID" "$ITERATION_FIELD_ID" "$ITERATION_ID"
+   source ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-lib.sh
+   set_iteration "$NEW_NUM" "$target" || \
+     echo "Iteration entry for $target not found on Project #14. Run /beaver-setup to extend iterations, or assign manually." >&2
    ```
 
-   On success, the issue gains the Iteration assignment and (per engine §G007) becomes eligible for `status/ready-to-claim`. This step does NOT auto-transition the status label — that remains `/beaver-claim`'s job.
+   `set_iteration` accepts a `YYYY-MM` prefix and matches the first iteration whose title starts with that prefix. A failure here is a warning — the Issue already exists.
 
-1. **Initial status**: `status/triage` for all. Exception: p0/blocker Bug → `status/in-progress` + @CODEOWNERS (see Bug Submode).
+1. **Initial Status summary**: All Tasks / SubTasks land at `Status = Triage`. Bug routes per priority (P0 → In Progress, P1/P2 → Ready to Claim). The native Issue Type (`Task` / `SubTask` / `Bug`) plus Status / Size (Task/SubTask only) / Priority (Bug only) / Iteration (Bug always; Task/SubTask optional) are now written. No `status/* / type/* / size/*` repository labels are touched.
 
-1. **Report**: Print created Issue URL, labels, Iteration (if assigned, else `unassigned`), and next-step hint.
+1. **Report**: Print the created Issue URL, native Issue Type, Status, Size (if applicable), Priority (if Bug), Iteration (if assigned, else `unassigned`), and the next-step hint (e.g., `/beaver-claim` for Ready to Claim, or "wait for triage" for Triage).
 
 ## Bug Submode
 
-Activated when `type/bug` is detected. Overrides:
+Activated when `--type bug` (explicit) or Type inference selects `bug`. Overrides:
 
-- **Forced size/S**: G008 enforced. System sets `size/S` automatically, user cannot change to `size/L`.
-- **Mandatory priority**: Must ask priority (`p0/blocker`, `p1/urgent`, `p2/high`, `p3/normal`).
+- **Mandatory Priority**: Must ask priority. Allowed values are exactly `P0 / P1 / P2`. Asked before the §7.2 HARD-GATE preview so the gate can render the full Bug record.
+- **No Size write**: The Bug path explicitly skips Size — RFC-0013 has no Size semantics for Bug. Do not call `set_size` in the Bug branch.
 - **Bug QA template** (4 sections, each requires §7.5 approval):
-  1. 复现步骤 (must be runnable/clickable per §9.5)
+  1. 复现步骤 (must be runnable / clickable per §9.5)
   2. 期望行为
   3. 实际行为
   4. 影响范围 + 环境信息
-- **p0/blocker fast path**:
-  - Skip `status/triage`, set directly to `status/in-progress`
-  - Resolve CODEOWNERS for relevant files, @mention in Issue body
-  - No Iteration required (G007 exempt)
+- **P0 fast path**:
+  - Status routes directly to `In Progress` (skip `Triage` / `Ready to Claim`).
+  - Resolve `CODEOWNERS` for the relevant files and `@`-mention them in the Issue body — see the Bug template below for the placement of `@CODEOWNERS`.
+- **P1 / P2 path**:
+  - Status routes to `Ready to Claim`.
+  - No `@CODEOWNERS` mention — the Bug body omits the `@CODEOWNERS` line.
+- **Iteration mandatory (G011)**:
+  - The Bug path calls `beaver-lib.sh::latest_iteration_for_repo <issueRepo>` to resolve the target Iteration title (G011 algorithm: current iteration if any, else the next future iteration).
+  - On `null` / error, **G011** fails: the command MUST abort and print `Run /beaver-tracker <issueRepo> to create this month's Iteration entry, then retry.` Do not partially write the Bug — resolve the Iteration first, then re-run.
 
 ## Issue Body Templates
 
-### Feature (Task/SubTask)
+### Task / SubTask
 
 ```markdown
 ## 目标
@@ -132,13 +193,40 @@ Activated when `type/bug` is detected. Overrides:
 {acceptance_criteria}
 
 <!-- beaver-tracking
-type: {type}
-size: {size}
+issue-type: {Task|SubTask}
+size: {S|L}
 created-by: beaver-create
 -->
 ```
 
-### Bug
+### Bug — P0 (includes `@CODEOWNERS`)
+
+```markdown
+## 复现步骤
+{reproduction_steps}
+
+## 期望行为
+{expected}
+
+## 实际行为
+{actual}
+
+## 影响范围
+{impact}
+
+## 环境信息
+{environment}
+
+cc @CODEOWNERS
+
+<!-- beaver-tracking
+issue-type: Bug
+priority: P0
+created-by: beaver-create
+-->
+```
+
+### Bug — P1 / P2 (no `@CODEOWNERS`)
 
 ```markdown
 ## 复现步骤
@@ -157,16 +245,16 @@ created-by: beaver-create
 {environment}
 
 <!-- beaver-tracking
-type: type/bug
-size: size/S
-priority: {priority}
+issue-type: Bug
+priority: {P1|P2}
 created-by: beaver-create
 -->
 ```
 
 ## Constraints
 
-- Engine §7.2 HARD-GATE applies to all write operations
-- Engine §9.4 checklist must pass before approval
-- Engine §9.5 applies for bug-mode
-- All labels must use exact names from engine §1
+- Engine §7.2 HARD-GATE applies to all write operations.
+- Engine §9.4 checklist must pass before approval.
+- Engine §9.5 applies in Bug Submode.
+- All lifecycle metadata writes go through `beaver-lib.sh` — this command does not write repository labels for `Status` / `Type` / `Size`, and it does not POST to the issue labels endpoint.
+- Issue body files are unique per invocation — always created via `mktemp`.

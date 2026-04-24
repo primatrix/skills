@@ -1,4 +1,22 @@
 #!/usr/bin/env bash
+#
+# beaver-create.sh — Helper for /beaver-create.
+#
+# Owns only the operations that are NOT lifecycle-metadata writes:
+#   create-issue   POST a new Issue with body from a file (file path is
+#                  unique per invocation; callers should use mktemp).
+#   fetch-ids      GET .id / .node_id / .html_url for a freshly created
+#                  Issue (the POST response only carries .number).
+#   add-to-project Add the Issue to Project V2 #<n> and echo the project
+#                  item id.
+#   link-parent    Attach the Issue as a Sub-Issue of <parent> via the
+#                  Sub-Issues REST endpoint (still raw `gh api`, since
+#                  this is the native Issues API, not Project V2).
+#
+# All Project V2 single-select / iteration writes (Status, Size, Type,
+# Iteration) and the native Issue Type write live in beaver-lib.sh and
+# MUST go through it — this script does not duplicate them.
+
 set -euo pipefail
 
 usage() {
@@ -8,21 +26,15 @@ Usage: beaver-create.sh <subcommand> [args]
 Subcommands:
   create-issue <org> <repo> <title> <body-file>
                                 Create issue, echo .number
+                                <body-file> should be a unique path
+                                (see `mktemp`); the caller is
+                                responsible for cleanup.
   fetch-ids <org> <repo> <number>
                                 Echo "id=N node_id=NID html_url=URL"
-  add-labels <org> <repo> <number> <label> [<label> ...]
-                                POST labels
   add-to-project <project-number> <org> <issue-url>
                                 Add issue to project, echo item id
-  set-field <item-id> <project-id> <field-id> <option-id>
-                                Set single-select field
-  resolve-iteration <org> <project-number> <yyyymm>
-                                Echo "project_id=ID field_id=ID iteration_id=ID"
-                                Iteration ID is empty if not found.
-  set-iteration <project-id> <item-id> <field-id> <iteration-id>
-                                Set Iteration field via GraphQL mutation
   link-parent <org> <repo> <parent-number> <child-id>
-                                Attach child as sub-issue
+                                Attach child as sub-issue (Sub-Issues API)
 EOF
 }
 
@@ -41,65 +53,10 @@ case "${1:-}" in
     url=$(gh api "repos/${org}/${repo}/issues/${num}" --jq '.html_url')
     echo "id=${id} node_id=${node_id} html_url=${url}"
     ;;
-  add-labels)
-    org=$2; repo=$3; num=$4; shift 4
-    args=()
-    for label in "$@"; do
-      args+=(-f "labels[]=${label}")
-    done
-    gh api "repos/${org}/${repo}/issues/${num}/labels" --method POST "${args[@]}"
-    ;;
   add-to-project)
     project=$2; org=$3; url=$4
     gh project item-add "$project" --owner "$org" --url "$url" \
       --format json --jq '.id'
-    ;;
-  set-field)
-    item=$2; project=$3; field=$4; option=$5
-    gh project item-edit --id "$item" --project-id "$project" \
-      --field-id "$field" --single-select-option-id "$option"
-    ;;
-  resolve-iteration)
-    org=$2; project=$3; yyyymm=$4
-    info=$(gh api graphql -f query='
-      query($owner: String!, $number: Int!) {
-        organization(login: $owner) {
-          projectV2(number: $number) {
-            id
-            field(name: "Iteration") {
-              ... on ProjectV2IterationField {
-                id
-                configuration { iterations { id title } }
-              }
-            }
-          }
-        }
-      }' -f owner="$org" -F number="$project")
-    project_id=$(echo "$info" | jq -r '.data.organization.projectV2.id')
-    field_id=$(echo "$info" | jq -r '.data.organization.projectV2.field.id')
-    iteration_id=$(echo "$info" | jq -r --arg yyyymm "$yyyymm" \
-      '.data.organization.projectV2.field.configuration.iterations
-       | map(select(.title | startswith($yyyymm))) | .[0].id // ""')
-    echo "project_id=${project_id} field_id=${field_id} iteration_id=${iteration_id}"
-    ;;
-  set-iteration)
-    project_id=$2; item_id=$3; field_id=$4; iteration_id=$5
-    read -r -d '' MUT <<'GRAPHQL' || true
-mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $iterationId: String!) {
-  updateProjectV2ItemFieldValue(input: {
-    projectId: $projectId
-    itemId: $itemId
-    fieldId: $fieldId
-    value: { iterationId: $iterationId }
-  }) { projectV2Item { id } }
-}
-GRAPHQL
-    gh api graphql \
-      -f query="$MUT" \
-      -f projectId="$project_id" \
-      -f itemId="$item_id" \
-      -f fieldId="$field_id" \
-      -f iterationId="$iteration_id"
     ;;
   link-parent)
     org=$2; repo=$3; parent=$4; child_id=$5
