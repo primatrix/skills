@@ -44,6 +44,7 @@ fi
 # references /beaver-claim or beaver-claim.{md,sh} is a residual command call.
 hits=$(cd "$repo_root" && \
   git grep -nE "/beaver-claim|beaver-claim\.(md|sh)" -- plugins/beaver/ \
+    ':!plugins/beaver/scripts/tests/test_beaver_claim_removal.sh' \
   || true)
 
 bad=0
