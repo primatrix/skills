@@ -179,7 +179,7 @@ get_option_id() {
       }
     }' -f owner="$ORG" -F number="$PROJECT_NUMBER" -f field="$field" \
     | jq -r --arg opt "$option" \
-      '.data.organization.projectV2.field.options
+      '.data.organization.projectV2.field.options // []
        | map(select(.name == $opt)) | .[0].id // ""'
 }
 
@@ -298,7 +298,7 @@ set_iteration() {
       }
     }' -f owner="$ORG" -F number="$PROJECT_NUMBER" \
     | jq -r --arg t "$iteration_title" \
-      '.data.organization.projectV2.field.configuration.iterations
+      '.data.organization.projectV2.field.configuration.iterations // []
        | map(select(.title == $t or (.title | startswith($t)))) | .[0].id // ""')
   if [ -z "$iteration_id" ]; then
     echo "set_iteration: no Iteration entry matches: $iteration_title" >&2
@@ -345,7 +345,7 @@ latest_iteration_for_repo() {
         }
       }
     }' -f owner="$ORG" -F number="$PROJECT_NUMBER" \
-    --jq '.data.organization.projectV2.field.configuration.iterations')
+    --jq '.data.organization.projectV2.field.configuration.iterations // []')
 
   # Step A: current iterations.
   local current
@@ -389,13 +389,21 @@ _BEAVER_LIB_SANDBOX_NUMBER=""
 _BEAVER_LIB_SANDBOX_NODE_ID=""
 
 _self_test_cleanup() {
-  if [ -n "$_BEAVER_LIB_SANDBOX_NUMBER" ] && [ -n "$_BEAVER_LIB_SANDBOX_NODE_ID" ]; then
+  if [ -z "$_BEAVER_LIB_SANDBOX_NUMBER" ]; then
+    return 0
+  fi
+  if [ -z "$_BEAVER_LIB_SANDBOX_NODE_ID" ]; then
+    _BEAVER_LIB_SANDBOX_NODE_ID=$(_issue_node_id "$_BEAVER_LIB_SANDBOX_NUMBER" 2>/dev/null || echo "")
+  fi
+  if [ -n "$_BEAVER_LIB_SANDBOX_NODE_ID" ]; then
     echo "self-test: cleanup deleting sandbox issue #${_BEAVER_LIB_SANDBOX_NUMBER}..."
     gh api graphql -f query='
       mutation($issueId: ID!) {
         deleteIssue(input: { issueId: $issueId }) { repository { name } }
       }' -f issueId="$_BEAVER_LIB_SANDBOX_NODE_ID" >/dev/null 2>&1 || \
       echo "self-test: WARN: failed to delete issue #${_BEAVER_LIB_SANDBOX_NUMBER}; please remove manually" >&2
+  else
+    echo "self-test: WARN: could not resolve node_id for #${_BEAVER_LIB_SANDBOX_NUMBER}; please remove manually" >&2
   fi
 }
 
@@ -408,10 +416,12 @@ _self_test() {
   issue_url=$(gh issue create --repo "${ORG}/${PROJECT_REPO}" \
     --title "$sandbox_title" --body "$sandbox_body")
   _BEAVER_LIB_SANDBOX_NUMBER=${issue_url##*/}
+  # Install cleanup trap as soon as we know the issue number, so a failure in
+  # _issue_node_id below cannot leak the sandbox issue. The cleanup helper
+  # resolves node_id on demand if it isn't set yet.
+  trap _self_test_cleanup EXIT
   _BEAVER_LIB_SANDBOX_NODE_ID=$(_issue_node_id "$_BEAVER_LIB_SANDBOX_NUMBER")
   echo "self-test: sandbox issue #${_BEAVER_LIB_SANDBOX_NUMBER} created (${issue_url})"
-
-  trap _self_test_cleanup EXIT
 
   local number=$_BEAVER_LIB_SANDBOX_NUMBER
   local actual
