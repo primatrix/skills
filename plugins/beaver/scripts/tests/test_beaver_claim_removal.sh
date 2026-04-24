@@ -16,7 +16,7 @@
 #         `/beaver-claim` next-step hints; their next-step text instead
 #         describes the GitHub-UI manual transition.
 
-set -uo pipefail
+set -euo pipefail
 
 repo_root=$(git rev-parse --show-toplevel)
 beaver_dir="$repo_root/plugins/beaver"
