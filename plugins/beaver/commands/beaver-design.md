@@ -1,154 +1,168 @@
 ---
-allowed-tools: Bash(gh api:*), Bash(gh repo clone:*), Bash(gh pr create:*), Bash(git:*)
+allowed-tools: Bash(gh api:*), Bash(gh repo clone:*), Bash(gh pr create:*), Bash(git:*), Bash(bash:*)
 description: Write and submit a design document for a Beaver size/L issue in status/design-pending. Trigger when the user wants to write a design doc, start design review, or work on a design-pending issue.
 argument-hint: "<issue-number>"
 ---
 
 # /beaver-design — 设计评审
 
-Phase 4 of the Beaver development lifecycle (size/L only).
+Phase 4 of the Beaver development lifecycle. Per RFC-0013 §4 #4, this command targets size/L Tasks only and **never modifies any Project V2 field**. Status stays at `Design Pending` throughout the run; the system migration to `Ready to Develop` happens after the Design Doc PR is merged (out-of-scope for this command).
+
+> 所有交互式 QA 与终端输出统一使用中文（RFC-0013 §命令规约「语言约定」）。
 
 ## Workflow
 
-Argument is required: the issue number.
+Argument is required: the issue number (Project V2 #14 上的 Task Issue 编号)。
 
-### Phase 1: Load & Validate
+### Phase 1: 前置校验（HARD-GATE，任一失败即中止）
 
-1. Fetch Issue and verify:
-   - Has `size/L` label
-   - Has `status/design-pending` label
-   - Fail with clear message if either check fails
+读取 Project V2 #14 上该 Issue 的字段并断言：
 
-1. Extract objective and acceptance criteria from Issue body as design starting point.
+- `Type=Task`
+- `Size=L`
+- `Status=Design Pending`
+- 当前 `gh` 用户 (`gh api user --jq .login`) ∈ Issue 的 assignees 集合
 
-### Phase 2: Context Collection
+任一不满足即立即中止，并打印失败原因。命令本阶段**仅读不写**。
 
-1. **Discovery Triad** (engine §8): D1 recent activity, D2 keyword search, D3 project conventions. Print Discovery Brief.
+### Phase 2: wiki 工作树准备
 
-1. **Iterative QA** (engine §7) across 4 sections, each requiring §7.5 approval:
+```bash
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-design.sh prepare-wiki /tmp/wiki
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-design.sh create-branch /tmp/wiki design/{issue_number}-{slug}
+```
 
-   **Section 1: Context & Scope**
+`<slug>` 由 Issue 标题派生为 kebab-case。
 
-   - Technical environment, system boundaries, objective factual background
-   - Ask one question at a time, prefer multiple choice
+### Phase 3: 设计资料采集
 
-   **Section 2: Design Goals**
+读取 Issue body（objective + 验收标准 + 已知约束）作为意图主源，并在当前 worktree 内根据关键词主动检索相关代码（模块、接口、现有实现），将合并后的内容作为后续 QA 的「已有上下文」展示给用户。
 
-   - Goals (what to achieve)
-   - Non-Goals (explicitly out of scope)
-   - Success Metrics (quantifiable, verifiable)
+### Phase 4: 五维度结构化 QA
 
-   **Section 3: The Design**
+按下列顺序逐维度进行；**禁止跨维度跳问**——任一维度未结束之前不得开启下一维度的问题。每维度在该维度内部可有多轮 Q&A，命令负责判断本维度信息是否足够完整后才进入下一维度。
 
-   - System context diagram
-   - Core architecture
-   - Interfaces & data flow
-   - Key trade-offs and their rationale
-   - Test strategy
-   - Deployment dependencies
+#### 4.1 Context & Scope
 
-   **Section 4: Alternatives Considered**
+- 技术现状、系统边界、客观背景事实
+- 与现有模块的关系
+- 关键约束与依赖
 
-   - Other viable approaches
-   - Why each was rejected
+#### 4.2 Design Goals
 
-1. Each section uses §9.3 completeness checklist before approval.
+- 可量化的目标 (Goals)
+- 明确不做的非目标 (Non-Goals)
+- 成功指标 (Success Metrics, 可验证)
 
-### Phase 3: Spec Review Loop
+#### 4.3 The Design
 
-1. After all 4 sections approved, dispatch spec-document-reviewer subagent with:
-   - The complete design doc content
-   - The original Issue objective and acceptance criteria
-   - Instructions to check completeness, consistency, and feasibility
+- 系统上下文图 / 核心架构
+- 接口与数据流
+- 关键 trade-off 与理由
+- 测试策略
+- 部署 / 依赖
 
-1. If reviewer finds issues: fix and re-dispatch (max 5 iterations).
+#### 4.4 Implementation Plan
 
-1. If reviewer approves: proceed to Phase 4.
+命令基于 4.3 的产物自动草拟「分阶段 SubTask 候选 + 依赖顺序 + 每个 SubTask 的预期交付物」清单，逐项与用户确认；用户可增、删、改、合并、拆细。本维度的最终产物**必须**写入 RFC 模板的 `## 实施计划` 段，作为后续 `/beaver-decompose` 摄取 design doc 的依据。
 
-### Phase 4: Submit to Wiki
+#### 4.5 Alternatives Considered
 
-1. **Prepare wiki repo**:
+命令从已有上下文中识别核心决策点的主要替代方案，逐一询问「为什么不采用」；用户的回答即为「被否决的方案 + 否决理由」。
+
+### Phase 5: RFC 草稿生成与逐段确认
+
+把五维度收集的内容拼装为完整 RFC，遵循 wiki RFC 模板（`docs/rfc/NNNN-<slug>.md`），含：
+
+```markdown
+---
+title: "RFC-NNNN: {title}"
+status: draft
+author: {gh_username}
+date: {YYYY-MM-DD}
+reviewers: []
+---
+
+# RFC-NNNN: {title}
+
+## 概述
+{one-line summary}
+
+## 背景
+{Context & Scope}
+
+## 方案
+{The Design}
+
+### 备选方案
+{Alternatives Considered}
+
+## 影响范围
+{derived from Design Goals + interfaces}
+
+## 实施计划
+{Implementation Plan 维度产物}
+
+## 风险
+{derived from trade-offs}
+
+<!-- provenance
+{fact-to-source mapping，每条事实标注来源}
+-->
+```
+
+逐段展示给用户审批；用户可对任一段落要求修改，命令重新生成该段，直到用户全部满意。
+
+### Phase 6: spec-document-reviewer 评审循环（push 前 HARD-GATE）
+
+调度 `spec-document-reviewer` subagent（位于 `plugins/beaver/skills/spec-document-reviewer/SKILL.md`）对 Phase 5 的草稿做迭代评审，**最多 5 轮**：
+
+1. 调度 reviewer 并传入：完整 RFC 草稿、原 Issue objective、原 Issue 验收标准列表、当前轮次编号、上一轮 BLOCK 反馈（轮次 ≥ 2 时）。
+2. 解析 reviewer 的 verdict：
+   - `PASS` → 退出循环，进入 Phase 7。
+   - `BLOCK` → 把 reviewer 的 `Required fixes` 列表逐条转给用户，收集用户回答并合入草稿；轮次 +1，回到第 1 步。
+3. 如第 5 轮仍返回 `BLOCK`：命令中止，打印最终 BLOCK 反馈并提示用户人工介入；**不允许 push**。
+
+> **门控规则**：reviewer 任一轮 BLOCK 即继续；`PASS` 才允许进入 Phase 7。
+
+### Phase 7: 提交 Draft PR
+
+1. **写入 RFC 文件**到 `/tmp/wiki/docs/rfc/NNNN-<slug>.md`（`NNNN` 由读取 `docs/rfc/index.md` 找到的下一个可用编号决定）。
+1. **追加 index 行**到 `/tmp/wiki/docs/rfc/index.md` 末尾，格式遵循该文件现有约定（典型为 `- [RFC-NNNN: {title}](NNNN-<slug>.md)`）。
+1. **commit + push**：
 
    ```bash
-   bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-design.sh prepare-wiki
+   bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-design.sh commit-push /tmp/wiki docs/rfc/NNNN-{slug}.md "docs(rfc): add RFC-NNNN {title}" design/{issue_number}-{slug}
    ```
 
-1. **Determine RFC number**: Read `docs/rfc/index.md`, find next available NNNN.
+   注意：`commit-push` 内部会将 `docs/rfc/index.md` 一并 stage。
 
-1. **Create branch**:
-
-   ```bash
-   bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-design.sh create-branch ~/Code/wiki design/{issue_number}-{slug}
-   ```
-
-1. **Write design doc** to `docs/rfc/NNNN-{slug}.md` following wiki RFC template:
-
-   ```markdown
-   ---
-   title: "RFC-NNNN: {title}"
-   status: draft
-   author: {gh_username}
-   date: {YYYY-MM-DD}
-   reviewers: []
-   ---
-
-   # RFC-NNNN: {title}
-
-   ## 概述
-   {one-line summary}
-
-   ## 背景
-   {context and scope from Section 1}
-
-   ## 方案
-   {design from Section 3}
-
-   ### 备选方案
-   {alternatives from Section 4}
-
-   ## 影响范围
-   {derived from design goals and interfaces}
-
-   ## 实施计划
-   {high-level phases derived from architecture}
-
-   ## 风险
-   {derived from trade-offs}
-
-   <!-- provenance
-   {fact-to-source mapping per engine §9.2}
-   -->
-   ```
-
-1. **Commit and push**:
-
-   ```bash
-   bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-design.sh commit-push ~/Code/wiki docs/rfc/NNNN-{slug}.md "docs(rfc): add RFC-NNNN {title}" design/{issue_number}-{slug}
-   ```
-
-1. **Create Draft PR**:
+1. **创建 Draft PR**（必须用 `gh pr create --draft`）。命令负责把 PR body 写入唯一命名的临时文件后调用 `--body-file`：
 
    ```bash
    bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-design.sh create-pr primatrix/wiki "RFC-NNNN: {title}" "Design doc for {org}/{issueRepo}#{issue_number}"
    ```
 
-1. **Comment on original Issue**:
+   PR body 至少包含：原 Task Issue 链接（不写 `Closes #N`，因 Task 还要继续开发）、五维度产物索引、reviewer 通过的轮次。
 
-   ```bash
-   bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-design.sh comment-issue {org} {issueRepo} {issue_number} "Design Doc PR: {pr_url}"
-   ```
+### Phase 8: 回写原 Issue
 
-1. **Report**: Print PR URL and next-step hint:
-   > "Design Doc submitted as Draft PR at {pr_url}. Self-review the Draft, then mark it Open for team review. When the PR is merged, the Issue will transition to `status/ready-to-develop`. Then use `/beaver-decompose {issue_number} --design-doc {pr_url}` to split into SubTasks."
+在原 Task Issue 上评论 PR 链接（命令负责把评论正文写入唯一命名的临时文件后调用 `--body-file`，以与 RFC §命令规约「临时文件命名约定」一致）：
 
-### Status Transition
+```bash
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-design.sh comment-issue {org} {issueRepo} {issue_number} "Design Doc PR: {pr_url}"
+```
 
-- Status stays at `status/design-pending` during this command
-- Transition to `status/ready-to-develop` happens when the Design Doc PR is merged (manual or automated)
+### Phase 9: 收尾断言与下一步指引
+
+1. **断言 Project V2 字段未变**（命令侧自检）：重新读取 Issue 在 Project V2 #14 上的 `Status / Type / Size / Iteration` 四个字段，确认与 Phase 1 校验时的快照完全一致；不一致即报错（应为不可能路径）。
+1. 打印 PR URL 与下一步说明：
+   > Design Doc 已作为 Draft PR 提交至 {pr_url}。请自审 Draft → 转 Open → 等待 Reviewer 通过 → 合并；之后用 `/beaver-decompose {issue_number} --design-doc {pr_url}` 拆解 SubTask。Status 仍为 `Design Pending`，由后续系统迁移推进到 `Ready to Develop`（过渡期内由用户在 Project #14 手动切换）。
 
 ## Constraints
 
-- Engine §7.2 HARD-GATE applies throughout Phase 2-3
-- Engine §9.1-9.3 apply to all design doc content
-- Engine §9.2 anti-hallucination: every fact must be traceable
-- Provenance block required at end of design doc
+- **本命令不修改任何 Project V2 字段**（`Status` / `Type` / `Size` / `Iteration` 等）；Phase 9.1 自检断言之。
+- 五维度 QA 严格按 Phase 4 顺序进行，**禁止跨维度跳问**。
+- spec-document-reviewer 评审循环最多 5 轮；任一轮 BLOCK 则继续，PASS 才允许 push；5 轮未通过则中止。
+- 所有写入 `gh` CLI `--body-file` 的临时文件必须使用唯一文件名（`mktemp` 或 `/tmp/beaver-design-body-$$-$RANDOM.md` 等）；该约束由 `beaver-design.sh` 在内部统一处理，命令本身只传 body 字符串。
+- PR 提交走 `gh pr create --draft`；RFC 文件落在 `docs/rfc/NNNN-<slug>.md`，`docs/rfc/index.md` 追加索引行；同时在原 Task Issue 上评论 PR 链接。
