@@ -60,8 +60,8 @@ case "${1:-}" in
     status=$(_get_single_select_value "$number" "Status")
     type_name=$(get_type "$number")
     me=$(gh api user --jq '.login')
-    assignees=$(gh api "repos/primatrix/projects/issues/${number}" \
-      --jq '[.assignees[].login] | join(" ")')
+    assignees=$(gh api "repos/${ORG}/${PROJECT_REPO}/issues/${number}" \
+      --jq '(.assignees // []) | [.[].login] | join(" ")')
 
     if [ "$size" != "S" ]; then
       echo "FAIL 本命令仅处理 Size=S (当前 Size='${size:-<empty>}')" >&2
