@@ -24,16 +24,18 @@ If they differ, abort with: `只能对自己发起的 PR 运行 /beaver-fix`.
 
 ```bash
 PV2_SNAPSHOT=$(bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-fix.sh snapshot-projectv2-fields <pr-number>)
-bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-fix.sh snapshot-files-before
+export BEAVER_FIX_FILES_SNAPSHOT=$(bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-fix.sh snapshot-files-before)
 ```
 
 `snapshot-projectv2-fields` writes a JSON snapshot of every Project V2
 `fieldValues` node attached to this PR's project items. We re-snapshot at
 Phase 6 and assert byte-equality to prove **Project V2 字段未被修改**.
 
-`snapshot-files-before` records `git diff --name-only HEAD` so the rollback
-path can be **scoped to files this command actually touches** — never the
-whole working tree.
+`snapshot-files-before` records the **baseline** of files already dirty vs
+HEAD before this command runs. Rollback later computes `current-dirty MINUS
+baseline` and restores only that delta — pre-existing user work is never
+clobbered. **Must `export`** so subsequent `bash beaver-fix.sh` invocations
+(separate processes, different `$$`) see the same baseline path.
 
 ### Phase 2: List Open Review Threads + PR-level Issue Comments (AC2)
 

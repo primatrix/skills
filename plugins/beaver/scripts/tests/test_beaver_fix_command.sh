@@ -407,6 +407,67 @@ if [ -f "$plugin_json" ]; then
   fi
 fi
 
+# ---------- AC4.sh.rollback_delta: rollback restores ONLY files this script touched ----------
+# Fix for PR #64 review: snapshot-files-before must record a baseline of
+# pre-existing dirty files; rollback() must compute the delta
+# (currently-dirty MINUS baseline) and restore only those — never restore
+# files that were dirty before the script ran (would clobber user work).
+if [ -f "$fix_sh" ]; then
+  # Extract the body of the rollback() function and check it re-enumerates
+  # the currently-dirty file set at rollback time (not just the snapshot).
+  rollback_body=$(awk '/^rollback\(\)[[:space:]]*\{/{f=1} f{print} /^\}/{if(f){exit}}' "$fix_sh")
+  if echo "$rollback_body" | grep -qE 'git diff --name-only HEAD'; then
+    report_pass "AC4.sh.rollback_delta: rollback() re-enumerates dirty files at rollback time"
+  else
+    report_fail "AC4.sh.rollback_delta: rollback() body must call 'git diff --name-only HEAD' to enumerate the current dirty set (not just trust the pre-edit snapshot)"
+  fi
+  # rollback() must NOT restore the baseline file list verbatim — that's the
+  # inverted-semantics bug. Look for explicit subtraction (comm/grep -v) of
+  # the baseline against the current dirty set within rollback() body.
+  if echo "$rollback_body" | grep -qE 'comm[[:space:]]+-23|grep[[:space:]]+-vxF?f|grep[[:space:]]+-Fxv?f'; then
+    report_pass "AC4.sh.rollback_subtract: rollback() subtracts baseline from current dirty set"
+  else
+    report_fail "AC4.sh.rollback_subtract: rollback() must subtract baseline from current-dirty (use 'comm -23' or 'grep -vxFf') so unrelated user work is preserved"
+  fi
+fi
+
+# ---------- AC4.md.snapshot_export: snapshot path must propagate across invocations ----------
+# Fix for PR #64 review: $$ in BEAVER_FIX_FILES_SNAPSHOT default differs across
+# separate `bash beaver-fix.sh` invocations. The .md workflow MUST export the
+# snapshot path so the child process running rollback sees the same file.
+if [ -f "$fix_md" ]; then
+  # Must capture snapshot-files-before stdout into BEAVER_FIX_FILES_SNAPSHOT
+  # AND export it (or use `export VAR=$(...)` in one statement).
+  if grep -qE 'export[[:space:]]+BEAVER_FIX_FILES_SNAPSHOT' "$fix_md"; then
+    report_pass "AC4.md.snapshot_export: beaver-fix.md exports BEAVER_FIX_FILES_SNAPSHOT for child invocations"
+  else
+    report_fail "AC4.md.snapshot_export: beaver-fix.md must 'export BEAVER_FIX_FILES_SNAPSHOT=\$(... snapshot-files-before)' so rollback in later 'bash beaver-fix.sh' calls finds it"
+  fi
+fi
+
+# ---------- MARKETPLACE: marketplace.json mirrors plugin.json ----------
+# Fix for PR #64 review: prior bumps (e.g. b52c392) updated both files
+# atomically. Drift means the marketplace registry advertises stale state.
+marketplace_json="$repo_root/.claude-plugin/marketplace.json"
+if [ -f "$marketplace_json" ] && [ -f "$plugin_json" ]; then
+  pj_ver=$(grep -E '"version"[[:space:]]*:' "$plugin_json" | head -n1 | sed -E 's/.*"version"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/')
+  # Extract the beaver block's version from marketplace.json (the value on the
+  # next "version" line after the "name": "beaver" line).
+  mp_ver=$(awk '/"name"[[:space:]]*:[[:space:]]*"beaver"[[:space:]]*,?[[:space:]]*$/{found=1} found && /"version"[[:space:]]*:/{print; exit}' "$marketplace_json" | sed -E 's/.*"version"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/')
+  if [ -n "$pj_ver" ] && [ "$pj_ver" = "$mp_ver" ]; then
+    report_pass "MARKETPLACE.version: marketplace.json beaver version matches plugin.json (${pj_ver})"
+  else
+    report_fail "MARKETPLACE.version: marketplace.json beaver version='${mp_ver}' must match plugin.json version='${pj_ver}' (per b52c392 atomic-bump convention)"
+  fi
+  # Description must mention beaver-fix in marketplace.json beaver block.
+  mp_desc=$(awk '/"name"[[:space:]]*:[[:space:]]*"beaver"[[:space:]]*,?[[:space:]]*$/{found=1} found && /"description"[[:space:]]*:/{print; exit}' "$marketplace_json")
+  if echo "$mp_desc" | grep -qF 'beaver-fix'; then
+    report_pass "MARKETPLACE.desc: marketplace.json beaver description mentions beaver-fix"
+  else
+    report_fail "MARKETPLACE.desc: marketplace.json beaver block description must mention 'beaver-fix' (mirrors plugin.json)"
+  fi
+fi
+
 # ---------- Live stub (BEAVER_LIVE=1) ----------
 # Author-check is only meaningfully testable against a real PR. Provide a stub
 # that the orchestrator can wire up later.

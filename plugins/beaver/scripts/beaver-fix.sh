@@ -6,35 +6,45 @@ set -euo pipefail
 
 tmp_files=()
 
-# Default location for the file-list snapshot used by scoped rollback.
-# beaver-fix.sh snapshot-files-before <path> writes git diff --name-only HEAD here;
-# rollback() reads it and restores ONLY those files (never the whole tree).
+# Default location for the file-list BASELINE used by scoped rollback.
+# `snapshot-files-before` writes the set of files that were ALREADY dirty vs
+# HEAD before the script ran. At rollback time we compute the current dirty
+# set and restore only (current MINUS baseline) — i.e. files this command
+# actually touched. Pre-existing user work is never restored.
 : "${BEAVER_FIX_FILES_SNAPSHOT:=/tmp/beaver-fix-files-$$.list}"
 
 _rollback_fired=0
 rollback() {
-  # Guard: fire only once even if both ERR and EXIT/INT trigger.
+  # Guard: fire only once even if both ERR and INT trigger.
   if [ "$_rollback_fired" -eq 1 ]; then
     return 0
   fi
   _rollback_fired=1
-  for f in "${tmp_files[@]:-}"; do
+  for f in ${tmp_files[@]+"${tmp_files[@]}"}; do
     [ -n "${f:-}" ] && [ -f "$f" ] && rm -f "$f"
   done
   if git rev-parse --git-dir >/dev/null 2>&1; then
-    # Scoped rollback: ONLY restore files that this command touched.
-    # We rely on a pre-edit snapshot at $BEAVER_FIX_FILES_SNAPSHOT (created by
-    # the `snapshot-files-before` subcommand). If absent, we do nothing —
-    # we MUST NOT fall back to `git checkout -- .` because that would clobber
-    # unrelated user work in the worktree.
+    # Scoped rollback: restore ONLY files this command touched.
+    # Strategy: enumerate currently-dirty files, subtract the pre-edit baseline,
+    # restore the difference. Files dirty BEFORE the script ran are preserved.
+    # If the baseline is missing (e.g. snapshot-files-before was never invoked,
+    # or BEAVER_FIX_FILES_SNAPSHOT wasn't propagated) we do nothing — we MUST
+    # NOT fall back to `git checkout -- .` because that would clobber unrelated
+    # user work in the worktree.
     if [ -f "$BEAVER_FIX_FILES_SNAPSHOT" ]; then
+      _now=$(mktemp "/tmp/beaver-fix-rollback-now-$$-$RANDOM.XXXXXX")
+      git diff --name-only HEAD > "$_now" 2>/dev/null || true
+      # comm -23 A B = lines in A not in B (both must be sorted).
+      _to_restore=$(mktemp "/tmp/beaver-fix-rollback-delta-$$-$RANDOM.XXXXXX")
+      comm -23 <(sort -u "$_now") <(sort -u "$BEAVER_FIX_FILES_SNAPSHOT") > "$_to_restore"
       while IFS= read -r f; do
         [ -z "$f" ] && continue
         git checkout HEAD -- "$f" 2>/dev/null || true
-      done < "$BEAVER_FIX_FILES_SNAPSHOT"
+      done < "$_to_restore"
+      rm -f "$_now" "$_to_restore"
     fi
   fi
-  echo "rollback: 回滚已修改文件 (scoped to ${BEAVER_FIX_FILES_SNAPSHOT})" >&2
+  echo "rollback: 回滚已修改文件 (delta vs baseline ${BEAVER_FIX_FILES_SNAPSHOT})" >&2
 }
 trap 'rollback' INT ERR
 
@@ -51,7 +61,7 @@ Subcommands:
   verify-author <pr-number>                    Abort unless current user authored the PR
   list-open-comments <pr-number>               List unresolved review threads + PR-level issue comments (graphql)
   resolve-thread <thread-id>                   Call resolveReviewThread mutation
-  snapshot-files-before [snapshot-path]        Snapshot `git diff --name-only HEAD` for scoped rollback
+  snapshot-files-before [snapshot-path]        Snapshot pre-edit dirty file BASELINE (rollback restores current minus baseline)
   snapshot-projectv2-fields <pr-number>        Snapshot Project V2 field values for the PR
   verify-projectv2-fields <pr-number> <snapshot-file>
                                                Re-snapshot, diff vs <snapshot-file>, exit 1 on mismatch
@@ -114,7 +124,9 @@ GQL
     rm -f "$mf"
     ;;
   snapshot-files-before)
-    # Write the list of files currently dirty vs HEAD; rollback() will scope to these.
+    # Record the BASELINE: files already dirty vs HEAD before the script ran.
+    # rollback() will compute (current-dirty MINUS this baseline) and restore
+    # only the difference, preserving any unrelated user work.
     out=${2:-$BEAVER_FIX_FILES_SNAPSHOT}
     git diff --name-only HEAD > "$out"
     echo "$out"
