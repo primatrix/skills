@@ -72,7 +72,7 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-design.sh create-branch /tmp/wiki desi
 
 ### Phase 5: RFC 草稿生成与逐段确认
 
-把五维度收集的内容拼装为完整 RFC，遵循 wiki RFC 模板（`docs/rfc/NNNN-<slug>.md`），含：
+把五维度收集的内容拼装为完整 RFC，遵循 wiki RFC 模板（`docs/projects/{project}/rfc/NNNN-<slug>.md`），含：
 
 ```markdown
 ---
@@ -127,15 +127,15 @@ reviewers: []
 
 ### Phase 7: 提交 Draft PR
 
-1. **写入 RFC 文件**到 `/tmp/wiki/docs/rfc/NNNN-<slug>.md`（`NNNN` 由读取 `docs/rfc/index.md` 找到的下一个可用编号决定）。
-1. **追加 index 行**到 `/tmp/wiki/docs/rfc/index.md` 末尾，格式遵循该文件现有约定（典型为 `- [RFC-NNNN: {title}](NNNN-<slug>.md)`）。
+1. **写入 RFC 文件**到 `/tmp/wiki/docs/projects/{project}/rfc/NNNN-<slug>.md`（`NNNN` 由读取 `docs/projects/{project}/rfc/index.md` 找到的下一个可用编号决定）。
+1. **追加 index 行**到 `/tmp/wiki/docs/projects/{project}/rfc/index.md` 末尾，格式遵循该文件现有约定（典型为 `- [RFC-NNNN: {title}](NNNN-<slug>.md)`）。
 1. **commit + push**：
 
    ```bash
-   bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-design.sh commit-push /tmp/wiki docs/rfc/NNNN-{slug}.md "docs(rfc): add RFC-NNNN {title}" design/{issue_number}-{slug}
+   bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-design.sh commit-push /tmp/wiki docs/projects/{project}/rfc/NNNN-{slug}.md "docs(rfc): add RFC-NNNN {title}" design/{issue_number}-{slug}
    ```
 
-   注意：`commit-push` 内部会将 `docs/rfc/index.md` 一并 stage。
+   注意：`commit-push` 内部会将 `docs/projects/{project}/rfc/index.md` 一并 stage。
 
 1. **创建 Draft PR**（必须用 `gh pr create --draft`）。命令负责把 PR body 写入唯一命名的临时文件后调用 `--body-file`：
 
@@ -165,4 +165,4 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-design.sh comment-issue {org} {issueRe
 - 五维度 QA 严格按 Phase 4 顺序进行，**禁止跨维度跳问**。
 - spec-document-reviewer 评审循环最多 5 轮；任一轮 BLOCK 则继续，PASS 才允许 push；5 轮未通过则中止。
 - 所有写入 `gh` CLI `--body-file` 的临时文件必须使用唯一文件名（`mktemp` 或 `/tmp/beaver-design-body-$$-$RANDOM.md` 等）；该约束由 `beaver-design.sh` 在内部统一处理，命令本身只传 body 字符串。
-- PR 提交走 `gh pr create --draft`；RFC 文件落在 `docs/rfc/NNNN-<slug>.md`，`docs/rfc/index.md` 追加索引行；同时在原 Task Issue 上评论 PR 链接。
+- PR 提交走 `gh pr create --draft`；RFC 文件落在 `docs/projects/{project}/rfc/NNNN-<slug>.md`，`docs/projects/{project}/rfc/index.md` 追加索引行；同时在原 Task Issue 上评论 PR 链接。
