@@ -29,7 +29,7 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-pr.sh ctx
 bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-pr.sh infer-issue
 ```
 
-PR body 必须包含 `Closes #<issue_number>` 一行，确保 PR merge 时 Issue 自动关闭。
+PR body 必须包含 `Closes {org}/{issueRepo}#<issue_number>` 一行（**完整 owner/repo 形式**，因为 Beaver Issue 通常位于 `primatrix/projects`，与代码 PR 跨仓库；GitHub 的 `Closes #N` 简写仅在同仓库内生效），确保 PR merge 时 Issue 自动关闭。
 
 ### Phase 3: Branch + Commit + Push
 
@@ -47,7 +47,7 @@ PR body 必须包含 `Closes #<issue_number>` 一行，确保 PR merge 时 Issue
    ```text
    {type}({scope}): {description}
 
-   Closes #{issue_number}
+   Closes {org}/{issueRepo}#{issue_number}
    ```
 
    然后：
@@ -101,7 +101,7 @@ fi
 
 - [ ] {verification steps}
 
-Closes #{issue_number}
+Closes {org}/{issueRepo}#{issue_number}
 ```
 
 ```bash
@@ -156,7 +156,7 @@ Draft PR created. What would you like to do?
 ## Constraints
 
 - PR 默认创建为 **Draft**（用户 self-review 后 mark Open）
-- `Closes #{issue_number}` 写入 PR body，merge 时 Issue 自动关闭
+- `Closes {org}/{issueRepo}#{issue_number}` 写入 PR body（**完整 owner/repo 形式**，跨仓库自动关闭必需），merge 时 Issue 自动关闭
 - G004 / G006 都是 warning-only（不阻断 PR 创建，不在 Issue 上贴 `beaver/*` 标签）
 - 除 G006 触发的 Type/Size 自动补齐外，命令不修改任何 Project V2 字段
 - 所有 `--body-file` 传给 `gh` CLI 的临时文件必须使用唯一文件名（`mktemp` 或 `/tmp/beaver-pr-body-$$-$RANDOM.md` 等）；该约束由 `beaver-pr.sh` 在内部统一处理

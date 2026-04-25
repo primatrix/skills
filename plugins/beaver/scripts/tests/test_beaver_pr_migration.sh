@@ -43,10 +43,20 @@ report_pass() { echo "PASS: $*"; }
 
 # ---------- AC1.closes ----------
 if [ -f "$pr_md" ]; then
-  if grep -qE 'Closes #' "$pr_md"; then
-    report_pass "AC1.closes.body: PR body contains 'Closes #<n>'"
+  # Require the full cross-repo form `Closes {org}/{issueRepo}#<n>` because
+  # Beaver Issues live in `primatrix/projects` while code PRs are usually in
+  # other repos; GitHub's bare `Closes #N` only auto-closes same-repo issues.
+  if grep -qE 'Closes \{org\}/\{issueRepo\}#' "$pr_md"; then
+    report_pass "AC1.closes.body: PR body contains 'Closes {org}/{issueRepo}#<n>' (cross-repo form)"
   else
-    report_fail "AC1.closes.body: beaver-pr.md must say 'Closes #<n>' is in PR body"
+    report_fail "AC1.closes.body: beaver-pr.md must say 'Closes {org}/{issueRepo}#<n>' in PR body (cross-repo auto-close requires full owner/repo form)"
+  fi
+  # Guard against regression to the bare same-repo form on a template line.
+  if grep -nE '^[^#>]*Closes #\{issue_number\}' "$pr_md" >/dev/null; then
+    report_fail "AC1.closes.no-bare: beaver-pr.md must not use bare 'Closes #{issue_number}' (cross-repo close will silently fail)"
+    grep -nE '^[^#>]*Closes #\{issue_number\}' "$pr_md" >&2
+  else
+    report_pass "AC1.closes.no-bare: beaver-pr.md uses no bare 'Closes #{issue_number}' template"
   fi
   # Branch prefix inference + commit fallback + ask-user fallback all mentioned.
   if grep -qE '分支前缀|branch.*prefix|branch.*name' "$pr_md"; then
