@@ -27,15 +27,17 @@ Phase 1 of the Beaver development lifecycle. All lifecycle metadata is written t
 1. **Discovery Triad**: Execute engine §8 (D1 recent activity, D2 keyword search, D3 project conventions). Print the Discovery Brief before the first question.
 
 1. **Iterative QA**: Follow engine §7 strictly.
-   - **Size=S path** (3 questions minimum):
+   - **Size=S path** (4 questions minimum):
      1. Title (one-line, imperative)
      2. Objective (one user-facing outcome sentence)
      3. Acceptance criteria (≥ 2 verifiable items)
-   - **Size=L path** (4 sectional approvals):
+     4. Subject repo (see §Subject Repo below)
+   - **Size=L path** (5 sectional approvals):
      1. Type + parent Issue (Task/SubTask hierarchy via native Issue Type)
      2. Title
      3. Objective + scope
      4. Acceptance criteria + stakeholders
+     5. Subject repo (see §Subject Repo below)
    - The system auto-suggests Size (S/L) with reasoning after collecting the objective. The user confirms or overrides.
 
 1. **Preview + approval gate**: Engine §7.2 HARD-GATE. Present the full Issue preview with the §9.4 checklist. Wait for explicit approval per §7.5.
@@ -120,10 +122,10 @@ Phase 1 of the Beaver development lifecycle. All lifecycle metadata is written t
       fi
 
       # Iteration is MANDATORY for Bug — resolved by G011.
-      ITER_TITLE=$(latest_iteration_for_repo {issueRepo})
+      ITER_TITLE=$(latest_iteration_for_repo {subjectRepo})
       if [ -z "$ITER_TITLE" ]; then
-        echo "G011 fail: no current or future Iteration on Project #14 for {issueRepo}." >&2
-        echo "Run /beaver-tracker {issueRepo} to create this month's Iteration entry, then retry." >&2
+        echo "G011 fail: no current or future Iteration on Project #14 for {subjectRepo}." >&2
+        echo "Run /beaver-tracker {subjectRepo} to create this month's Iteration entry, then retry." >&2
         exit 1
       fi
       set_iteration "$NEW_NUM" "$ITER_TITLE"
@@ -139,13 +141,13 @@ Phase 1 of the Beaver development lifecycle. All lifecycle metadata is written t
       # Extract YYYY-MM prefix from ITER_TITLE for tracker lookup.
       ITER_YYYYMM=$(echo "$ITER_TITLE" | grep -oE '^[0-9]{4}-[0-9]{2}')
       TRACKER_RESULT=$(bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-tracker.sh \
-        find-tracker {issueRepo} "$ITER_YYYYMM")
+        find-tracker {subjectRepo} "$ITER_YYYYMM")
       if [ "$(echo "$TRACKER_RESULT" | jq -r '.count')" -gt 0 ]; then
         TRACKER_NUM=$(echo "$TRACKER_RESULT" | jq -r '.items[0].number')
         bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-tracker.sh \
           attach-sub "$TRACKER_NUM" "$NEW_ID"
       else
-        echo "No tracker found for {issueRepo} $ITER_YYYYMM — run /beaver-tracker to create one." >&2
+        echo "No tracker found for {subjectRepo} $ITER_YYYYMM — run /beaver-tracker to create one." >&2
       fi
       ```
 
@@ -186,13 +188,13 @@ Phase 1 of the Beaver development lifecycle. All lifecycle metadata is written t
    # Only for Task type, and only if target is set (user didn't skip).
    if [ "{Task|SubTask}" = "Task" ] && [ -n "$target" ]; then
      TRACKER_RESULT=$(bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-tracker.sh \
-       find-tracker {issueRepo} "$target")
+       find-tracker {subjectRepo} "$target")
      if [ "$(echo "$TRACKER_RESULT" | jq -r '.count')" -gt 0 ]; then
        TRACKER_NUM=$(echo "$TRACKER_RESULT" | jq -r '.items[0].number')
        bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-tracker.sh \
          attach-sub "$TRACKER_NUM" "$NEW_ID"
      else
-       echo "No tracker found for {issueRepo} $target — run /beaver-tracker to create one." >&2
+       echo "No tracker found for {subjectRepo} $target — run /beaver-tracker to create one." >&2
      fi
    fi
    ```
@@ -202,6 +204,17 @@ Phase 1 of the Beaver development lifecycle. All lifecycle metadata is written t
 1. **Initial Status summary**: All Tasks / SubTasks land at `Status = Triage`. Bug routes per priority (P0 → In Progress, P1/P2 → Ready to Claim). The native Issue Type (`Task` / `SubTask` / `Bug`) plus Status / Size (Task/SubTask only) / Priority (Bug only) / Iteration (Bug always; Task/SubTask optional) are now written. No `status/* / type/* / size/*` repository labels are touched.
 
 1. **Report**: Print the created Issue URL, native Issue Type, Status, Size (if applicable), Priority (if Bug), Iteration (if assigned, else `unassigned`), and the next-step hint: "`/beaver-claim` 已删除（见 RFC-0013 §3）：对于 Ready to Claim 的 Issue，请在 GitHub UI assign 自己后手动将 Status 切到对应值；Triage 状态则等待 triage。"
+
+## Subject Repo
+
+During QA, ask which **subject repo** (the codebase the work targets) this Issue belongs to. Present the repos from `beaver-config.repositories` as multiple-choice options. The answer is stored as `{subjectRepo}` and used for:
+
+- `latest_iteration_for_repo {subjectRepo}` (Bug G011 Iteration resolution)
+- `find-tracker {subjectRepo} <YYYY-MM>` (tracker linkage in steps 9e and 7)
+
+This is distinct from `{issueRepo}` (the repo hosting the Issue, always `primatrix/projects`). Trackers are labeled by subject repo (e.g., `tracker/beaver`, `tracker/skills`), not by issue-host repo.
+
+For SubTasks, infer `{subjectRepo}` from the parent Task's tracker label if available; otherwise ask.
 
 ## Bug Submode
 
@@ -221,8 +234,8 @@ Activated when `--type bug` (explicit) or Type inference selects `bug`. Override
   - Status routes to `Ready to Claim`.
   - No `@CODEOWNERS` mention — the Bug body omits the `@CODEOWNERS` line.
 - **Iteration mandatory (G011)**:
-  - The Bug path calls `beaver-lib.sh::latest_iteration_for_repo <issueRepo>` to resolve the target Iteration title (G011 algorithm: current iteration if any, else the next future iteration).
-  - On `null` / error, **G011** fails: the command MUST abort and print `Run /beaver-tracker <issueRepo> to create this month's Iteration entry, then retry.` Do not partially write the Bug — resolve the Iteration first, then re-run.
+  - The Bug path calls `beaver-lib.sh::latest_iteration_for_repo <subjectRepo>` to resolve the target Iteration title (G011 algorithm: current iteration if any, else the next future iteration).
+  - On `null` / error, **G011** fails: the command MUST abort and print `Run /beaver-tracker <subjectRepo> to create this month's Iteration entry, then retry.` Do not partially write the Bug — resolve the Iteration first, then re-run.
 
 ## Issue Body Templates
 
