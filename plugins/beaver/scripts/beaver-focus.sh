@@ -103,28 +103,28 @@ _project_items_to_records() {
       | map(select(.content != null
                    and .content.state == "OPEN"
                    and (.content.labels.nodes | map(.name) | index("Control-By-Beaver"))))
-      | map({
-          number: .content.number,
-          title: .content.title,
-          url: .content.url,
-          repo: .content.repository.name,
-          repoFull: .content.repository.nameWithOwner,
-          labels: [.content.labels.nodes[].name],
-          assignees: [.content.assignees.nodes[].login],
-          status: (.status.name // ""),
-          priority: (.priority.name // ""),
-          type: (.content.issueType.name // ""),
-          iteration: (if .iter then
-            {title: .iter.title, startDate: .iter.startDate, duration: .iter.duration}
-          else null end),
-          createdAt: .content.createdAt,
-          updatedAt: .content.updatedAt,
-          lastCommentAt: ((.content.comments.nodes // []) | (.[-1].createdAt // null)),
-          lastActivityAt: ([
-            .content.updatedAt,
-            ((.content.comments.nodes // []) | (.[-1].createdAt // null))
-          ] | map(select(. != null)) | max)
-        })'
+      | map(
+          ((.content.comments.nodes // []) | .[-1].createdAt // null) as $lastComment
+          | {
+              number: .content.number,
+              title: .content.title,
+              url: .content.url,
+              repo: .content.repository.name,
+              repoFull: .content.repository.nameWithOwner,
+              labels: [.content.labels.nodes[].name],
+              assignees: [.content.assignees.nodes[].login],
+              status: (.status.name // ""),
+              priority: (.priority.name // ""),
+              type: (.content.issueType.name // ""),
+              iteration: (if .iter then
+                {title: .iter.title, startDate: .iter.startDate, duration: .iter.duration}
+              else null end),
+              createdAt: .content.createdAt,
+              updatedAt: .content.updatedAt,
+              lastCommentAt: $lastComment,
+              lastActivityAt: ([.content.updatedAt, $lastComment] | map(select(. != null)) | max)
+            }
+        )'
 }
 
 case "${1:-}" in
