@@ -27,7 +27,7 @@ Subcommands:
   create-branch <wiki-dir> <branch>
         cd <wiki-dir> && git checkout -b <branch>
   commit-push <wiki-dir> <file> <message> <branch>
-        cd <wiki-dir>; git add <file> docs/rfc/index.md; git commit -m <message>;
+        cd <wiki-dir>; git add <file> docs/projects/{project}/rfc/index.md; git commit -m <message>;
         git push -u origin <branch>
   create-pr <repo> <title> <body>
         gh pr create --repo <repo> --draft --title <title> --body-file <unique-tempfile>
@@ -78,8 +78,8 @@ case "${1:-}" in
     dir=$2; file=$3; message=$4; branch=$5
     cd "$dir"
     git add "$file"
-    if [ -f "docs/rfc/index.md" ]; then
-      git add docs/rfc/index.md
+    if [ -f "docs/projects/{project}/rfc/index.md" ]; then
+      git add docs/projects/{project}/rfc/index.md
     fi
     git commit -m "$message"
     git push -u origin "$branch"
