@@ -63,7 +63,9 @@ All subsequent editing/commits happen inside the worktree.
 ### Phase 3: Implementation Plan + User Confirmation
 
 Generate a local implementation plan in markdown and print it to the
-terminal. For each work item include:
+terminal. **方案 review 时用中文输出**（计划正文、说明、与用户确认的
+对话均使用中文；文件路径、命令、代码片段保持原样）。For each work item
+include:
 
 - exact file paths to be created/modified
 - the failing test snippet to write first
