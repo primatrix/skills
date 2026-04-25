@@ -74,7 +74,7 @@ query($owner:String!, $name:String!, $pr:Int!) {
   }
 }
 GQL
-    gh api graphql --body-file "$qf" \
+    gh api graphql -F query=@"$qf" \
       -F owner="$owner" -F name="$name" -F pr="$pr" \
       --jq '{
         reviewThreads: [.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved==false)],
@@ -90,7 +90,7 @@ mutation($tid:ID!) {
   resolveReviewThread(input:{threadId:$tid}) { thread { id isResolved } }
 }
 GQL
-    gh api graphql --body-file "$mf" -F tid="$tid"
+    gh api graphql -F query=@"$mf" -F tid="$tid"
     rm -f "$mf"
     ;;
   commit-and-push)
