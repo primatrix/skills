@@ -103,7 +103,7 @@ case "${1:-}" in
       query($owner: String!, $number: Int!) {
         organization(login: $owner) {
           projectV2(number: $number) {
-            items(first: 200) {
+            items(first: 100) {
               nodes {
                 content {
                   ... on Issue {
