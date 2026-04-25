@@ -134,8 +134,8 @@ case "${1:-}" in
     args=()
     for login in "$@"; do args+=(-f "assignees[]=${login}"); done
     if [ "${#args[@]}" -eq 0 ]; then
-      gh api "repos/${org}/${repo}/issues/${num}" --method PATCH \
-        --raw-field 'assignees=[]' >/dev/null
+      echo '{"assignees":[]}' | gh api "repos/${org}/${repo}/issues/${num}" --method PATCH \
+        --input - >/dev/null
     else
       gh api "repos/${org}/${repo}/issues/${num}" --method PATCH \
         "${args[@]}" >/dev/null
