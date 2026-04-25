@@ -51,46 +51,74 @@ EOF
 #
 # `comments(last: 1)` gives us the most recent comment's createdAt — combined
 # with `updatedAt`, `lastActivityAt` is computed in jq downstream (max of both).
+#
+# Uses cursor-based pagination (first:100 per page, max enforced by GitHub API)
+# and merges all pages into a single JSON array on stdout.
 _query_project_items() {
-  gh api -H "GraphQL-Features: issue_types" graphql -f query='
-    query($owner: String!, $number: Int!) {
-      organization(login: $owner) {
-        projectV2(number: $number) {
-          items(first: 200) {
-            nodes {
-              content {
-                ... on Issue {
-                  number
-                  title
-                  url
-                  state
-                  createdAt
-                  updatedAt
-                  issueType { name }
-                  repository { name nameWithOwner }
-                  labels(first: 30) { nodes { name } }
-                  assignees(first: 10) { nodes { login } }
-                  comments(last: 1) { nodes { createdAt } }
+  local cursor_arg=""
+  local all_nodes="[]"
+
+  while true; do
+    local page
+    page=$(gh api -H "GraphQL-Features: issue_types" graphql -f query='
+      query($owner: String!, $number: Int!, $cursor: String) {
+        organization(login: $owner) {
+          projectV2(number: $number) {
+            items(first: 100, after: $cursor) {
+              pageInfo { hasNextPage endCursor }
+              nodes {
+                content {
+                  ... on Issue {
+                    number
+                    title
+                    url
+                    state
+                    createdAt
+                    updatedAt
+                    issueType { name }
+                    repository { name nameWithOwner }
+                    labels(first: 30) { nodes { name } }
+                    assignees(first: 10) { nodes { login } }
+                    comments(last: 1) { nodes { createdAt } }
+                  }
                 }
-              }
-              status: fieldValueByName(name: "Status") {
-                ... on ProjectV2ItemFieldSingleSelectValue { name }
-              }
-              priority: fieldValueByName(name: "Priority") {
-                ... on ProjectV2ItemFieldSingleSelectValue { name }
-              }
-              iter: fieldValueByName(name: "Iteration") {
-                ... on ProjectV2ItemFieldIterationValue {
-                  title
-                  startDate
-                  duration
+                status: fieldValueByName(name: "Status") {
+                  ... on ProjectV2ItemFieldSingleSelectValue { name }
+                }
+                priority: fieldValueByName(name: "Priority") {
+                  ... on ProjectV2ItemFieldSingleSelectValue { name }
+                }
+                iter: fieldValueByName(name: "Iteration") {
+                  ... on ProjectV2ItemFieldIterationValue {
+                    title
+                    startDate
+                    duration
+                  }
                 }
               }
             }
           }
         }
-      }
-    }' -f owner="$ORG" -F number="$PROJECT_NUMBER"
+      }' -f owner="$ORG" -F number="$PROJECT_NUMBER" ${cursor_arg})
+
+    # Append this page's nodes to the accumulator
+    all_nodes=$(printf '%s\n%s' "$all_nodes" "$page" \
+      | jq -s '.[0] + (.[1].data.organization.projectV2.items.nodes // [])')
+
+    # Check if there is a next page
+    local has_next end_cursor
+    has_next=$(echo "$page" | jq -r '.data.organization.projectV2.items.pageInfo.hasNextPage')
+    end_cursor=$(echo "$page" | jq -r '.data.organization.projectV2.items.pageInfo.endCursor')
+
+    if [[ "$has_next" != "true" || "$end_cursor" == "null" ]]; then
+      break
+    fi
+    cursor_arg="-f cursor=$end_cursor"
+  done
+
+  # Emit the merged result in the same shape as the original single-page query
+  jq -n --argjson nodes "$all_nodes" \
+    '{data:{organization:{projectV2:{items:{nodes:$nodes}}}}}'
 }
 
 # Project items projected into a uniform record shape (used by multiple
