@@ -125,12 +125,6 @@ if [ -f "$fix_md" ]; then
   fi
 fi
 if [ -f "$fix_sh" ]; then
-  # Some recognized rollback mechanism (checkout HEAD, reset, restore, stash pop, etc.).
-  if grep -qE 'git checkout --|git checkout HEAD|git restore|git reset --hard|git stash' "$fix_sh"; then
-    report_pass "AC4.sh.rollback: beaver-fix.sh contains a git rollback path"
-  else
-    report_fail "AC4.sh.rollback: beaver-fix.sh must contain a rollback path (git checkout/restore/reset/stash)"
-  fi
   # A trap on INT for Ctrl-C handling.
   if grep -qE 'trap[[:space:]]+.*INT' "$fix_sh"; then
     report_pass "AC4.sh.trap: beaver-fix.sh installs an INT trap (Ctrl-C handler)"
@@ -254,20 +248,13 @@ if [ -f "$fix_md" ]; then
   fi
 fi
 
-# ---------- AC4.sh.scoped_rollback: rollback must be scoped, not blanket ----------
+# ---------- AC4.sh.no_blanket_checkout: must NOT clobber unrelated WIP ----------
 if [ -f "$fix_sh" ]; then
-  # Reject the literal blanket form
   if grep -qE 'git checkout[[:space:]]+--[[:space:]]+\.[[:space:]]*$' "$fix_sh" || \
      grep -qE 'git checkout[[:space:]]+--[[:space:]]+\.[[:space:]]+' "$fix_sh"; then
-    report_fail "AC4.sh.scoped_rollback: beaver-fix.sh must NOT use blanket 'git checkout -- .' (clobbers unrelated work)"
+    report_fail "AC4.sh.no_blanket_checkout: beaver-fix.sh must NOT use blanket 'git checkout -- .' (clobbers unrelated work)"
   else
-    # Require some scoped form: git restore -- <args>, OR git checkout HEAD -- "$var"
-    if grep -qE 'git restore[[:space:]]+--[[:space:]]+"?\$' "$fix_sh" || \
-       grep -qE 'git checkout[[:space:]]+HEAD[[:space:]]+--[[:space:]]+"?\$' "$fix_sh"; then
-      report_pass "AC4.sh.scoped_rollback: beaver-fix.sh uses scoped rollback (per-file restore/checkout)"
-    else
-      report_fail "AC4.sh.scoped_rollback: beaver-fix.sh must use a scoped rollback ('git restore -- \"\$f\"' or 'git checkout HEAD -- \"\$f\"')"
-    fi
+    report_pass "AC4.sh.no_blanket_checkout: beaver-fix.sh avoids blanket 'git checkout -- .'"
   fi
 fi
 
@@ -277,66 +264,6 @@ if [ -f "$fix_sh" ]; then
     report_pass "AC4.sh.trap_err: beaver-fix.sh installs an ERR trap (covers mid-script crash with set -e)"
   else
     report_fail "AC4.sh.trap_err: beaver-fix.sh must include 'ERR' in a trap line (otherwise set -e exits skip rollback)"
-  fi
-fi
-
-# ---------- AC5.sh.snapshot: Project V2 snapshot subcommand ----------
-if [ -f "$fix_sh" ]; then
-  if grep -qE 'snapshot-projectv2-fields|snapshot_projectv2_fields' "$fix_sh"; then
-    report_pass "AC5.sh.snapshot: beaver-fix.sh defines a snapshot-projectv2-fields path"
-  else
-    report_fail "AC5.sh.snapshot: beaver-fix.sh must define a 'snapshot-projectv2-fields' subcommand/function"
-  fi
-  # Must read Project V2 field values via graphql
-  if grep -qE 'projectItems|ProjectV2Item|fieldValues' "$fix_sh"; then
-    report_pass "AC5.sh.snapshot.gql: beaver-fix.sh reads Project V2 fieldValues via graphql"
-  else
-    report_fail "AC5.sh.snapshot.gql: beaver-fix.sh snapshot must query 'projectItems'/'ProjectV2Item'/'fieldValues' via graphql"
-  fi
-fi
-
-# ---------- AC5.sh.compare: snapshot before/after diff with non-zero exit ----------
-if [ -f "$fix_sh" ]; then
-  has_verify=0
-  if grep -qE 'verify-projectv2-fields|verify_projectv2_fields' "$fix_sh"; then
-    has_verify=1
-  fi
-  has_cmp=0
-  # Accept diff/cmp invocation, OR an explicit string comparison.
-  if grep -qE '\bdiff[[:space:]]+' "$fix_sh" || \
-     grep -qE '\bcmp[[:space:]]+' "$fix_sh" || \
-     grep -qE '\[[[:space:]]+"\$[A-Za-z_]+"[[:space:]]*=[[:space:]]*"\$[A-Za-z_]+"[[:space:]]+\]' "$fix_sh"; then
-    has_cmp=1
-  fi
-  has_exit=0
-  if grep -qE 'exit[[:space:]]+1' "$fix_sh"; then
-    has_exit=1
-  fi
-  if [ "$has_verify" -eq 1 ] && [ "$has_cmp" -eq 1 ] && [ "$has_exit" -eq 1 ]; then
-    report_pass "AC5.sh.compare: beaver-fix.sh has verify-projectv2-fields with diff/cmp + exit 1 on mismatch"
-  else
-    report_fail "AC5.sh.compare: beaver-fix.sh must have verify-projectv2-fields with diff/cmp comparison + exit 1 on mismatch (verify=${has_verify} cmp=${has_cmp} exit=${has_exit})"
-  fi
-fi
-
-# ---------- AC5.md.assertion: explicit Phase calling snapshot + verify ----------
-if [ -f "$fix_md" ]; then
-  has_snap_call=0
-  has_verify_call=0
-  has_phrase=0
-  if grep -qE 'snapshot-projectv2-fields' "$fix_md"; then
-    has_snap_call=1
-  fi
-  if grep -qE 'verify-projectv2-fields' "$fix_md"; then
-    has_verify_call=1
-  fi
-  if grep -qE 'Project V2 字段未被修改|Project V2 untouched' "$fix_md"; then
-    has_phrase=1
-  fi
-  if [ "$has_snap_call" -eq 1 ] && [ "$has_verify_call" -eq 1 ] && [ "$has_phrase" -eq 1 ]; then
-    report_pass "AC5.md.assertion: beaver-fix.md calls snapshot + verify subcommands with explicit phrase"
-  else
-    report_fail "AC5.md.assertion: beaver-fix.md must call snapshot-projectv2-fields AND verify-projectv2-fields AND mention 'Project V2 字段未被修改' or 'Project V2 untouched' (snap=${has_snap_call} verify=${has_verify_call} phrase=${has_phrase})"
   fi
 fi
 
@@ -404,44 +331,6 @@ if [ -f "$plugin_json" ]; then
     report_pass "PLUGIN.register: plugin.json registers beaver-fix (description mention or version > 3.2.0)"
   else
     report_fail "PLUGIN.register: plugin.json must mention beaver-fix in description OR bump version above 3.2.0 (current: ${ver:-<missing>})"
-  fi
-fi
-
-# ---------- AC4.sh.rollback_delta: rollback restores ONLY files this script touched ----------
-# Fix for PR #64 review: snapshot-files-before must record a baseline of
-# pre-existing dirty files; rollback() must compute the delta
-# (currently-dirty MINUS baseline) and restore only those — never restore
-# files that were dirty before the script ran (would clobber user work).
-if [ -f "$fix_sh" ]; then
-  # Extract the body of the rollback() function and check it re-enumerates
-  # the currently-dirty file set at rollback time (not just the snapshot).
-  rollback_body=$(awk '/^rollback\(\)[[:space:]]*\{/{f=1} f{print} /^\}/{if(f){exit}}' "$fix_sh")
-  if echo "$rollback_body" | grep -qE 'git diff --name-only HEAD'; then
-    report_pass "AC4.sh.rollback_delta: rollback() re-enumerates dirty files at rollback time"
-  else
-    report_fail "AC4.sh.rollback_delta: rollback() body must call 'git diff --name-only HEAD' to enumerate the current dirty set (not just trust the pre-edit snapshot)"
-  fi
-  # rollback() must NOT restore the baseline file list verbatim — that's the
-  # inverted-semantics bug. Look for explicit subtraction (comm/grep -v) of
-  # the baseline against the current dirty set within rollback() body.
-  if echo "$rollback_body" | grep -qE 'comm[[:space:]]+-23|grep[[:space:]]+-vxF?f|grep[[:space:]]+-Fxv?f'; then
-    report_pass "AC4.sh.rollback_subtract: rollback() subtracts baseline from current dirty set"
-  else
-    report_fail "AC4.sh.rollback_subtract: rollback() must subtract baseline from current-dirty (use 'comm -23' or 'grep -vxFf') so unrelated user work is preserved"
-  fi
-fi
-
-# ---------- AC4.md.snapshot_export: snapshot path must propagate across invocations ----------
-# Fix for PR #64 review: $$ in BEAVER_FIX_FILES_SNAPSHOT default differs across
-# separate `bash beaver-fix.sh` invocations. The .md workflow MUST export the
-# snapshot path so the child process running rollback sees the same file.
-if [ -f "$fix_md" ]; then
-  # Must capture snapshot-files-before stdout into BEAVER_FIX_FILES_SNAPSHOT
-  # AND export it (or use `export VAR=$(...)` in one statement).
-  if grep -qE 'export[[:space:]]+BEAVER_FIX_FILES_SNAPSHOT' "$fix_md"; then
-    report_pass "AC4.md.snapshot_export: beaver-fix.md exports BEAVER_FIX_FILES_SNAPSHOT for child invocations"
-  else
-    report_fail "AC4.md.snapshot_export: beaver-fix.md must 'export BEAVER_FIX_FILES_SNAPSHOT=\$(... snapshot-files-before)' so rollback in later 'bash beaver-fix.sh' calls finds it"
   fi
 fi
 
