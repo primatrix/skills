@@ -6,13 +6,6 @@ set -euo pipefail
 
 tmp_files=()
 
-# Default location for the file-list BASELINE used by scoped rollback.
-# `snapshot-files-before` writes the set of files that were ALREADY dirty vs
-# HEAD before the script ran. At rollback time we compute the current dirty
-# set and restore only (current MINUS baseline) — i.e. files this command
-# actually touched. Pre-existing user work is never restored.
-: "${BEAVER_FIX_FILES_SNAPSHOT:=/tmp/beaver-fix-files-$$.list}"
-
 _rollback_fired=0
 rollback() {
   # Guard: fire only once even if both ERR and INT trigger.
@@ -23,28 +16,9 @@ rollback() {
   for f in ${tmp_files[@]+"${tmp_files[@]}"}; do
     [ -n "${f:-}" ] && [ -f "$f" ] && rm -f "$f"
   done
-  if git rev-parse --git-dir >/dev/null 2>&1; then
-    # Scoped rollback: restore ONLY files this command touched.
-    # Strategy: enumerate currently-dirty files, subtract the pre-edit baseline,
-    # restore the difference. Files dirty BEFORE the script ran are preserved.
-    # If the baseline is missing (e.g. snapshot-files-before was never invoked,
-    # or BEAVER_FIX_FILES_SNAPSHOT wasn't propagated) we do nothing — we MUST
-    # NOT fall back to `git checkout -- .` because that would clobber unrelated
-    # user work in the worktree.
-    if [ -f "$BEAVER_FIX_FILES_SNAPSHOT" ]; then
-      _now=$(mktemp "/tmp/beaver-fix-rollback-now-$$-$RANDOM.XXXXXX")
-      git diff --name-only HEAD > "$_now" 2>/dev/null || true
-      # comm -23 A B = lines in A not in B (both must be sorted).
-      _to_restore=$(mktemp "/tmp/beaver-fix-rollback-delta-$$-$RANDOM.XXXXXX")
-      comm -23 <(sort -u "$_now") <(sort -u "$BEAVER_FIX_FILES_SNAPSHOT") > "$_to_restore"
-      while IFS= read -r f; do
-        [ -z "$f" ] && continue
-        git checkout HEAD -- "$f" 2>/dev/null || true
-      done < "$_to_restore"
-      rm -f "$_now" "$_to_restore"
-    fi
-  fi
-  echo "rollback: 回滚已修改文件 (delta vs baseline ${BEAVER_FIX_FILES_SNAPSHOT})" >&2
+  # 不自动回滚已写入的文件，以免覆盖用户 WIP。
+  # 如需丢弃改动，请手动: git restore --staged --worktree <file>
+  echo "中止: 已清理临时文件；如需撤销已写改动请手动 git restore" >&2
 }
 trap 'rollback' INT ERR
 
@@ -55,17 +29,13 @@ write_query() {
 
 usage() {
   cat <<'EOF'
-Usage: beaver-fix.sh <subcommand> [args]
+用法: beaver-fix.sh <子命令> [参数]
 
-Subcommands:
-  verify-author <pr-number>                    Abort unless current user authored the PR
-  list-open-comments <pr-number>               List unresolved review threads + PR-level issue comments (graphql)
-  resolve-thread <thread-id>                   Call resolveReviewThread mutation
-  snapshot-files-before [snapshot-path]        Snapshot pre-edit dirty file BASELINE (rollback restores current minus baseline)
-  snapshot-projectv2-fields <pr-number>        Snapshot Project V2 field values for the PR
-  verify-projectv2-fields <pr-number> <snapshot-file>
-                                               Re-snapshot, diff vs <snapshot-file>, exit 1 on mismatch
-  commit-and-push <scope>                      Commit staged changes with conventional template
+子命令:
+  verify-author <pr-number>          非作者直接终止
+  list-open-comments <pr-number>     列出未 resolved 的 review threads + PR 顶层评论
+  resolve-thread <thread-id>         调用 resolveReviewThread mutation
+  commit-and-push <scope>            按模板提交已 stage 的改动并 push
 EOF
 }
 
@@ -79,7 +49,7 @@ case "${1:-}" in
       echo "只能对自己发起的 PR 运行 /beaver-fix" >&2
       exit 1
     fi
-    echo "author-ok: $me"
+    echo "作者校验通过: $me"
     ;;
   list-open-comments)
     pr=$2
@@ -123,107 +93,12 @@ GQL
     gh api graphql --body-file "$mf" -F tid="$tid"
     rm -f "$mf"
     ;;
-  snapshot-files-before)
-    # Record the BASELINE: files already dirty vs HEAD before the script ran.
-    # rollback() will compute (current-dirty MINUS this baseline) and restore
-    # only the difference, preserving any unrelated user work.
-    out=${2:-$BEAVER_FIX_FILES_SNAPSHOT}
-    git diff --name-only HEAD > "$out"
-    echo "$out"
-    ;;
-  snapshot-projectv2-fields)
-    pr=$2
-    repo=$(gh repo view --json nameWithOwner --jq .nameWithOwner)
-    owner=${repo%/*}
-    name=${repo#*/}
-    sf=$(mktemp -t beaver-fix-pv2.XXXXXX); tmp_files+=("$sf")
-    qf=$(mktemp -t beaver-fix-pv2q.XXXXXX); tmp_files+=("$qf")
-    # Read the PR's projectItems and their fieldValues — the runtime invariant
-    # we enforce is that these fields are byte-identical before & after fixups.
-    write_query "$qf" <<'GQL'
-query($owner:String!, $name:String!, $pr:Int!) {
-  repository(owner:$owner, name:$name) {
-    pullRequest(number:$pr) {
-      projectItems(first:10) {
-        nodes {
-          id
-          fieldValues(first:50) {
-            nodes {
-              __typename
-              ... on ProjectV2ItemFieldTextValue       { text       field { ... on ProjectV2FieldCommon { name } } }
-              ... on ProjectV2ItemFieldNumberValue     { number     field { ... on ProjectV2FieldCommon { name } } }
-              ... on ProjectV2ItemFieldDateValue       { date       field { ... on ProjectV2FieldCommon { name } } }
-              ... on ProjectV2ItemFieldSingleSelectValue { name     field { ... on ProjectV2FieldCommon { name } } }
-              ... on ProjectV2ItemFieldIterationValue  { title      field { ... on ProjectV2FieldCommon { name } } }
-            }
-          }
-        }
-      }
-    }
-  }
-}
-GQL
-    gh api graphql --body-file "$qf" \
-      -F owner="$owner" -F name="$name" -F pr="$pr" \
-      --jq '.data.repository.pullRequest.projectItems' > "$sf"
-    rm -f "$qf"
-    # Print the snapshot path so the caller can pass it to verify-projectv2-fields.
-    echo "$sf"
-    ;;
-  verify-projectv2-fields)
-    pr=$2
-    before=$3
-    if [ ! -f "$before" ]; then
-      echo "verify-projectv2-fields: snapshot file not found: $before" >&2
-      exit 1
-    fi
-    after=$(mktemp -t beaver-fix-pv2a.XXXXXX); tmp_files+=("$after")
-    repo=$(gh repo view --json nameWithOwner --jq .nameWithOwner)
-    owner=${repo%/*}
-    name=${repo#*/}
-    qf=$(mktemp -t beaver-fix-pv2vq.XXXXXX); tmp_files+=("$qf")
-    write_query "$qf" <<'GQL'
-query($owner:String!, $name:String!, $pr:Int!) {
-  repository(owner:$owner, name:$name) {
-    pullRequest(number:$pr) {
-      projectItems(first:10) {
-        nodes {
-          id
-          fieldValues(first:50) {
-            nodes {
-              __typename
-              ... on ProjectV2ItemFieldTextValue       { text       field { ... on ProjectV2FieldCommon { name } } }
-              ... on ProjectV2ItemFieldNumberValue     { number     field { ... on ProjectV2FieldCommon { name } } }
-              ... on ProjectV2ItemFieldDateValue       { date       field { ... on ProjectV2FieldCommon { name } } }
-              ... on ProjectV2ItemFieldSingleSelectValue { name     field { ... on ProjectV2FieldCommon { name } } }
-              ... on ProjectV2ItemFieldIterationValue  { title      field { ... on ProjectV2FieldCommon { name } } }
-            }
-          }
-        }
-      }
-    }
-  }
-}
-GQL
-    gh api graphql --body-file "$qf" \
-      -F owner="$owner" -F name="$name" -F pr="$pr" \
-      --jq '.data.repository.pullRequest.projectItems' > "$after"
-    rm -f "$qf"
-    if diff -u "$before" "$after" >/dev/null; then
-      echo "Project V2 fields unchanged"
-      rm -f "$after"
-    else
-      echo "ERROR: Project V2 fields diverged between snapshot and post-run!" >&2
-      diff -u "$before" "$after" >&2 || true
-      exit 1
-    fi
-    ;;
   commit-and-push)
     scope=$2
     # Empty-diff guard: if nothing is staged (e.g. all comments resolved/skipped
     # without code change), there is nothing to commit/push — exit cleanly.
     if git diff --cached --quiet; then
-      echo "no staged changes; skipping commit"
+      echo "无 staged 改动，跳过 commit"
       exit 0
     fi
     msg=$(mktemp -t beaver-fix-msg.XXXXXX); tmp_files+=("$msg")
@@ -237,7 +112,7 @@ GQL
     usage
     ;;
   *)
-    echo "unknown subcommand: $1" >&2
+    echo "未知子命令: $1" >&2
     usage >&2
     exit 1
     ;;
