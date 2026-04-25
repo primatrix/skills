@@ -129,7 +129,31 @@ Phase 1 of the Beaver development lifecycle. All lifecycle metadata is written t
       set_iteration "$NEW_NUM" "$ITER_TITLE"
       ```
 
-   5. **9e — Parent-tracker linkage (out of scope for this step; handled by `/beaver-tracker`).**
+   5. **9e — Link to monthly tracker.**
+
+      Two branches based on Type:
+
+      **Bug** — Iteration was already written in step 9d via G011. Attach to the tracker now:
+
+      ```bash
+      # Extract YYYY-MM prefix from ITER_TITLE for tracker lookup.
+      ITER_YYYYMM=$(echo "$ITER_TITLE" | grep -oE '^[0-9]{4}-[0-9]{2}')
+      TRACKER_RESULT=$(bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-tracker.sh \
+        find-tracker {issueRepo} "$ITER_YYYYMM")
+      if [ "$(echo "$TRACKER_RESULT" | jq -r '.count')" -gt 0 ]; then
+        TRACKER_NUM=$(echo "$TRACKER_RESULT" | jq -r '.items[0].number')
+        bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-tracker.sh \
+          attach-sub "$TRACKER_NUM" "$NEW_ID"
+      else
+        echo "No tracker found for {issueRepo} $ITER_YYYYMM — run /beaver-tracker to create one." >&2
+      fi
+      ```
+
+      Missing tracker is a warning, not a hard error — the Issue is valid, and `/beaver-tracker` will pick it up when it runs.
+
+      **Task** — tracker linkage happens after the interactive Iteration assignment (step 7), because the Iteration isn't known until the user chooses.
+
+      **SubTask** — skip tracker linkage. SubTasks are linked to their parent Task in step 9b, and GitHub's Sub-Issues API enforces one parent per issue. The parent Task (if assigned to an Iteration) is the tracker's sub-issue, so the SubTask is transitively tracked.
 
 1. **Iteration assignment (Task / SubTask interactive path)**
 
@@ -155,6 +179,25 @@ Phase 1 of the Beaver development lifecycle. All lifecycle metadata is written t
    ```
 
    `set_iteration` accepts a `YYYY-MM` prefix and matches the first iteration whose title starts with that prefix. A failure here is a warning — the Issue already exists.
+
+   **After setting Iteration, link to the monthly tracker (Task only).** SubTasks are already linked to their parent Task in step 9b and GitHub enforces one parent — skip for SubTask. If the user chose `skip`, also skip this linkage.
+
+   ```bash
+   # Only for Task type, and only if target is set (user didn't skip).
+   if [ "{Task|SubTask}" = "Task" ] && [ -n "$target" ]; then
+     TRACKER_RESULT=$(bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-tracker.sh \
+       find-tracker {issueRepo} "$target")
+     if [ "$(echo "$TRACKER_RESULT" | jq -r '.count')" -gt 0 ]; then
+       TRACKER_NUM=$(echo "$TRACKER_RESULT" | jq -r '.items[0].number')
+       bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-tracker.sh \
+         attach-sub "$TRACKER_NUM" "$NEW_ID"
+     else
+       echo "No tracker found for {issueRepo} $target — run /beaver-tracker to create one." >&2
+     fi
+   fi
+   ```
+
+   Missing tracker is a warning — the Issue is valid, and `/beaver-tracker` will pick it up.
 
 1. **Initial Status summary**: All Tasks / SubTasks land at `Status = Triage`. Bug routes per priority (P0 → In Progress, P1/P2 → Ready to Claim). The native Issue Type (`Task` / `SubTask` / `Bug`) plus Status / Size (Task/SubTask only) / Priority (Bug only) / Iteration (Bug always; Task/SubTask optional) are now written. No `status/* / type/* / size/*` repository labels are touched.
 
