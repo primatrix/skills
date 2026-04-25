@@ -43,7 +43,13 @@ EOF
 mktemp_body() {
   # Unique tempfile per call so multiple --body-file invocations within a
   # single command do not collide. Pattern matches beaver-design.sh.
-  mktemp "/tmp/beaver-pr-body-$$-$RANDOM-XXXXXX.md"
+  # NOTE: BSD `mktemp` (macOS) requires the `XXXXXX` placeholder to be the
+  # final component of the template — any suffix after it (e.g. `.md`) is
+  # treated as part of the literal name and the placeholder is NOT randomized,
+  # which silently breaks within-loop uniqueness. Keep `XXXXXX` at the end.
+  local epoch
+  epoch=$(date +%s%N 2>/dev/null || date +%s)
+  mktemp "/tmp/beaver-pr-body-$$-${RANDOM}-${epoch}.XXXXXX"
 }
 
 case "${1:-}" in
@@ -119,7 +125,7 @@ case "${1:-}" in
     body_string=$3
     body_file=$(mktemp_body)
     trap 'rm -f "$body_file"' EXIT
-    printf '%s' "$body_string" > "$body_file"
+    printf -- '%s' "$body_string" > "$body_file"
     gh pr create --draft --title "$title" --body-file "$body_file"
     ;;
   comment-issue)
@@ -129,7 +135,7 @@ case "${1:-}" in
     body_string=$5
     body_file=$(mktemp_body)
     trap 'rm -f "$body_file"' EXIT
-    printf '%s' "$body_string" > "$body_file"
+    printf -- '%s' "$body_string" > "$body_file"
     gh issue comment "$num" --repo "${org}/${repo}" --body-file "$body_file"
     ;;
   mark-ready)
@@ -139,7 +145,13 @@ case "${1:-}" in
   delete-branch)
     branch=$2
     git push origin --delete "$branch" || true
-    git branch -D "$branch"
+    # Cannot delete the currently checked-out branch under set -euo pipefail
+    # without first switching away. Discard flow commonly leaves the user on
+    # the feature branch, so detach to main/master before removing.
+    if [ "$(git branch --show-current)" = "$branch" ]; then
+      git checkout main 2>/dev/null || git checkout master 2>/dev/null || true
+    fi
+    git branch -D "$branch" || true
     ;;
   --help|"")
     usage
