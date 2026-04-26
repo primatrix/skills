@@ -237,6 +237,8 @@ These four statistics map to RFC §2 #8 «sub-issue 数量、carry-over 数量�
 
 本 issue 作为 <repo> <YYYY-MM> 月度 tracking 容器。所有本月 task issue 作为 sub-issue 挂在下方。
 
+仓库: primatrix/<repo>
+
 ## 来源
 - 上月 tracker: #<N>（迁移 <K> 个未完成 task）
 
