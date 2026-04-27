@@ -91,44 +91,42 @@ Phase 1 of the Beaver development lifecycle. All lifecycle metadata is written t
       **Task / SubTask** — write Type, Size, Status=Triage, and (optionally) Iteration:
 
       ```bash
-      source ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-lib.sh
-
-      set_type      "$NEW_NUM" "{Task|SubTask}"   # native Issue Type
-      set_size      "$NEW_NUM" "{S|L}"             # Project V2 Size
-      set_status    "$NEW_NUM" "Triage"            # Project V2 Status
+      bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-lib.sh set_type   "$NEW_NUM" "{Task|SubTask}"   # native Issue Type
+      bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-lib.sh set_size   "$NEW_NUM" "{S|L}"             # Project V2 Size
+      bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-lib.sh set_status "$NEW_NUM" "Triage"            # Project V2 Status
       # Iteration is optional for Task/SubTask — see §Iteration assignment.
       ```
 
       **Bug** — write Type=Bug, Priority, Status, and Iteration. The Bug path **does NOT write Size** (Size has no Bug semantics in RFC-0013):
 
       ```bash
-      source ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-lib.sh
+      _BLIB=${CLAUDE_PLUGIN_ROOT}/scripts/beaver-lib.sh
 
-      set_type   "$NEW_NUM" "Bug"
+      bash "$_BLIB" set_type "$NEW_NUM" "Bug"
       # Priority is mandatory for Bug — value ∈ { P0, P1, P2 } collected in QA.
       # set_priority is currently called via the generic single-select path:
-      PRIORITY_FIELD_ID=$(get_field_id "Priority")
-      PRIORITY_OPT_ID=$(get_option_id "Priority" "{P0|P1|P2}")
-      ITEM_ID_FOR_PRIO=$(resolve_item_id "$NEW_URL")
-      _set_single_select "$ITEM_ID_FOR_PRIO" "$PRIORITY_FIELD_ID" "$PRIORITY_OPT_ID"
+      PRIORITY_FIELD_ID=$(bash "$_BLIB" get_field_id "Priority")
+      PRIORITY_OPT_ID=$(bash "$_BLIB" get_option_id "Priority" "{P0|P1|P2}")
+      ITEM_ID_FOR_PRIO=$(bash "$_BLIB" resolve_item_id "$NEW_URL")
+      bash -c 'source "'"$_BLIB"'"; _set_single_select "$1" "$2" "$3"' _ "$ITEM_ID_FOR_PRIO" "$PRIORITY_FIELD_ID" "$PRIORITY_OPT_ID"
 
       # Status mapping (RFC-0013 §3 Bug path):
       #   P0       → "In Progress"  (fast-path, work begins immediately)
       #   P1 / P2  → "Ready to Claim"
       if [ "$priority" = "P0" ]; then
-        set_status "$NEW_NUM" "In Progress"
+        bash "$_BLIB" set_status "$NEW_NUM" "In Progress"
       else
-        set_status "$NEW_NUM" "Ready to Claim"
+        bash "$_BLIB" set_status "$NEW_NUM" "Ready to Claim"
       fi
 
       # Iteration is MANDATORY for Bug — resolved by G011.
-      ITER_TITLE=$(latest_iteration_for_repo {subjectRepo})
+      ITER_TITLE=$(bash "$_BLIB" latest_iteration_for_repo {subjectRepo})
       if [ -z "$ITER_TITLE" ]; then
         echo "G011 fail: no current or future Iteration on Project #14 for {subjectRepo}." >&2
         echo "Run /beaver-tracker {subjectRepo} to create this month's Iteration entry, then retry." >&2
         exit 1
       fi
-      set_iteration "$NEW_NUM" "$ITER_TITLE"
+      bash "$_BLIB" set_iteration "$NEW_NUM" "$ITER_TITLE"
       ```
 
    5. **9e — Link to monthly tracker.**
@@ -175,8 +173,7 @@ Phase 1 of the Beaver development lifecycle. All lifecycle metadata is written t
    Then:
 
    ```bash
-   source ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-lib.sh
-   set_iteration "$NEW_NUM" "$target" || \
+   bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-lib.sh set_iteration "$NEW_NUM" "$target" || \
      echo "Iteration entry for $target not found on Project #14. Run /beaver-setup to extend iterations, or assign manually." >&2
    ```
 
