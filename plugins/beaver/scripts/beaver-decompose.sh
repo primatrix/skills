@@ -28,8 +28,8 @@ Subcommands:
         (number, title, body, labels, assignees)
   parent-fields <org> <repo> <number>
         Print parent's field-semantics state as JSON
-        (issueType, status, iteration, assignees) — reads via beaver-lib.sh
-        for Project V2 fields and via REST for assignees.
+        (issueType, status, iteration, targetDate, assignees) — reads via
+        beaver-lib.sh for Project V2 fields and via REST for assignees.
   list-sub-titles <org> <repo> <number>
         Print existing sub-issue titles, one per line
   create-child <org> <repo> <title> <body>
@@ -80,12 +80,13 @@ case "${1:-}" in
     lib_dir=$(dirname "$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")")
     # shellcheck disable=SC1091
     source "${lib_dir}/beaver-lib.sh"
-    # Project V2 field reads (Type / Status / Iteration) are scoped to
-    # Project #14 in primatrix/projects regardless of where the issue
-    # itself lives — that's where Beaver tracks all lifecycle metadata.
+    # Project V2 field reads (Type / Status / Iteration / Target date) are
+    # scoped to Project #14 in primatrix/projects regardless of where the
+    # issue itself lives — that's where Beaver tracks all lifecycle metadata.
     issue_type=$(get_type "$num")
     status=$(_get_single_select_value "$num" "Status")
     iteration=$(get_iteration "$num")
+    target_date=$(get_target_date "$num")
     # Assignees come from the issue's own repo via REST.
     assignees_json=$(gh api "repos/${org}/${repo}/issues/${num}" \
       --jq '[.assignees[].login]')
@@ -93,8 +94,9 @@ case "${1:-}" in
       --arg t "$issue_type" \
       --arg s "$status" \
       --arg i "$iteration" \
+      --arg d "$target_date" \
       --argjson a "$assignees_json" \
-      '{issueType: $t, status: $s, iteration: $i, assignees: $a}'
+      '{issueType: $t, status: $s, iteration: $i, targetDate: $d, assignees: $a}'
     ;;
   list-sub-titles)
     org=$2; repo=$3; num=$4

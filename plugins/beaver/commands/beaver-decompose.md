@@ -34,13 +34,14 @@ Arguments required: parent issue number AND design doc reference (`--design-doc 
    PARENT_TYPE=$(get_type "{number}")                                    # Bug / Task / SubTask / ""
    PARENT_STATUS=$(_get_single_select_value "{number}" "Status")         # Project V2 Status
    PARENT_ITERATION=$(get_iteration "{number}")                          # Iteration title or ""
+   PARENT_TARGET_DATE=$(get_target_date "{number}")                      # YYYY-MM-DD or ""
    ```
 
    Equivalent one-shot via the script (which itself calls `beaver-lib.sh`):
 
    ```bash
    bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-decompose.sh parent-fields {org} {issueRepo} {number}
-   # echoes JSON: {"issueType": "...", "status": "...", "iteration": "...", "assignees": [...]}
+   # echoes JSON: {"issueType": "...", "status": "...", "iteration": "...", "targetDate": "...", "assignees": [...]}
    ```
 
    Pick ONE of the two paths (inline `source` OR `parent-fields`) — do not call both.
@@ -239,6 +240,12 @@ Per RFC-0013 §5 step 6, perform exactly this ordered sequence per child. Use `m
    # is skipped in that case so the child stays Iteration-unassigned).
    if [ -n "$PARENT_ITERATION" ]; then
      set_iteration "$CHILD_NUM" "$PARENT_ITERATION"
+   fi
+
+   # Target date is INHERITED from the parent (may be empty — set_target_date
+   # is skipped in that case so the child stays without a target date).
+   if [ -n "$PARENT_TARGET_DATE" ]; then
+     set_target_date "$CHILD_NUM" "$PARENT_TARGET_DATE"
    fi
    ```
 

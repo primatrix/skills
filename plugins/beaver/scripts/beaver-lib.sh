@@ -2,7 +2,7 @@
 #
 # beaver-lib.sh — Shared library for Beaver commands.
 #
-# Provides 10 public functions that read/write Project V2 #14 fields and the
+# Provides 12 public functions that read/write Project V2 #14 fields and the
 # native GitHub Issue Type, plus a `self-test` subcommand that exercises the
 # full read/write round-trip on a sandbox issue in primatrix/projects.
 #
@@ -21,6 +21,8 @@
 #   get_iteration <issue_number>
 #   set_iteration <issue_number> <iteration_title>
 #   latest_iteration_for_repo <repo>
+#   get_target_date <issue_number>
+#   set_target_date <issue_number> <date>
 
 set -euo pipefail
 
@@ -319,6 +321,53 @@ set_iteration() {
     -f iterationId="$iteration_id" >/dev/null
 }
 
+# get_target_date <issue_number>
+# Echo current "Target date" value (YYYY-MM-DD) for the issue, or empty string.
+get_target_date() {
+  local number=$1
+  gh api graphql -f query='
+    query($owner: String!, $repo: String!, $number: Int!) {
+      repository(owner: $owner, name: $repo) {
+        issue(number: $number) {
+          projectItems(first: 20) {
+            nodes {
+              project { number }
+              fieldValueByName(name: "Target date") {
+                ... on ProjectV2ItemFieldDateValue { date }
+              }
+            }
+          }
+        }
+      }
+    }' -f owner="$ORG" -f repo="$PROJECT_REPO" -F number="$number" \
+    --jq ".data.repository.issue.projectItems.nodes
+          | map(select(.project.number == ${PROJECT_NUMBER}))
+          | .[0].fieldValueByName.date // \"\""
+}
+
+# set_target_date <issue_number> <date>
+# Set "Target date" field (YYYY-MM-DD) on Project #14.
+set_target_date() {
+  local number=$1 date=$2
+  local item_id field_id project_id
+  item_id=$(_ensure_item_id "$number")
+  field_id=$(get_field_id "Target date")
+  project_id=$(_project_id)
+  gh api graphql -f query='
+    mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $date: String!) {
+      updateProjectV2ItemFieldValue(input: {
+        projectId: $projectId
+        itemId: $itemId
+        fieldId: $fieldId
+        value: { date: $date }
+      }) { projectV2Item { id } }
+    }' \
+    -f projectId="$project_id" \
+    -f itemId="$item_id" \
+    -f fieldId="$field_id" \
+    -f date="$date" >/dev/null
+}
+
 # latest_iteration_for_repo <repo>
 # Implements RFC-0013 G011 algorithm:
 #   Step A: select Iteration entry where startDate <= today < endDate
@@ -471,7 +520,8 @@ if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
       ;;
     resolve_item_id|get_field_id|get_option_id|\
     set_status|set_size|set_type|get_type|\
-    get_iteration|set_iteration|latest_iteration_for_repo)
+    get_iteration|set_iteration|latest_iteration_for_repo|\
+    get_target_date|set_target_date)
       fn=$1; shift
       "$fn" "$@"
       ;;
@@ -491,6 +541,8 @@ Subcommands:
   get_iteration <issue_number>
   set_iteration <issue_number> <iteration_title>
   latest_iteration_for_repo <repo>
+  get_target_date <issue_number>
+  set_target_date <issue_number> <date>
 
 May also be sourced: `source beaver-lib.sh` exposes the public functions.
 EOF
