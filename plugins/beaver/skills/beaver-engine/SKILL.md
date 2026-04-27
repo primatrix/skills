@@ -61,6 +61,10 @@ Read via `_get_single_select_value <issue> "Status"`. Write via `beaver-lib.sh::
 
 Sprint container. Read via `beaver-lib.sh::get_iteration`. Write via `beaver-lib.sh::set_iteration`. The "current or next future" lookup used by `/beaver-create` Bug path is `beaver-lib.sh::latest_iteration_for_repo` (see §3 G011).
 
+### Target date (Project V2 date field)
+
+Deadline date (YYYY-MM-DD). Read via `beaver-lib.sh::get_target_date`. Write via `beaver-lib.sh::set_target_date`. `/beaver-decompose` silently inherits the parent Task's Target date onto each child SubTask (skipped when the parent has no Target date).
+
 ### Beaver agent labels (still labels)
 
 These are operational flags written by Beaver tooling, not lifecycle metadata, and remain implemented as repository labels:
@@ -217,6 +221,7 @@ bash plugins/beaver/scripts/beaver-lib.sh <function-name> <args...>
 | Look up single-select option id | `get_option_id <field_name> <option_name>` | option id or empty string |
 | Read native Issue Type | `get_type <issue_number>` | Type name (`Bug`/`Task`/`SubTask`) or empty |
 | Read Iteration title | `get_iteration <issue_number>` | Iteration title or empty |
+| Read Target date | `get_target_date <issue_number>` | `YYYY-MM-DD` or empty |
 
 For ad-hoc Status/Size reads in scripts that have already sourced the library, use the internal helper `_get_single_select_value <number> <field_name>`.
 
@@ -228,6 +233,7 @@ For ad-hoc Status/Size reads in scripts that have already sourced the library, u
 | Set Project V2 `Size` | `set_size <issue_number> <size_name>` | `updateProjectV2ItemFieldValue` (singleSelectOptionId) |
 | Set native Issue Type | `set_type <issue_number> <type_name>` | `updateIssueIssueType` (requires `admin:org` scope and `GraphQL-Features: issue_types` header) |
 | Set Iteration | `set_iteration <issue_number> <iteration_title>` | `updateProjectV2ItemFieldValue` (iterationId) |
+| Set Target date | `set_target_date <issue_number> <date>` | `updateProjectV2ItemFieldValue` (date) |
 
 `set_type` is an instance assignment — it selects an existing organization-level Issue Type for the given Issue. Creating new organization-level Type definitions stays in `beaver-setup.sh` and goes through the REST endpoint `POST /orgs/{org}/issue-types`.
 
