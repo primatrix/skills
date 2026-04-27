@@ -29,12 +29,12 @@ Arguments required: parent issue number AND design doc reference (`--design-doc 
 1. Pre-check via `beaver-lib.sh` (no `status/*` label reads):
 
    ```bash
-   source ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-lib.sh
+   _BLIB=${CLAUDE_PLUGIN_ROOT}/scripts/beaver-lib.sh
 
-   PARENT_TYPE=$(get_type "{number}")                                    # Bug / Task / SubTask / ""
-   PARENT_STATUS=$(_get_single_select_value "{number}" "Status")         # Project V2 Status
-   PARENT_ITERATION=$(get_iteration "{number}")                          # Iteration title or ""
-   PARENT_TARGET_DATE=$(get_target_date "{number}")                      # YYYY-MM-DD or ""
+   PARENT_TYPE=$(bash "$_BLIB" get_type "{number}")                                    # Bug / Task / SubTask / ""
+   PARENT_STATUS=$(bash -c 'source "'"$_BLIB"'"; _get_single_select_value "$1" "Status"' _ "{number}")  # Project V2 Status
+   PARENT_ITERATION=$(bash "$_BLIB" get_iteration "{number}")                          # Iteration title or ""
+   PARENT_TARGET_DATE=$(bash "$_BLIB" get_target_date "{number}")                      # YYYY-MM-DD or ""
    ```
 
    Equivalent one-shot via the script (which itself calls `beaver-lib.sh`):
@@ -230,22 +230,22 @@ Per RFC-0013 §5 step 6, perform exactly this ordered sequence per child. Use `m
 1. **6d — Write Project V2 fields via `beaver-lib.sh`.**
 
    ```bash
-   source ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-lib.sh
+   _BLIB=${CLAUDE_PLUGIN_ROOT}/scripts/beaver-lib.sh
 
-   set_type   "$CHILD_NUM" "SubTask"   # native Issue Type
-   set_size   "$CHILD_NUM" "S"          # Project V2 Size
-   set_status "$CHILD_NUM" "Triage"     # Project V2 Status
+   bash "$_BLIB" set_type   "$CHILD_NUM" "SubTask"   # native Issue Type
+   bash "$_BLIB" set_size   "$CHILD_NUM" "S"          # Project V2 Size
+   bash "$_BLIB" set_status "$CHILD_NUM" "Triage"     # Project V2 Status
 
    # Iteration is INHERITED from the parent (may be empty — set_iteration
    # is skipped in that case so the child stays Iteration-unassigned).
    if [ -n "$PARENT_ITERATION" ]; then
-     set_iteration "$CHILD_NUM" "$PARENT_ITERATION"
+     bash "$_BLIB" set_iteration "$CHILD_NUM" "$PARENT_ITERATION"
    fi
 
    # Target date is INHERITED from the parent (may be empty — set_target_date
    # is skipped in that case so the child stays without a target date).
    if [ -n "$PARENT_TARGET_DATE" ]; then
-     set_target_date "$CHILD_NUM" "$PARENT_TARGET_DATE"
+     bash "$_BLIB" set_target_date "$CHILD_NUM" "$PARENT_TARGET_DATE"
    fi
    ```
 

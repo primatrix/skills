@@ -200,16 +200,16 @@ title=$(bash plugins/beaver/scripts/beaver-lib.sh get_iteration "$NUMBER")
 
 Canonical wrappers around Project V2 #14 fields and the native Issue Type. All call sites MUST go through `plugins/beaver/scripts/beaver-lib.sh` rather than issuing raw `gh api graphql` mutations or label-API calls.
 
-Source the library once per script:
-
-```bash
-source "$(git rev-parse --show-toplevel)/plugins/beaver/scripts/beaver-lib.sh"
-```
-
-Or invoke the CLI form for one-shot use:
+Invoke via the CLI form (preferred — works in any shell):
 
 ```bash
 bash plugins/beaver/scripts/beaver-lib.sh <function-name> <args...>
+```
+
+For multi-call scripts that need to `source` the library, the script **must run under `bash`** (beaver-lib.sh uses `set -euo pipefail` and other bash-specific syntax). Either give the script a `#!/usr/bin/env bash` shebang or wrap inline blocks with `bash -c '...'`:
+
+```bash
+bash -c 'source plugins/beaver/scripts/beaver-lib.sh; set_type "$1" Task; set_size "$1" S' _ "$ISSUE_NUM"
 ```
 
 ### Read operations
