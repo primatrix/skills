@@ -18,6 +18,8 @@ Arguments required: parent issue number AND design doc reference (`--design-doc 
 
    The `--design-doc` value (PR URL / blob URL / local path) is captured **verbatim**. No normalization is performed; it is stored as-is for use in step 6a (each child body's top-of-document Design Doc reference).
 
+1. **Load project config**: Read `beaver-config` from the Project V2 README per engine §5. Extract `{org}`, `{issueRepo}`, and `{project_number}`. All subsequent steps use `{issueRepo}` (the issue-hosting repo, e.g. `projects`) — do NOT substitute the code/subject repo here.
+
 1. Fetch parent Issue:
 
    ```bash
@@ -85,7 +87,9 @@ Extract the design doc content for decomposition analysis. The verbatim `--desig
 
 ### Phase 4: Per-Child QA Confirm
 
-Engine §7 applies. For each proposed child, ask exactly two QA rounds:
+Engine §7 applies. Engine §9.1 bilingual rule applies: QA interaction and child body content use Chinese prose with English technical terms (API names, file paths, field names, commands remain untranslated).
+
+For each proposed child, ask exactly two QA rounds:
 
 1. **Content round** — present the child's title / objective / acceptance criteria / suggested assignee set (defaults to PARENT_ASSIGNEES). User can: accept / edit / delete / insert / **override assignees**. Assignee override accepts ANY GitHub login set (not constrained to the parent assignee set; can also be empty to leave the child unassigned).
 
@@ -317,7 +321,7 @@ Print to the user:
 - Audit results table (same as Phase 7's first table).
 - Dependency landing results: `M succeeded, K failed`.
 - Next-step hint:
-  - "Children are at `Status = Triage` and inherit the parent's Iteration. `/beaver-claim` 已删除（见 RFC-0013 §3）：team members 请在 GitHub UI assign 自己后手动将 Status 切到对应值。"
+  - "Children are at `Status = Triage` and inherit the parent's Iteration."
   - If `K > 0`: "Add the K failed dependencies manually in the GitHub UI (issue → ⋯ → Dependencies → Add 'blocked by')."
 
 ## Constraints
