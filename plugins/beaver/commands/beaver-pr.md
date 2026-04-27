@@ -16,6 +16,8 @@ Phase 6 of the Beaver development lifecycle.
 bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-pr.sh ctx
 ```
 
+**Load project config**: Read `beaver-config` from the Project V2 README per engine §5. Extract `{org}`, `{issueRepo}`, and `{project_number}`. All subsequent steps use these values — in particular, `{issueRepo}` is the issue-hosting repo (e.g. `projects`), NOT the code repo where the PR is created.
+
 ### Phase 2: Issue Association
 
 按以下顺序推断 Issue 编号；任何一步成功即停止：
