@@ -28,7 +28,7 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-dev.sh preflight {number}
 Rejection conditions (script exits 1 with message):
 
 - `Size != S` → "本命令仅处理 Size=S" (use `/beaver-decompose` first)
-- `Status != In Progress` → `/beaver-claim` 已删除（见 RFC-0013 §3），请在 GitHub UI assign 自己后手动将 Status 切到 `In Progress`，再重新执行 `/beaver-dev`。
+- `Status != In Progress` → 请在 GitHub UI assign 自己后手动将 Status 切到 `In Progress`，再重新执行 `/beaver-dev`。
 - current `gh` user is not in the Issue's assignees
 
 On success the script prints `OK <type>` (e.g. `OK task`); capture the

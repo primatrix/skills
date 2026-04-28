@@ -68,7 +68,7 @@ case "${1:-}" in
       exit 1
     fi
     if [ "$status" != "In Progress" ]; then
-      echo "FAIL Status 必须为 'In Progress' (当前='${status:-<empty>}'); /beaver-claim 已删除（见 RFC-0013 §3），请在 GitHub UI assign 自己后手动将 Status 切到 'In Progress'" >&2
+      echo "FAIL Status 必须为 'In Progress' (当前='${status:-<empty>}'); 请在 GitHub UI assign 自己后手动将 Status 切到 'In Progress'" >&2
       exit 1
     fi
     # Surround both sides with single spaces so substring matches like
