@@ -11,8 +11,8 @@ set -euo pipefail
 # Every callsite that hands a body to `gh` via --body-file routes through a
 # uniquely-named tempfile (mktemp), per RFC §命令规约「临时文件命名约定」.
 
-# Resolve repo root for sourcing beaver-lib.sh, mirroring beaver-claim.sh /
-# beaver-create.sh patterns. CLAUDE_PLUGIN_ROOT may be set when invoked from
+# Resolve repo root for sourcing beaver-lib.sh, mirroring beaver-create.sh
+# patterns. CLAUDE_PLUGIN_ROOT may be set when invoked from
 # the slash-command harness; otherwise fall back to the script's own dirname.
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 lib_path="${CLAUDE_PLUGIN_ROOT:-$script_dir/..}/scripts/beaver-lib.sh"
