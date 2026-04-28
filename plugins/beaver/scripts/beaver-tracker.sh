@@ -28,6 +28,8 @@ Subcommands:
   list-tracker-subs-meta <tracker-number> <repo>
                                 Echo [{number, id, iteration_title, repo, repo_match, iteration_match}]
                                 where matches are evaluated against expected repo and iteration title prefix YYYY-MM (passed via env BEAVER_EXPECTED_YYYYMM).
+  set-tracker-status <tracker-number> <status>
+                                Write Status field on tracker issue via beaver-lib.sh::set_status.
   set-tracker-iteration <tracker-number> <yyyymm>
                                 Write Iteration field on tracker issue via beaver-lib.sh::set_iteration.
   set-issue-iteration <issue-number> <yyyymm>
@@ -192,6 +194,10 @@ case "${1:-}" in
           repo_match: ($repo == $expected_repo),
           iteration_match: ($iter | startswith($expected_yyyymm))}'
     done | jq -s '.'
+    ;;
+  set-tracker-status)
+    target=$2; status=$3
+    bash "$BEAVER_LIB" set_status "$target" "$status"
     ;;
   set-tracker-iteration|set-issue-iteration)
     subcmd=$1; target=$2; yyyymm=$3
