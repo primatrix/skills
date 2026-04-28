@@ -193,42 +193,22 @@ case "${1:-}" in
           iteration_match: ($iter | startswith($expected_yyyymm))}'
     done | jq -s '.'
     ;;
-  set-tracker-iteration)
-    tracker=$2; yyyymm=$3
+  set-tracker-iteration|set-issue-iteration)
+    subcmd=$1; target=$2; yyyymm=$3
     max_retries=3
     for attempt in $(seq 1 $max_retries); do
-      if bash "$BEAVER_LIB" set_iteration "$tracker" "$yyyymm" 2>&1; then
+      if bash "$BEAVER_LIB" set_iteration "$target" "$yyyymm"; then
         # Verify the Iteration was actually set.
-        actual=$(bash "$BEAVER_LIB" get_iteration "$tracker" 2>/dev/null || echo "")
+        actual=$(bash "$BEAVER_LIB" get_iteration "$target" 2>/dev/null || echo "")
         if [ -n "$actual" ] && echo "$actual" | grep -q "^${yyyymm}"; then
           break
         fi
-        echo "set-tracker-iteration: attempt $attempt: verification failed (got '$actual'), retrying..." >&2
+        echo "$subcmd: attempt $attempt: verification failed (got '$actual'), retrying..." >&2
       else
-        echo "set-tracker-iteration: attempt $attempt failed, retrying..." >&2
+        echo "$subcmd: attempt $attempt failed, retrying..." >&2
       fi
       if [ "$attempt" = "$max_retries" ]; then
-        echo "set-tracker-iteration: FAILED after $max_retries attempts for #$tracker" >&2
-        exit 1
-      fi
-      sleep 2
-    done
-    ;;
-  set-issue-iteration)
-    issue=$2; yyyymm=$3
-    max_retries=3
-    for attempt in $(seq 1 $max_retries); do
-      if bash "$BEAVER_LIB" set_iteration "$issue" "$yyyymm" 2>&1; then
-        actual=$(bash "$BEAVER_LIB" get_iteration "$issue" 2>/dev/null || echo "")
-        if [ -n "$actual" ] && echo "$actual" | grep -q "^${yyyymm}"; then
-          break
-        fi
-        echo "set-issue-iteration: attempt $attempt: verification failed (got '$actual'), retrying..." >&2
-      else
-        echo "set-issue-iteration: attempt $attempt failed, retrying..." >&2
-      fi
-      if [ "$attempt" = "$max_retries" ]; then
-        echo "set-issue-iteration: FAILED after $max_retries attempts for #$issue" >&2
+        echo "$subcmd: FAILED after $max_retries attempts for #$target" >&2
         exit 1
       fi
       sleep 2
