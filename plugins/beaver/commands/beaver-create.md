@@ -209,7 +209,7 @@ During QA, ask which **subject repo** (the codebase the work targets) this Issue
 - `latest_iteration_for_repo {subjectRepo}` (Bug G011 Iteration resolution)
 - `find-tracker {subjectRepo} <YYYY-MM>` (tracker linkage in steps 9e and 7)
 
-This is distinct from `{issueRepo}` (the repo hosting the Issue, always `primatrix/projects`). Trackers are labeled by subject repo (e.g., `tracker/beaver`, `tracker/skills`), not by issue-host repo.
+This is distinct from `{issueRepo}` (the bare repo name hosting the Issue, always `projects` — the org prefix is already supplied by `{org}`). Trackers are labeled by subject repo (e.g., `tracker/beaver`, `tracker/skills`), not by issue-host repo.
 
 For SubTasks, infer `{subjectRepo}` from the parent Task's tracker label if available; otherwise ask.
 
