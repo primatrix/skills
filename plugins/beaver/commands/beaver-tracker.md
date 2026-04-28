@@ -111,7 +111,7 @@ Will create tracker issue:
 Will then perform:
   - Step 8:    Re-parent <K> carried tasks as sub-issues of the new tracker
   - Step 8.5:  Pull backlog candidates from Project V2 (Iteration empty ∧ Status=Triage ∧ Type ∈ {Task, Bug})
-  - Step 8.6:  Set Iteration=<YYYY-MM> on the tracker itself + every sub-issue
+  - Step 8.6:  Set Iteration=<YYYY-MM> and Status=In Progress on the tracker itself + Iteration on every sub-issue
   - Step 8.7:  Unmount stale sub-issues whose Iteration ≠ <YYYY-MM> or repo mismatch
 
 Approved? (y/revise)
@@ -134,6 +134,9 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-tracker.sh add-labels <repo> $new_numb
 
 # Write Iteration field on the tracker itself via beaver-lib (per AC1).
 bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-tracker.sh set-tracker-iteration $new_number <YYYY-MM>
+
+# Write Status=In Progress so the tracker appears on the Project board.
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-tracker.sh set-tracker-status $new_number "In Progress"
 
 rm -f "$BODY_FILE"
 ```
