@@ -44,7 +44,7 @@ PR body 必须包含 `Closes {org}/{issueRepo}#<issue_number>` 一行（**完整
 
 1. Stage, conventional-commit, push.
 
-   把 conventional commit 信息写入唯一命名的临时文件（`mktemp` 或 `/tmp/beaver-pr-msg-$$-$RANDOM.txt`），格式：
+   把 conventional commit 信息写入唯一命名的临时文件，格式：
 
    ```text
    {type}({scope}): {description}
@@ -52,10 +52,17 @@ PR body 必须包含 `Closes {org}/{issueRepo}#<issue_number>` 一行（**完整
    Closes {org}/{issueRepo}#{issue_number}
    ```
 
-   然后：
+   然后（注意：BSD `mktemp` 要求 `XXXXXX` 在模板末尾，不可追加 `.txt` 等后缀）：
 
    ```bash
-   bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-pr.sh commit-push "$BRANCH_NAME" /tmp/beaver-pr-msg-$$-$RANDOM.txt {relevant_files}
+   MSG_FILE=$(mktemp /tmp/beaver-pr-msg-XXXXXX)
+   cat > "$MSG_FILE" << 'COMMIT_EOF'
+   {type}({scope}): {description}
+
+   Closes {org}/{issueRepo}#{issue_number}
+   COMMIT_EOF
+   bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-pr.sh commit-push "$BRANCH_NAME" "$MSG_FILE" {relevant_files}
+   rm -f "$MSG_FILE"
    ```
 
 ### Phase 4: Compliance Checks (PR-body warnings, never Issue labels)
@@ -161,5 +168,5 @@ Draft PR created. What would you like to do?
 - `Closes {org}/{issueRepo}#{issue_number}` 写入 PR body（**完整 owner/repo 形式**，跨仓库自动关闭必需），merge 时 Issue 自动关闭
 - G004 / G006 都是 warning-only（不阻断 PR 创建，不在 Issue 上贴 `beaver/*` 标签）
 - 除 G006 触发的 Type/Size 自动补齐外，命令不修改任何 Project V2 字段
-- 所有 `--body-file` 传给 `gh` CLI 的临时文件必须使用唯一文件名（`mktemp` 或 `/tmp/beaver-pr-body-$$-$RANDOM.md` 等）；该约束由 `beaver-pr.sh` 在内部统一处理
+- 所有 `--body-file` 传给 `gh` CLI 的临时文件必须使用唯一文件名（`mktemp /tmp/beaver-pr-body-XXXXXX`，BSD mktemp 要求 `XXXXXX` 在末尾、不可追加后缀）；该约束由 `beaver-pr.sh` 在内部统一处理
 - §7 QA loop 不适用（PR 内容由 git diff 生成，不走用户 Q&A）
