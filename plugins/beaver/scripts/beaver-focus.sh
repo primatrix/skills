@@ -10,12 +10,12 @@
 #
 # Subcommands:
 #   whoami                              Print current gh user
-#   fetch-my-issues <user>              Open Beaver issues assigned to <user>,
+#   fetch-my-issues <user>              Open issues assigned to <user>,
 #                                       with Status/Priority/Type/Iteration fields
 #                                       and last-activity (max(updatedAt, latest
 #                                       comment createdAt)) for recency sort.
 #   fetch-review-prs <user>             PRs awaiting <user>'s review (REST GET).
-#   fetch-ready-to-claim                Open Beaver issues with Status="Ready to
+#   fetch-ready-to-claim                Open issues with Status="Ready to
 #                                       Claim" and no assignees.
 
 set -euo pipefail
@@ -30,7 +30,7 @@ Usage: beaver-focus.sh <subcommand> [args]
 
 Subcommands:
   whoami                      Print current gh user
-  fetch-my-issues <user>      Print my open Beaver issues from project #14 (JSON array)
+  fetch-my-issues <user>      Print my open issues from project #14 (JSON array)
                               Fields per item: number, title, repo, url, labels,
                               status (Project V2 Status field), priority (Priority
                               field), type (native Issue Type), iteration
@@ -38,7 +38,7 @@ Subcommands:
                               updatedAt, lastCommentAt, lastActivityAt
                               (= max(updatedAt, lastCommentAt)).
   fetch-review-prs <user>     Print PRs awaiting my review (JSON lines, REST GET)
-  fetch-ready-to-claim        Print open Beaver issues with Status="Ready to
+  fetch-ready-to-claim        Print open issues with Status="Ready to
                               Claim" and no assignees (JSON array)
 
 All subcommands are read-only (GraphQL query / REST GET only).
@@ -123,14 +123,13 @@ _query_project_items() {
 
 # Project items projected into a uniform record shape (used by multiple
 # subcommands). Adds lastCommentAt and lastActivityAt fields. Preserves only
-# items whose content is an open Issue with the Control-By-Beaver label.
+# items whose content is an open Issue.
 #
 # Reads JSON from stdin (output of _query_project_items).
 _project_items_to_records() {
   jq '.data.organization.projectV2.items.nodes
       | map(select(.content != null
-                   and .content.state == "OPEN"
-                   and (.content.labels.nodes | map(.name) | index("Control-By-Beaver"))))
+                   and .content.state == "OPEN"))
       | map(
           ((.content.comments.nodes // []) | .[-1].createdAt // null) as $lastComment
           | {
@@ -162,7 +161,7 @@ case "${1:-}" in
 
   fetch-my-issues)
     user=$2
-    # Open Beaver issues assigned to $user, with Status/Priority/Type/Iteration
+    # Open issues assigned to $user, with Status/Priority/Type/Iteration
     # and lastActivityAt (max of updatedAt and latest comment createdAt) so the
     # caller can sort each Status group by recency (last commit/comment).
     _query_project_items \
@@ -178,7 +177,7 @@ case "${1:-}" in
     ;;
 
   fetch-ready-to-claim)
-    # Open Beaver issues with Status == "Ready to Claim" AND no assignees,
+    # Open issues with Status == "Ready to Claim" AND no assignees,
     # so the caller can surface unclaimed work in the dashboard.
     _query_project_items \
       | _project_items_to_records \
