@@ -124,7 +124,7 @@ Wait for explicit approval per engine §7.5. Anything else → revise.
 Render the body template (see §Issue Body Template) with placeholders substituted, write it to a **unique** temporary file (per engine §「临时文件命名约定」 — use `mktemp` to avoid collisions when this command is re-run):
 
 ```bash
-BODY_FILE=$(mktemp -t beaver-tracker-body.XXXXXX.md)
+BODY_FILE=$(mktemp /tmp/beaver-tracker-body-XXXXXX)
 # ... write body content into "$BODY_FILE" ...
 
 new_number=$(bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-tracker.sh create <repo> "[Iteration] <repo> <YYYY-MM>" "$BODY_FILE")
@@ -263,6 +263,6 @@ carried-from: #<N>
 - Steps 4 and 8.5 are interactive with three modes: 全选 / 全拒 / 逐项.
 - Step 8.7 is the unmount-half of the diff sync that makes the tracker's sub-issue set equal `{Project V2 #14 ∧ Iteration=<YYYY-MM> ∧ repo归属=<repo> ∧ Type ∈ {Task, Bug}}` (RFC §2 #2 期望终态).
 - Per-issue failures throughout Steps 8 / 8.5 / 8.6 / 8.7 are collected and surfaced in Step 9; the batch is never aborted on a single failure.
-- Per engine §「临时文件命名约定」, all body files passed to `gh ... --body-file` use unique names (`mktemp -t beaver-tracker-body.XXXXXX.md` or equivalent `$$`/`$RANDOM`/timestamp suffix).
+- Per engine §「临时文件命名约定」, all body files passed to `gh ... --body-file` use unique names (`mktemp /tmp/beaver-tracker-body-XXXXXX` — BSD mktemp requires `XXXXXX` at end, no suffix).
 - The three repo-level tracker labels (`tracker / tracker/<repo> / tracker/<YYYY-MM>`) are Beaver metadata and remain managed via the labels API; they are NOT part of the deprecated `status/* / type/* / size/*` taxonomy.
 - Health reporting (stale/overdue/bug-stats/upstream-blocked/missing-context/sub-task rollup) is intentionally NOT in this command anymore.

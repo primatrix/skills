@@ -188,5 +188,5 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-design.sh comment-issue {org} {issueRe
 - **本命令不修改任何 Project V2 字段**（`Status` / `Type` / `Size` / `Iteration` 等）；Phase 9.1 自检断言之。
 - 五维度 QA 严格按 Phase 4 顺序进行，**禁止跨维度跳问**。
 - spec-document-reviewer 评审循环最多 5 轮；任一轮 BLOCK 则继续，PASS 才允许 push；5 轮未通过则中止。
-- 所有写入 `gh` CLI `--body-file` 的临时文件必须使用唯一文件名（`mktemp` 或 `/tmp/beaver-design-body-$$-$RANDOM.md` 等）；该约束由 `beaver-design.sh` 在内部统一处理，命令本身只传 body 字符串。
+- 所有写入 `gh` CLI `--body-file` 的临时文件必须使用唯一文件名（`mktemp /tmp/beaver-design-body-XXXXXX`，BSD mktemp 要求 `XXXXXX` 在末尾、不可追加后缀）；该约束由 `beaver-design.sh` 在内部统一处理，命令本身只传 body 字符串。
 - PR 提交走 `gh pr create --draft`；RFC 文件落在 `docs/projects/{project}/rfc/NNNN-<slug>.md`，`docs/projects/{project}/rfc/index.md` 追加索引行；同时在原 Task Issue 上评论 PR 链接。
