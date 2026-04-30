@@ -210,6 +210,12 @@ Per RFC-0013 §5 step 6, perform exactly this ordered sequence per child. Use `m
 
    The script internally allocates a per-call mktemp file as `/tmp/beaver-decompose-child-$$-$RANDOM-<epoch_ns>.XXXXXX`, satisfying the AC5 uniqueness requirement even when a single shell invocation creates N children back-to-back.
 
+   > **Claude Code Bash tool caveat**: Each `Bash` tool call runs in a **separate shell process** — shell variables (`$CHILD_NUM`, `$CHILD_ID`) do NOT persist across calls. Steps 6a–6d for each child MUST either:
+   > - be combined into a **single** `Bash` tool call (recommended), or
+   > - use the **literal values** (e.g. `191`, `4356914719`) returned by `create-child` in subsequent calls instead of referencing shell variable names.
+   >
+   > Failing to do so causes `$CHILD_ID` to expand to an empty string, resulting in `gh api` 422 errors (`"" is not of type integer`).
+
 1. **6b — Link to parent (Sub-Issues API).**
 
    Run BEFORE add-to-project so Projects V2 emits the parent→child rollup at the moment the project item is created (otherwise the parent's project card shows "1 sub-issue not in this project").
@@ -248,6 +254,35 @@ Per RFC-0013 §5 step 6, perform exactly this ordered sequence per child. Use `m
      bash "$_BLIB" set_target_date "$CHILD_NUM" "$PARENT_TARGET_DATE"
    fi
    ```
+
+   > **Recommended pattern**: Combine steps 6a–6d and assignee setting into one Bash call per child to avoid variable loss:
+   >
+   > ```bash
+   > # --- child#N: create + link + project + fields + assignees (single Bash call) ---
+   > CHILD_OUT=$(bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-decompose.sh \
+   >   create-child {org} {issueRepo} "$child_title" "$BODY")
+   > eval "$CHILD_OUT"  # sets $number and $id
+   > CHILD_NUM=$number; CHILD_ID=$id
+   >
+   > bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-decompose.sh link-parent \
+   >   {org} {issueRepo} {parent_number} "$CHILD_ID" >/dev/null
+   >
+   > bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-decompose.sh \
+   >   add-to-project {project_number} {org} \
+   >   "https://github.com/{org}/{issueRepo}/issues/${CHILD_NUM}" >/dev/null
+   >
+   > _BLIB=${CLAUDE_PLUGIN_ROOT}/scripts/beaver-lib.sh
+   > bash "$_BLIB" set_type   "$CHILD_NUM" "SubTask"
+   > bash "$_BLIB" set_size   "$CHILD_NUM" "S"
+   > bash "$_BLIB" set_status "$CHILD_NUM" "Triage"
+   > [ -n "$PARENT_ITERATION" ] && bash "$_BLIB" set_iteration "$CHILD_NUM" "$PARENT_ITERATION"
+   > [ -n "$PARENT_TARGET_DATE" ] && bash "$_BLIB" set_target_date "$CHILD_NUM" "$PARENT_TARGET_DATE"
+   >
+   > bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-decompose.sh set-assignees \
+   >   {org} {issueRepo} "$CHILD_NUM" {assignee_logins...}
+   >
+   > echo "child#N (#${CHILD_NUM}, id=${CHILD_ID}) done"
+   > ```
 
    Then write assignees (the resolved per-child set from Phase 4 round 1, which defaults to `PARENT_ASSIGNEES` and may be overridden):
 
