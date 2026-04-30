@@ -255,32 +255,33 @@ Per RFC-0013 §5 step 6, perform exactly this ordered sequence per child. Use `m
    fi
    ```
 
-   > **Recommended pattern**: Combine steps 6a–6d into one Bash call per child to avoid variable loss:
+   > **Recommended pattern**: Combine steps 6a–6d and assignee setting into one Bash call per child to avoid variable loss:
    >
    > ```bash
-   > # --- child#N: create + link + project + fields (single Bash call) ---
+   > # --- child#N: create + link + project + fields + assignees (single Bash call) ---
    > CHILD_OUT=$(bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-decompose.sh \
-   >   create-child {org} {issueRepo} "$TITLE" "$BODY")
+   >   create-child {org} {issueRepo} "$child_title" "$BODY")
    > eval "$CHILD_OUT"  # sets $number and $id
+   > CHILD_NUM=$number; CHILD_ID=$id
    >
    > bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-decompose.sh link-parent \
-   >   {org} {issueRepo} {parent_number} "$id" >/dev/null
+   >   {org} {issueRepo} {parent_number} "$CHILD_ID" >/dev/null
    >
    > bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-decompose.sh \
    >   add-to-project {project_number} {org} \
-   >   "https://github.com/{org}/{issueRepo}/issues/${number}" >/dev/null
+   >   "https://github.com/{org}/{issueRepo}/issues/${CHILD_NUM}" >/dev/null
    >
    > _BLIB=${CLAUDE_PLUGIN_ROOT}/scripts/beaver-lib.sh
-   > bash "$_BLIB" set_type   "$number" "SubTask"
-   > bash "$_BLIB" set_size   "$number" "S"
-   > bash "$_BLIB" set_status "$number" "Triage"
-   > [ -n "$PARENT_ITERATION" ] && bash "$_BLIB" set_iteration "$number" "$PARENT_ITERATION"
-   > [ -n "$PARENT_TARGET_DATE" ] && bash "$_BLIB" set_target_date "$number" "$PARENT_TARGET_DATE"
+   > bash "$_BLIB" set_type   "$CHILD_NUM" "SubTask"
+   > bash "$_BLIB" set_size   "$CHILD_NUM" "S"
+   > bash "$_BLIB" set_status "$CHILD_NUM" "Triage"
+   > [ -n "$PARENT_ITERATION" ] && bash "$_BLIB" set_iteration "$CHILD_NUM" "$PARENT_ITERATION"
+   > [ -n "$PARENT_TARGET_DATE" ] && bash "$_BLIB" set_target_date "$CHILD_NUM" "$PARENT_TARGET_DATE"
    >
    > bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-decompose.sh set-assignees \
-   >   {org} {issueRepo} "$number" {assignee_logins...}
+   >   {org} {issueRepo} "$CHILD_NUM" {assignee_logins...}
    >
-   > echo "child#N (#${number}, id=${id}) done"
+   > echo "child#N (#${CHILD_NUM}, id=${CHILD_ID}) done"
    > ```
 
    Then write assignees (the resolved per-child set from Phase 4 round 1, which defaults to `PARENT_ASSIGNEES` and may be overridden):
