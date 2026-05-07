@@ -144,6 +144,8 @@ Phase 1 of the Beaver development lifecycle. All lifecycle metadata is written t
         TRACKER_NUM=$(echo "$TRACKER_RESULT" | jq -r '.items[0].number')
         bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-tracker.sh \
           attach-sub "$TRACKER_NUM" "$NEW_ID"
+        gh api "repos/{org}/{issueRepo}/issues/$NEW_NUM/labels" \
+          --method POST -f "labels[]=tracker/{subjectRepo}"
       else
         echo "No tracker found for {subjectRepo} $ITER_YYYYMM — run /beaver-tracker to create one." >&2
       fi
@@ -190,6 +192,8 @@ Phase 1 of the Beaver development lifecycle. All lifecycle metadata is written t
        TRACKER_NUM=$(echo "$TRACKER_RESULT" | jq -r '.items[0].number')
        bash ${CLAUDE_PLUGIN_ROOT}/scripts/beaver-tracker.sh \
          attach-sub "$TRACKER_NUM" "$NEW_ID"
+       gh api "repos/{org}/{issueRepo}/issues/$NEW_NUM/labels" \
+         --method POST -f "labels[]=tracker/{subjectRepo}"
      else
        echo "No tracker found for {subjectRepo} $target — run /beaver-tracker to create one." >&2
      fi
