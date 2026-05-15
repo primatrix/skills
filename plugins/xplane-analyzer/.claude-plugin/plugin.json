@@ -1,0 +1,5 @@
+{
+  "name": "xplane-analyzer",
+  "description": "Interactive SQL-based analysis of .xplane.pb TPU profiling files with domain-aware interpretation",
+  "version": "1.0.0"
+}
