@@ -166,5 +166,54 @@ class TestScanDirectory(unittest.TestCase):
             self.assertIsInstance(errors, list)
 
 
+import subprocess
+
+
+class TestCLI(unittest.TestCase):
+    SCRIPT = Path(__file__).parent.parent / "scan_sessions.py"
+
+    def test_help_runs(self):
+        r = subprocess.run(
+            [sys.executable, str(self.SCRIPT), "--help"],
+            capture_output=True, text=True,
+        )
+        self.assertEqual(r.returncode, 0)
+        self.assertIn("--since", r.stdout)
+        self.assertIn("--source", r.stdout)
+
+    def test_since_must_be_in_range_1_to_7(self):
+        r = subprocess.run(
+            [sys.executable, str(self.SCRIPT), "--since", "8d"],
+            capture_output=True, text=True,
+        )
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("--since", r.stderr.lower() + r.stdout.lower())
+
+    def test_emits_valid_json_to_stdout(self):
+        # Point --claude-root at our fixture dir to keep the test hermetic
+        fixtures_claude = FIXTURES / "claude"
+        r = subprocess.run(
+            [
+                sys.executable, str(self.SCRIPT),
+                "--since", "7d",
+                "--source", "claude",
+                "--claude-root", str(fixtures_claude),
+                "--codex-root", "/nonexistent",
+            ],
+            capture_output=True, text=True,
+        )
+        # We backdate fixtures, so they may or may not be picked up depending on mtime.
+        # The test only asserts that output is valid JSON and has the right shape.
+        self.assertEqual(r.returncode, 0, f"stderr: {r.stderr}")
+        doc = json.loads(r.stdout)
+        self.assertIn("generated_at", doc)
+        self.assertIn("since_days", doc)
+        self.assertEqual(doc["since_days"], 7)
+        self.assertIn("sessions", doc)
+        self.assertIn("errors", doc)
+        self.assertIsInstance(doc["sessions"], list)
+        self.assertIsInstance(doc["errors"], list)
+
+
 if __name__ == "__main__":
     unittest.main()

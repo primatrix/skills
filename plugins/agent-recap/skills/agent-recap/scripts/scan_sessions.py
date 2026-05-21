@@ -251,3 +251,65 @@ def scan_directory(
         sessions.append(meta)
 
     return sessions, errors
+
+
+import argparse
+import datetime as _dt
+import re
+
+DEFAULT_CLAUDE_ROOT = Path.home() / ".claude" / "projects"
+DEFAULT_CODEX_ROOT = Path.home() / ".codex" / "sessions"
+
+
+def _parse_since(value: str) -> int:
+    """Accept '1d'..'7d' or plain '1'..'7'. Returns integer days."""
+    m = re.fullmatch(r"(\d+)d?", value)
+    if not m:
+        raise argparse.ArgumentTypeError(f"--since must look like '3d' or '3', got {value!r}")
+    n = int(m.group(1))
+    if not (1 <= n <= 7):
+        raise argparse.ArgumentTypeError(f"--since must be between 1 and 7 days, got {n}")
+    return n
+
+
+def main(argv: list[str] | None = None) -> int:
+    p = argparse.ArgumentParser(
+        prog="scan_sessions",
+        description="Scan local Claude/Codex session jsonl files and emit metadata JSON.",
+    )
+    p.add_argument("--since", type=_parse_since, default=1,
+                   help="How many days back to include (1-7). Default: 1.")
+    p.add_argument("--source", choices=["both", "claude", "codex"], default="both",
+                   help="Which agent's sessions to scan. Default: both.")
+    p.add_argument("--claude-root", type=Path, default=DEFAULT_CLAUDE_ROOT,
+                   help="Override Claude session root (for tests).")
+    p.add_argument("--codex-root", type=Path, default=DEFAULT_CODEX_ROOT,
+                   help="Override Codex session root (for tests).")
+    args = p.parse_args(argv)
+
+    all_sessions: list[dict[str, Any]] = []
+    all_errors: list[dict[str, str]] = []
+    if args.source in ("both", "claude"):
+        s, e = scan_directory(args.claude_root, source="claude", since_days=args.since)
+        all_sessions.extend(s)
+        all_errors.extend(e)
+    if args.source in ("both", "codex"):
+        s, e = scan_directory(args.codex_root, source="codex", since_days=args.since)
+        all_sessions.extend(s)
+        all_errors.extend(e)
+
+    # Sort sessions by ended_at descending (most recent first); None at the end
+    all_sessions.sort(key=lambda x: x.get("ended_at") or "", reverse=True)
+
+    doc = {
+        "generated_at": _dt.datetime.now().astimezone().isoformat(timespec="seconds"),
+        "since_days": args.since,
+        "sessions": all_sessions,
+        "errors": all_errors,
+    }
+    print(json.dumps(doc, ensure_ascii=False, indent=2))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
