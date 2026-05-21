@@ -1,0 +1,5 @@
+{
+  "name": "agent-recap",
+  "description": "Mine local Claude/Codex session history to produce structured daily/weekly work recaps with optional GitHub Issue sync",
+  "version": "0.1.0"
+}
