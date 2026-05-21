@@ -83,5 +83,28 @@ class TestParseCodexSession(unittest.TestCase):
         self.assertEqual(result["last_user_msg"], "thanks")
 
 
+class TestSchemaConsistency(unittest.TestCase):
+    EXPECTED_KEYS = {
+        "id", "source", "path", "subagent_paths",
+        "cwd", "git_branch", "started_at", "ended_at",
+        "user_msg_count", "tool_stats",
+        "first_user_msg", "last_user_msg",
+        "has_compact_summary", "size_bytes",
+    }
+
+    def test_claude_output_has_exact_expected_keys(self):
+        result = scan_sessions.parse_claude_session(FIXTURES / "claude" / "minimal.jsonl")
+        self.assertEqual(set(result.keys()), self.EXPECTED_KEYS)
+
+    def test_codex_output_has_exact_expected_keys(self):
+        result = scan_sessions.parse_codex_session(FIXTURES / "codex" / "minimal.jsonl")
+        self.assertEqual(set(result.keys()), self.EXPECTED_KEYS)
+
+    def test_both_sources_share_identical_key_set(self):
+        claude = scan_sessions.parse_claude_session(FIXTURES / "claude" / "minimal.jsonl")
+        codex = scan_sessions.parse_codex_session(FIXTURES / "codex" / "minimal.jsonl")
+        self.assertEqual(set(claude.keys()), set(codex.keys()))
+
+
 if __name__ == "__main__":
     unittest.main()
