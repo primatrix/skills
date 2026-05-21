@@ -1,0 +1,6 @@
+{"timestamp":"2026-05-20T16:00:00.000Z","type":"session_meta","payload":{"id":"019e-codex-tools-001","timestamp":"2026-05-20T16:00:00.000Z","cwd":"/tmp/proj-cy","cli_version":"0.130.0"}}
+{"timestamp":"2026-05-20T16:00:01.000Z","type":"event_msg","payload":{"type":"user_message","message":"run ls"}}
+{"timestamp":"2026-05-20T16:00:02.000Z","type":"response_item","payload":{"type":"function_call","name":"shell","arguments":"{\"command\":[\"ls\"]}"}}
+{"timestamp":"2026-05-20T16:00:03.000Z","type":"response_item","payload":{"type":"function_call","name":"shell","arguments":"{\"command\":[\"pwd\"]}"}}
+{"timestamp":"2026-05-20T16:00:04.000Z","type":"event_msg","payload":{"type":"user_message","message":"thanks"}}
+{"timestamp":"2026-05-20T16:00:05.000Z","type":"event_msg","payload":{"type":"task_complete","turn_id":"t1","completed_at":"2026-05-20T16:00:05.000Z","duration_ms":5000}}

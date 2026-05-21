@@ -1,0 +1,6 @@
+{"timestamp":"2026-05-20T15:00:00.000Z","type":"session_meta","payload":{"id":"019e-codex-min-001","timestamp":"2026-05-20T15:00:00.000Z","cwd":"/tmp/proj-cx","cli_version":"0.130.0"}}
+{"timestamp":"2026-05-20T15:00:01.000Z","type":"turn_context","payload":{"turn_id":"t1","cwd":"/tmp/proj-cx","current_date":"2026-05-20","timezone":"UTC"}}
+{"timestamp":"2026-05-20T15:00:02.000Z","type":"event_msg","payload":{"type":"task_started","turn_id":"t1","started_at":"2026-05-20T15:00:02.000Z"}}
+{"timestamp":"2026-05-20T15:00:03.000Z","type":"event_msg","payload":{"type":"user_message","message":"hello codex"}}
+{"timestamp":"2026-05-20T15:00:08.000Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"hi"}]}}
+{"timestamp":"2026-05-20T15:00:09.000Z","type":"event_msg","payload":{"type":"task_complete","turn_id":"t1","completed_at":"2026-05-20T15:00:09.000Z","duration_ms":7000}}
