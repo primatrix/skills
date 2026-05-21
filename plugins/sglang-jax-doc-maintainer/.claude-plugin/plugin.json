@@ -1,0 +1,5 @@
+{
+  "name": "sglang-jax-doc-maintainer",
+  "description": "Evidence-based architecture documentation maintenance for sglang-jax wiki (docs/projects/sglang-jax/01-13) from PR diffs / commits / branch diffs / drift checks. Two-phase workflow (plan-only → confirmed-edit) gated by independent subagent reviewers.",
+  "version": "1.0.0"
+}
