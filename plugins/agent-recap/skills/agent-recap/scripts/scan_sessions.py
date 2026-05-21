@@ -113,3 +113,75 @@ def parse_claude_session(path: Path) -> dict[str, Any]:
         "has_compact_summary": has_compact_summary,
         "size_bytes": path.stat().st_size,
     }
+
+
+def parse_codex_session(path: Path) -> dict[str, Any]:
+    """Parse a Codex CLI session jsonl into the common session-metadata shape."""
+    session_id: str | None = None
+    cwd: str | None = None
+    started_at: str | None = None
+    ended_at: str | None = None
+    user_msg_count = 0
+    tool_stats: dict[str, int] = {}
+    first_user_msg: str | None = None
+    last_user_msg: str | None = None
+
+    for _lineno, entry in _read_jsonl_lines(path):
+        etype = entry.get("type")
+        payload = entry.get("payload") or {}
+        if not isinstance(payload, dict):
+            payload = {}
+
+        ts = entry.get("timestamp")
+        if isinstance(ts, str):
+            if started_at is None:
+                started_at = ts
+            ended_at = ts
+
+        if etype == "session_meta":
+            sid = payload.get("id")
+            if isinstance(sid, str):
+                session_id = sid
+            c = payload.get("cwd")
+            if isinstance(c, str) and cwd is None:
+                cwd = c
+
+        elif etype == "turn_context":
+            c = payload.get("cwd")
+            if isinstance(c, str) and cwd is None:
+                cwd = c
+
+        elif etype == "event_msg":
+            ptype = payload.get("type")
+            if ptype == "user_message":
+                msg = payload.get("message")
+                if isinstance(msg, str):
+                    user_msg_count += 1
+                    preview = msg[:200]
+                    if first_user_msg is None:
+                        first_user_msg = preview
+                    last_user_msg = preview
+
+        elif etype == "response_item":
+            ptype = payload.get("type")
+            if ptype == "function_call":
+                name = payload.get("name")
+                if isinstance(name, str):
+                    tool_stats[name] = tool_stats.get(name, 0) + 1
+
+    return {
+        "id": session_id or path.stem,
+        "source": "codex",
+        "path": str(path),
+        "subagent_paths": [],
+        "cwd": cwd,
+        "git_branch": None,
+        "started_at": started_at,
+        "ended_at": ended_at,
+        "user_msg_count": user_msg_count,
+        "tool_stats": tool_stats,
+        "first_user_msg": first_user_msg,
+        "last_user_msg": last_user_msg,
+        "has_compact_summary": False,
+        "size_bytes": path.stat().st_size,
+    }

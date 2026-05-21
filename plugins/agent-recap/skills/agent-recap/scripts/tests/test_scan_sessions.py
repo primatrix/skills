@@ -58,5 +58,30 @@ class TestParseClaudeSession(unittest.TestCase):
         self.assertEqual(result["last_user_msg"], "third")
 
 
+class TestParseCodexSession(unittest.TestCase):
+    def test_minimal_codex_session(self):
+        path = FIXTURES / "codex" / "minimal.jsonl"
+        result = scan_sessions.parse_codex_session(path)
+        self.assertEqual(result["id"], "019e-codex-min-001")
+        self.assertEqual(result["source"], "codex")
+        self.assertEqual(result["cwd"], "/tmp/proj-cx")
+        self.assertIsNone(result["git_branch"])  # Codex has no git branch
+        self.assertEqual(result["user_msg_count"], 1)
+        self.assertEqual(result["first_user_msg"], "hello codex")
+        self.assertEqual(result["last_user_msg"], "hello codex")
+        self.assertEqual(result["tool_stats"], {})
+        self.assertFalse(result["has_compact_summary"])
+        self.assertEqual(result["subagent_paths"], [])
+        self.assertEqual(result["started_at"], "2026-05-20T15:00:00.000Z")
+
+    def test_codex_session_with_function_calls(self):
+        path = FIXTURES / "codex" / "with_tools.jsonl"
+        result = scan_sessions.parse_codex_session(path)
+        self.assertEqual(result["tool_stats"], {"shell": 2})
+        self.assertEqual(result["user_msg_count"], 2)
+        self.assertEqual(result["first_user_msg"], "run ls")
+        self.assertEqual(result["last_user_msg"], "thanks")
+
+
 if __name__ == "__main__":
     unittest.main()
