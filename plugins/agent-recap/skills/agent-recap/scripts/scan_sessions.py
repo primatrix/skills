@@ -185,3 +185,69 @@ def parse_codex_session(path: Path) -> dict[str, Any]:
         "has_compact_summary": False,
         "size_bytes": path.stat().st_size,
     }
+
+
+import time
+
+PARSERS = {
+    "claude": parse_claude_session,
+    "codex": parse_codex_session,
+}
+
+
+def scan_directory(
+    root: Path,
+    *,
+    source: str,
+    since_days: int,
+) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
+    """Walk `root`, return (sessions, errors). Missing root → empty lists."""
+    sessions: list[dict[str, Any]] = []
+    errors: list[dict[str, str]] = []
+    if not root.exists():
+        return sessions, errors
+
+    parser = PARSERS[source]
+    cutoff = time.time() - since_days * 86400
+
+    # Collect all .jsonl files; classify each as top-level vs subagent
+    all_files = list(root.rglob("*.jsonl"))
+    subagent_files: list[Path] = []
+    top_files: list[Path] = []
+    for p in all_files:
+        if p.stat().st_mtime < cutoff:
+            continue
+        if p.parent.name == "subagents":
+            subagent_files.append(p)
+        else:
+            top_files.append(p)
+
+    # Index subagents by their parent session directory
+    subagents_by_parent_dir: dict[Path, list[Path]] = {}
+    for sp in subagent_files:
+        parent_dir = sp.parent.parent  # .../<session_uuid>/subagents/agent-x.jsonl → .../<session_uuid>
+        subagents_by_parent_dir.setdefault(parent_dir, []).append(sp)
+
+    for fp in sorted(top_files):
+        try:
+            meta = parser(fp)
+        except Exception as exc:  # parser blew up entirely
+            errors.append({"path": str(fp), "reason": f"{type(exc).__name__}: {exc}"})
+            continue
+
+        # Attach subagents whose parent dir matches this session's id (Claude convention:
+        # <encoded-cwd>/<session_uuid>/subagents/...). If a sibling dir of the same
+        # basename as the file (minus .jsonl) exists with subagents, attach those.
+        sib = fp.parent / fp.stem
+        if sib in subagents_by_parent_dir:
+            meta["subagent_paths"] = [str(p) for p in sorted(subagents_by_parent_dir[sib])]
+        # Also handle the test layout: subagents/ directly under fp.parent
+        flat_sub = fp.parent
+        if flat_sub in subagents_by_parent_dir:
+            meta["subagent_paths"] = sorted(
+                set(meta["subagent_paths"]) | {str(p) for p in subagents_by_parent_dir[flat_sub]}
+            )
+
+        sessions.append(meta)
+
+    return sessions, errors

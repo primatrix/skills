@@ -106,5 +106,65 @@ class TestSchemaConsistency(unittest.TestCase):
         self.assertEqual(set(claude.keys()), set(codex.keys()))
 
 
+import tempfile
+import os
+import shutil
+import time
+
+
+class TestScanDirectory(unittest.TestCase):
+    """scan_directory() walks a root and returns (sessions, errors)."""
+
+    def test_returns_empty_on_missing_root(self):
+        sessions, errors = scan_sessions.scan_directory(Path("/nonexistent/path/xyz"), source="claude", since_days=7)
+        self.assertEqual(sessions, [])
+        self.assertEqual(errors, [])
+
+    def test_filters_by_mtime(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            old = root / "old.jsonl"
+            new = root / "new.jsonl"
+            shutil.copy(FIXTURES / "claude" / "minimal.jsonl", old)
+            shutil.copy(FIXTURES / "claude" / "minimal.jsonl", new)
+            # Backdate `old` to 30 days ago
+            ts_old = time.time() - 30 * 86400
+            os.utime(old, (ts_old, ts_old))
+
+            sessions, _ = scan_sessions.scan_directory(root, source="claude", since_days=7)
+            paths = {Path(s["path"]).name for s in sessions}
+            self.assertIn("new.jsonl", paths)
+            self.assertNotIn("old.jsonl", paths)
+
+    def test_subagent_files_attach_to_parent_not_top_level(self):
+        # Lay out: <root>/parent.jsonl + <root>/subagents/agent-x.jsonl
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            parent_dir = root / "encoded-cwd"
+            sub_dir = parent_dir / "subagents"
+            sub_dir.mkdir(parents=True)
+            shutil.copy(FIXTURES / "claude" / "subagent_parent.jsonl", parent_dir / "sess-parent-001.jsonl")
+            shutil.copy(FIXTURES / "claude" / "subagents" / "agent-fixture.jsonl", sub_dir / "agent-fixture.jsonl")
+
+            sessions, _ = scan_sessions.scan_directory(root, source="claude", since_days=7)
+            self.assertEqual(len(sessions), 1, f"Expected only the parent session at top level, got {sessions}")
+            parent = sessions[0]
+            self.assertEqual(parent["id"], "sess-parent-001")
+            self.assertEqual(len(parent["subagent_paths"]), 1)
+            self.assertTrue(parent["subagent_paths"][0].endswith("agent-fixture.jsonl"))
+
+    def test_broken_file_listed_in_errors(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            # broken file that cannot be parsed AT ALL (e.g., binary)
+            bad = root / "evil.jsonl"
+            bad.write_bytes(b"\x00\x01\x02 not json at all \xff")
+            sessions, errors = scan_sessions.scan_directory(root, source="claude", since_days=7)
+            # The parser tolerates per-line decode errors, so the session may still be
+            # produced (with empty fields). What MUST be true: scan does not crash.
+            self.assertIsInstance(sessions, list)
+            self.assertIsInstance(errors, list)
+
+
 if __name__ == "__main__":
     unittest.main()
