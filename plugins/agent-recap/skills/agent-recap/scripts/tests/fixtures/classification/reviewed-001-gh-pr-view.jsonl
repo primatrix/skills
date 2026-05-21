@@ -1,0 +1,5 @@
+{"type":"user","message":{"role":"user","content":"帮我看一下 PR #1234，给点 review 意见"},"cwd":"/tmp/sglang","gitBranch":"main","sessionId":"reviewed-001","timestamp":"2026-05-21T12:00:00.000Z","version":"2.1.0"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","name":"Bash","id":"t1","input":{"command":"gh pr view 1234"}}]},"cwd":"/tmp/sglang","gitBranch":"main","sessionId":"reviewed-001","timestamp":"2026-05-21T12:00:05.000Z","version":"2.1.0"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","name":"Bash","id":"t2","input":{"command":"gh pr diff 1234"}}]},"cwd":"/tmp/sglang","gitBranch":"main","sessionId":"reviewed-001","timestamp":"2026-05-21T12:00:15.000Z","version":"2.1.0"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"PR #1234 看起来 OK，但 utils.py 那段重复逻辑可以抽函数"}]},"cwd":"/tmp/sglang","gitBranch":"main","sessionId":"reviewed-001","timestamp":"2026-05-21T12:01:00.000Z","version":"2.1.0"}
+{"type":"user","message":{"role":"user","content":"好，我评论一下"},"cwd":"/tmp/sglang","gitBranch":"main","sessionId":"reviewed-001","timestamp":"2026-05-21T12:02:00.000Z","version":"2.1.0"}
