@@ -78,6 +78,15 @@
       "license": "Apache-2.0",
       "keywords": ["tpu", "performance", "modeling", "roofline", "pallas"],
       "category": "performance"
+    },
+    {
+      "name": "agent-recap",
+      "source": "./plugins/agent-recap",
+      "description": "Mine local Claude/Codex session history to produce structured daily/weekly work recaps with optional GitHub Issue sync",
+      "version": "0.1.0",
+      "license": "Apache-2.0",
+      "keywords": ["recap", "session", "summary", "report", "agent-history"],
+      "category": "productivity"
     }
   ]
 }
