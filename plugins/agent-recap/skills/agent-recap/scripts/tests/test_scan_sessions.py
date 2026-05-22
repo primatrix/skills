@@ -137,13 +137,16 @@ class TestScanDirectory(unittest.TestCase):
             self.assertNotIn("old.jsonl", paths)
 
     def test_subagent_files_attach_to_parent_not_top_level(self):
-        # Lay out: <root>/parent.jsonl + <root>/subagents/agent-x.jsonl
+        # Real Claude layout:
+        #   <root>/<encoded-cwd>/<uuid>.jsonl
+        #   <root>/<encoded-cwd>/<uuid>/subagents/agent-x.jsonl
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            parent_dir = root / "encoded-cwd"
-            sub_dir = parent_dir / "subagents"
+            encoded_cwd = root / "encoded-cwd"
+            uuid = "sess-parent-001"
+            sub_dir = encoded_cwd / uuid / "subagents"
             sub_dir.mkdir(parents=True)
-            shutil.copy(FIXTURES / "claude" / "subagent_parent.jsonl", parent_dir / "sess-parent-001.jsonl")
+            shutil.copy(FIXTURES / "claude" / "subagent_parent.jsonl", encoded_cwd / f"{uuid}.jsonl")
             shutil.copy(FIXTURES / "claude" / "subagents" / "agent-fixture.jsonl", sub_dir / "agent-fixture.jsonl")
 
             sessions, _ = scan_sessions.scan_directory(root, source="claude", since_days=7)

@@ -201,8 +201,24 @@ intents 已保存到 ~/.agent-recap/<filename>.json（30 天后自动清理；
 **Step 5.3 — Execute selected actions:**
 
 For each chosen action:
-- `kind == "comment_on_issue"` → run `gh issue comment <owner/repo>#<N> --body "<body>"` via Bash
-- `kind == "create_issue"` → invoke the `/beaver-create` skill with the repo, title, and body
+- `kind == "comment_on_issue"` → **never inline the body in the shell command** (body is
+  Markdown and almost certainly contains quotes, backticks, `$`, `\`, or newlines).
+  Write the body to a temp file first, then pass it via `--body-file`:
+  ```bash
+  tmp=$(mktemp); printf '%s' "$BODY" > "$tmp"
+  gh issue comment <owner/repo>#<N> --body-file "$tmp"
+  rm -f "$tmp"
+  ```
+  Equivalently, you may use a stdin heredoc with a sentinel that does not appear in
+  the body:
+  ```bash
+  gh issue comment <owner/repo>#<N> --body-file - <<'AGENT_RECAP_EOF'
+  <body>
+  AGENT_RECAP_EOF
+  ```
+- `kind == "create_issue"` → invoke the `/beaver-create` skill with the repo, title,
+  and body (same rule: never inline the body — pass via a temp file if `/beaver-create`
+  ultimately shells out to `gh`).
 - `kind == "skip"` → do nothing
 
 Capture each action's exit status. After all actions run, summarize:

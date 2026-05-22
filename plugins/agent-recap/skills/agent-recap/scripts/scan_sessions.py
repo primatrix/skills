@@ -4,7 +4,11 @@
 Outputs a JSON document describing recent sessions; see references/jsonl-schema.md
 for the output shape.
 """
+import argparse
+import datetime as _dt
 import json
+import re
+import time
 from pathlib import Path
 from typing import Any
 
@@ -187,8 +191,6 @@ def parse_codex_session(path: Path) -> dict[str, Any]:
     }
 
 
-import time
-
 PARSERS = {
     "claude": parse_claude_session,
     "codex": parse_codex_session,
@@ -235,27 +237,18 @@ def scan_directory(
             errors.append({"path": str(fp), "reason": f"{type(exc).__name__}: {exc}"})
             continue
 
-        # Attach subagents whose parent dir matches this session's id (Claude convention:
-        # <encoded-cwd>/<session_uuid>/subagents/...). If a sibling dir of the same
-        # basename as the file (minus .jsonl) exists with subagents, attach those.
+        # Attach subagents whose parent dir matches this session's id.
+        # Claude convention: <encoded-cwd>/<session_uuid>.jsonl as the main file,
+        # with <encoded-cwd>/<session_uuid>/subagents/agent-X.jsonl as the children.
+        # The anchor is `fp.parent / fp.stem` (the directory named after the session id).
         sib = fp.parent / fp.stem
         if sib in subagents_by_parent_dir:
             meta["subagent_paths"] = [str(p) for p in sorted(subagents_by_parent_dir[sib])]
-        # Also handle the test layout: subagents/ directly under fp.parent
-        flat_sub = fp.parent
-        if flat_sub in subagents_by_parent_dir:
-            meta["subagent_paths"] = sorted(
-                set(meta["subagent_paths"]) | {str(p) for p in subagents_by_parent_dir[flat_sub]}
-            )
 
         sessions.append(meta)
 
     return sessions, errors
 
-
-import argparse
-import datetime as _dt
-import re
 
 DEFAULT_CLAUDE_ROOT = Path.home() / ".claude" / "projects"
 DEFAULT_CODEX_ROOT = Path.home() / ".codex" / "sessions"
