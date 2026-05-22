@@ -59,24 +59,13 @@ A session is classified into ONE of these five mutually exclusive types. Pick th
 **Signals (negative):**
 - The cleanup was part of a bigger feature → roll it under that feature's `solved` entry.
 
-## Issue reference extraction (`issue_ref`)
+## Do NOT attempt to extract issue references
 
-Only set `issue_ref` when there is a **strong signal**. Weak signals MUST return `null`.
-
-**Strong signals (set `issue_ref`, confidence=high):**
-- The user or assistant text contains an explicit `#<number>` token (e.g. `#1088`).
-- A commit message in a Bash call contains `#<number>` or `Closes #<number>`.
-- The git branch name starts with or contains an issue number (`fix/42-something`).
-
-**Medium signals (set `issue_ref`, confidence=medium):**
-- A commit message references a PR number (e.g. `(#1234)`) without explicit issue link.
-
-**Weak signals → return `null`:**
-- Topic seems related to an issue title you remember seeing somewhere.
-- The repo has an open issue with similar wording.
-- The branch name *could* be tied to an issue but doesn't include the number.
-
-Format: `<owner>/<repo>#<number>` (e.g. `primatrix/skills#42`). When the repo cannot be confidently inferred from cwd, use just `#<number>` (the user will be asked to disambiguate).
+`issue_ref` has been removed from this contract. Even if you see explicit
+`#<number>` tokens in the session, **do not** include them in the output JSON.
+Issue linkage is decided interactively by the user in Stage 5.1 after they
+review the Stage 3 recap. Trying to match issues here just causes false
+positives and pre-empts a decision that belongs to the user.
 
 ## Output JSON contract (return ONLY this shape, nothing else)
 
@@ -85,11 +74,15 @@ Format: `<owner>/<repo>#<number>` (e.g. `primatrix/skills#42`). When the repo ca
   "type": "solved" | "researched" | "reviewed" | "blocked" | "misc",
   "project": "<repo name from cwd, e.g. 'primatrix/skills' or 'sgl-jax'>",
   "topic": "<1 sentence in Chinese, ≤ 30 chars>",
-  "issue_ref": "<owner/repo#N or #N or null>",
-  "issue_ref_confidence": "high" | "medium",
-  "evidence": ["<≤ 80-char fragment>", "<≤ 80-char fragment>"],
+  "purpose": "<1 Chinese sentence: what the user was trying to do>",
+  "process": "<1 Chinese sentence: agent's key tools/commits/PRs>",
+  "outcome": "<1 Chinese sentence: current state / what user said last>",
   "confidence": "high" | "medium" | "low"
 }
 ```
 
-Omit `issue_ref_confidence` when `issue_ref` is null.
+`purpose` / `process` / `outcome` should each be one tight Chinese sentence
+(roughly ≤ 60 chars). The Stage 3 recap uses them verbatim under the headings
+"目的 / 过程 / 结果". Be concrete: name the PR number, branch, file, or
+commit message you saw — but only as part of the prose, never as a separate
+`issue_ref` field.

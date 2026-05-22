@@ -62,6 +62,15 @@ Also read these reference files first:
 Then classify this session per the rubric and return ONLY the JSON object
 described at the end of classification-rubric.md (no other text).
 
+The JSON MUST include `purpose` / `process` / `outcome` (one Chinese sentence
+each) so the Stage 3 recap can show what the user wanted, how the agent
+worked, and the current state — NOT just a one-line "evidence" snippet.
+
+**Do NOT attempt to look up or guess any GitHub issue / PR number for the
+`issue_ref` field — that field has been removed from the contract.** Issue
+linkage is decided interactively by the user in Stage 5.1 after they review
+the recap.
+
 Session metadata for context:
   cwd: <cwd>
   git_branch: <git_branch>
@@ -86,22 +95,26 @@ sort by `ended_at` ascending. Print as Markdown:
 ## Recap: 过去 <N> 天（<YYYY-MM-DD>）
 
 ### ✅ 解决（<count>）
-1. [<project> <issue_ref or ⚠️未匹配issue>] <topic>
-   - 证据: <evidence[0]>
-   - 来源: <session.id[:8]>...
+
+**1. <topic>**（<session.id[:8]>, <project>, <ended_at>）
+- **目的**: <一句中文：用户想做什么>
+- **过程**: <一句中文：agent 关键步骤/工具/PR/commit>
+- **结果**: <一句中文：当前状态/产出/用户最后确认>
+
 ...
 
 ### 🔎 调研（<count>）
-...
+（同上格式）
 
 ### 👀 Review（<count>）
-...
+（同上格式）
 
 ### 🚧 被 Block（<count>）
-...
+（同上格式）
 
-### 🗒️ 杂项（<count>）— 默认不同步
-...
+### 🗒️ 杂项（<count>）— 默认不进同步候选
+
+- **<session.id[:8]>** (<ended_at>, <project>) — <一句杂项摘要>
 
 ### ⚠️ 解析失败（<count>）
 - session <id> — <one-line reason>
@@ -110,6 +123,9 @@ sort by `ended_at` ascending. Print as Markdown:
 Always include every section header, even if a section has zero items
 (show `（0）` count and an empty body line). Always include the ⚠️ section
 at the end; print "(空)" inside if there were no parse failures.
+
+**Do NOT include any GitHub issue / PR reference in Stage 3.** Issue linkage
+is decided interactively by the user in Stage 5.1 after they review the recap.
 
 ### Stage 4 — Human review
 
@@ -133,20 +149,43 @@ find ~/.agent-recap -name "*-intents.json" -type f -mtime +30 -delete 2>/dev/nul
 Files matching `~/.agent-recap/keep-*.json` are NEVER touched (the find
 pattern `*-intents.json` excludes them by name).
 
-**Step 5.1 — Handle unmatched-issue entries:**
+**Step 5.1 — Ask the user to link each non-misc entry to an issue:**
 
-For every entry where `issue_ref` is null AND `type` ∈ {solved, researched, reviewed, blocked}, ask the user:
+After the user has confirmed the Stage 3 recap, present a per-entry decision
+table for every entry where `type` ∈ {solved, researched, reviewed, blocked}
+(misc is excluded by default — only include misc if user explicitly asks).
 
-> 还有 N 条未匹配 issue（编号 3, 7, 8）。请逐条决定（或统一选项）：
->   a. 跳过（不进同步）
->   b. 手动指定 issue 号（如 "3: sglang/sgl-jax#999"）
->   c. 创建新 issue（走 /beaver-create）
+Present like this:
 
-Map each entry to one of three `kind` values: `skip`, `comment_on_issue`,
-or `create_issue` based on the user's response.
+> 📌 issue 关联 / 创建 决策
+>
+> | 编号 | 摘要 | 选项 |
+> |---|---|---|
+> | ✅1 | <topic> | skip / 关联 issue # / 创建新 issue |
+> | ✅2 | <topic> | skip / 关联 issue # / 创建新 issue |
+> | ... | ... | ... |
+>
+> 请按编号告诉我每条的处理方式：
+> - **skip** — 不进同步
+> - **关联 <owner/repo>#<N>** — 会用 `gh issue comment` 在该 issue 下贴一条进展评论
+> - **创建新 issue** — 会**主动调用 `/beaver-create` skill** 走完整 Beaver 流程
+>   （含 brainstorming QA + 自动 Status / Type / Size 字段填写 + 自动 commit/PR 钩子）
+>
+> 回复格式举例：
+> ```
+> 1: skip
+> 2: 关联 sgl-project/sglang-jax#1234
+> 3: 创建新 issue
+> ```
+> 或一句话："全 skip" / "我先不同步，只看清单"
 
-`misc` entries are EXCLUDED from sync by default. Only include them if
-the user explicitly says so.
+Based on user replies, map each entry to one of three `kind` values:
+- `skip` — do nothing for this entry
+- `comment_on_issue` — user supplied an `owner/repo#N`
+- `create_issue` — user requested new issue creation (Stage 5.3 will
+  **invoke the `/beaver-create` skill**, NOT raw `gh issue create`)
+
+If a `misc` entry is opted in by the user, treat it the same way.
 
 **Step 5.2 — Write intents.json and show the dry-run list:**
 
@@ -216,9 +255,13 @@ For each chosen action:
   <body>
   AGENT_RECAP_EOF
   ```
-- `kind == "create_issue"` → invoke the `/beaver-create` skill with the repo, title,
-  and body (same rule: never inline the body — pass via a temp file if `/beaver-create`
-  ultimately shells out to `gh`).
+- `kind == "create_issue"` → **always invoke the `/beaver-create` skill** (do NOT
+  call `gh issue create` directly). `/beaver-create` runs the full Beaver issue
+  lifecycle: brainstorming QA, Status / Type / Size field population on Project
+  V2 #14, label hygiene, and any guardrail checks the Beaver engine enforces.
+  Pass the repo, title, and pre-rendered body; if `/beaver-create` ultimately
+  shells out to `gh`, use the same temp-file pattern above so the body is never
+  inlined into the shell command.
 - `kind == "skip"` → do nothing
 
 Capture each action's exit status. After all actions run, summarize:
