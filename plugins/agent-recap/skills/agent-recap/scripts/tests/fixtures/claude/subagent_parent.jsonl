@@ -1,0 +1,2 @@
+{"type":"user","message":{"role":"user","content":"do parallel work"},"cwd":"/tmp/proj-d","gitBranch":"main","sessionId":"sess-parent-001","timestamp":"2026-05-20T13:00:00.000Z","version":"2.1.0"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","name":"Agent","id":"t1","input":{}}]},"cwd":"/tmp/proj-d","gitBranch":"main","sessionId":"sess-parent-001","timestamp":"2026-05-20T13:00:01.000Z","version":"2.1.0"}

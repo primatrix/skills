@@ -1,0 +1,5 @@
+{"type":"user","message":{"role":"user","content":"read file"},"cwd":"/tmp/proj-b","gitBranch":"feat/x","sessionId":"sess-tools-001","timestamp":"2026-05-20T11:00:00.000Z","version":"2.1.0"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","name":"Read","id":"t1","input":{"file_path":"/tmp/x"}}]},"cwd":"/tmp/proj-b","gitBranch":"feat/x","sessionId":"sess-tools-001","timestamp":"2026-05-20T11:00:02.000Z","version":"2.1.0"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","name":"Bash","id":"t2","input":{"command":"ls"}}]},"cwd":"/tmp/proj-b","gitBranch":"feat/x","sessionId":"sess-tools-001","timestamp":"2026-05-20T11:00:04.000Z","version":"2.1.0"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","name":"Bash","id":"t3","input":{"command":"pwd"}}]},"cwd":"/tmp/proj-b","gitBranch":"feat/x","sessionId":"sess-tools-001","timestamp":"2026-05-20T11:00:06.000Z","version":"2.1.0"}
+{"type":"user","message":{"role":"user","content":"thanks"},"cwd":"/tmp/proj-b","gitBranch":"feat/x","sessionId":"sess-tools-001","timestamp":"2026-05-20T11:00:10.000Z","version":"2.1.0"}
