@@ -119,7 +119,7 @@ Rules:
 
 After printing the recap, prompt the user:
 
-> 请审阅以上清单。可以说"删掉第 X 条"、"第 Y 条改成 ..."、"合并第 A 和 B"、"确认无误"。
+> 请审阅以上清单。可以说：删掉第 X 条、第 Y 条改成 ...、合并第 A 和 B、确认无误。
 
 Apply edits in memory only (no disk writes yet). Loop until the user confirms or refuses sync.
 
@@ -162,7 +162,7 @@ Present a per-entry decision table for every confirmed entry in `{solved, resear
 2: 关联 sgl-project/sglang-jax#1234
 3: 创建新 issue
 
-或一句话："全 skip" / "我先不同步，只看清单"
+或一句话：全 skip / 我先不同步，只看清单
 ```
 
 Map each user reply to one `kind`:
@@ -200,7 +200,7 @@ Print the dry-run preview and prompt for the final confirmation:
 intents 已保存到 ~/.agent-recap/<filename>（30 天后自动清理；
 改名为 keep-*.json 可永久保留）。
 
-回复 "全部执行" / "只执行 1,3" / "取消"。
+回复：全部执行 / 只执行 1,3 / 取消。
 ```
 
 #### 5.3 — Execute selected actions
