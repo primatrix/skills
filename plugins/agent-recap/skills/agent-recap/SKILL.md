@@ -62,9 +62,11 @@ Also read these reference files first:
 Then classify this session per the rubric and return ONLY the JSON object
 described at the end of classification-rubric.md (no other text).
 
-The JSON MUST include `purpose` / `process` / `outcome` (one Chinese sentence
-each) so the Stage 3 recap can show what the user wanted, how the agent
-worked, and the current state — NOT just a one-line "evidence" snippet.
+The JSON MUST include `purpose` / `process` / `outcome` (in Chinese) so the
+Stage 3 recap can show what the user wanted, how the agent worked, and the
+current state — NOT just a one-line "evidence" snippet. There is no hard
+length cap on these three fields; write as much as the entry genuinely
+needs and no more (tight paragraphs over filler).
 
 **Do NOT attempt to look up or guess any GitHub issue / PR number for the
 `issue_ref` field — that field has been removed from the contract.** Issue
@@ -97,9 +99,12 @@ sort by `ended_at` ascending. Print as Markdown:
 ### ✅ 解决（<count>）
 
 **1. <topic>**（<session.id[:8]>, <project>, <ended_at>）
-- **目的**: <一句中文：用户想做什么>
-- **过程**: <一句中文：agent 关键步骤/工具/PR/commit>
-- **结果**: <一句中文：当前状态/产出/用户最后确认>
+- **目的**: <中文：用户想做什么>
+- **过程**: <中文：agent 关键步骤/工具/PR/commit>
+- **结果**: <中文：当前状态/产出/用户最后确认>
+
+(No hard length cap on these three fields — write as much as the entry
+needs, no more. Tight paragraphs over filler.)
 
 ...
 

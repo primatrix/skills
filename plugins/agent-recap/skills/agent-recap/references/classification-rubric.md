@@ -73,16 +73,17 @@ positives and pre-empts a decision that belongs to the user.
 {
   "type": "solved" | "researched" | "reviewed" | "blocked" | "misc",
   "project": "<repo name from cwd, e.g. 'primatrix/skills' or 'sgl-jax'>",
-  "topic": "<1 sentence in Chinese, ≤ 30 chars>",
-  "purpose": "<1 Chinese sentence: what the user was trying to do>",
-  "process": "<1 Chinese sentence: agent's key tools/commits/PRs>",
-  "outcome": "<1 Chinese sentence: current state / what user said last>",
+  "topic": "<short Chinese title, ≤ 30 chars>",
+  "purpose": "<Chinese: what the user was trying to do>",
+  "process": "<Chinese: agent's key tools / commits / PRs / files touched>",
+  "outcome": "<Chinese: current state / artifacts produced / what user said last>",
   "confidence": "high" | "medium" | "low"
 }
 ```
 
-`purpose` / `process` / `outcome` should each be one tight Chinese sentence
-(roughly ≤ 60 chars). The Stage 3 recap uses them verbatim under the headings
-"目的 / 过程 / 结果". Be concrete: name the PR number, branch, file, or
-commit message you saw — but only as part of the prose, never as a separate
-`issue_ref` field.
+`purpose` / `process` / `outcome` are reproduced verbatim by Stage 3 under
+the headings "目的 / 过程 / 结果". No hard character/sentence limit — write
+as much as the entry genuinely needs, but no more. Prefer one tight paragraph
+over multiple loose sentences of filler. Be concrete: name the PR number,
+branch, file path, commit message, or error you saw — but only as part of the
+prose, never as a separate `issue_ref` field.
