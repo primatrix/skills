@@ -4,94 +4,80 @@ description: Mine local Claude/Codex session history to produce a structured wor
 argument-hint: "[time range, e.g. '今天' / '本周' / '3 days' / '7d']"
 ---
 
-# agent-recap — Mine your AI agent history for a work recap
+# /agent-recap — Local Claude/Codex session work recap
 
-## What this skill does
+Scan local Claude Code and Codex CLI session jsonl files, classify each session into one of five work types (`solved` / `researched` / `reviewed` / `blocked` / `misc`), present the result as a Markdown checklist for the user to review, and optionally sync each entry to GitHub via `gh issue comment` or `/beaver-create`.
 
-You scan local Claude Code and Codex CLI session jsonl files, classify each session
-into one of five work types (solved / researched / reviewed / blocked / misc), and
-present the result as a Markdown checklist for the user to review and optionally
-sync to GitHub Issues.
+## Input
 
-## Inputs
+One optional natural-language time-range argument. Resolve to an integer `N` (days) and clamp to `[1, 7]`. If the user asks for > 7 days, silently cap at 7 and note it in the recap header.
 
-The user invokes you with an optional natural-language time range:
+| User input | N |
+|---|---|
+| (no argument) / `今天` / `today` | 1 |
+| `昨天和今天` / `yesterday and today` | 2 |
+| `本周` / `this week` | 7 |
+| `过去 N 天` / `N days` / `Nd` | N |
 
-- "今天" / "today" / no argument → 1 day
-- "昨天和今天" / "yesterday and today" → 2 days
-- "本周" / "this week" → 7 days
-- "过去 N 天" / "N days" / "Nd" → N days
+## Workflow
 
-**Always clamp N to the range [1, 7]**. If the user asks for more than 7 days,
-silently cap at 7 and mention it in the output header.
+### Phase 1: Scan session metadata
 
-## Five stages
-
-### Stage 1 — Scan session metadata
-
-Run the deterministic scanner:
+Run the deterministic scanner with the resolved N:
 
 ```bash
-python3 ${CLAUDE_PLUGIN_ROOT}/skills/agent-recap/scripts/scan_sessions.py --since Nd
+python3 ${CLAUDE_PLUGIN_ROOT}/skills/agent-recap/scripts/scan_sessions.py --since <N>d
 ```
 
-(Substitute the resolved N from the user's input.)
+Output is one JSON document with `sessions[]` and `errors[]`. Per-session fields are documented in `references/jsonl-schema.md`.
 
-The output is a JSON document with `sessions[]` and `errors[]`. Each session
-record contains: `id`, `source` (`claude` | `codex`), `path`, `subagent_paths[]`,
-`cwd`, `git_branch`, `started_at`, `ended_at`, `user_msg_count`, `tool_stats`,
-`first_user_msg`, `last_user_msg`, `has_compact_summary`, `size_bytes`.
+Filter out trivial sessions before Phase 2:
 
-**Filter out trivial sessions** before Stage 2:
-- `user_msg_count == 0` (empty / aborted sessions)
-- `size_bytes < 1024` (negligible content)
+- `user_msg_count == 0`
+- `size_bytes < 1024`
 
-### Stage 2 — Dispatch one Explore subagent per session
+If the scanner exits non-zero, print its stderr to the user and stop.
 
-For every remaining session, dispatch one `Agent` tool call with
-`subagent_type: "Explore"`. **Dispatch all subagents in parallel** (multiple
-Agent tool calls in a single message) so they run concurrently. The subagent
-prompt template:
+### Phase 2: Dispatch one Explore subagent per session
+
+For each filtered session, dispatch one `Agent` tool call with `subagent_type: "Explore"`. Dispatch ALL subagents in parallel — multiple `Agent` tool calls in a single message — so they run concurrently.
+
+Subagent prompt template:
 
 ```
-Read the session jsonl at <path> and any subagent paths: <subagent_paths>.
-Also read these reference files first:
+Read these reference files first:
   - ${CLAUDE_PLUGIN_ROOT}/skills/agent-recap/references/jsonl-schema.md
   - ${CLAUDE_PLUGIN_ROOT}/skills/agent-recap/references/classification-rubric.md
 
-Then classify this session per the rubric and return ONLY the JSON object
-described at the end of classification-rubric.md (no other text).
+Then analyze the session jsonl at <path> and any subagent paths: <subagent_paths>.
 
-The JSON MUST include `purpose` / `process` / `outcome` (in Chinese) so the
-Stage 3 recap can show what the user wanted, how the agent worked, and the
-current state — NOT just a one-line "evidence" snippet. There is no hard
-length cap on these three fields; write as much as the entry genuinely
-needs and no more (tight paragraphs over filler).
+For jsonls larger than ~200 KB, use Bash `head` / `tail` / `grep` to sample
+instead of `Read`-ing the whole file. Useful grep patterns: git commit /
+gh pr / Edit / Write tool_use lines, plus tone cues like "完美" "搞定"
+"还是不行" "为什么没用".
 
-**Do NOT attempt to look up or guess any GitHub issue / PR number for the
-`issue_ref` field — that field has been removed from the contract.** Issue
-linkage is decided interactively by the user in Stage 5.1 after they review
-the recap.
+Classify per the rubric and return ONLY the JSON object specified at the
+end of classification-rubric.md. Do NOT extract any GitHub issue / PR
+reference — issue linkage is decided interactively in Phase 5.
 
 Session metadata for context:
-  cwd: <cwd>
-  git_branch: <git_branch>
-  tool_stats: <tool_stats>
-  user_msg_count: <user_msg_count>
-  first_user_msg: <first_user_msg>
-  last_user_msg:  <last_user_msg>
+  cwd:             <cwd>
+  git_branch:      <git_branch>
+  tool_stats:      <tool_stats>
+  user_msg_count:  <user_msg_count>
+  first_user_msg:  <first_user_msg>
+  last_user_msg:   <last_user_msg>
 ```
 
 When a subagent returns:
-- If the response parses as valid JSON matching the contract, store it.
-- If the response is malformed or missing fields, mark this session as
-  "parse failed" and continue. Do NOT retry.
 
-### Stage 3 — Aggregate and print the recap
+- Valid JSON matching the contract → store it.
+- Malformed / missing fields / timeout → mark the session as "parse failed", continue. Do NOT retry.
+- If ALL subagents fail, still proceed to Phase 3 with empty groups plus a populated ⚠️ section, so the user can see what was scanned.
 
-Group classified sessions by `type` in this fixed order:
-`solved`, `researched`, `reviewed`, `blocked`, `misc`. Within each group,
-sort by `ended_at` ascending. Print as Markdown:
+### Phase 3: Aggregate and print the recap
+
+Group classified sessions by `type` in this fixed order: `solved`, `researched`, `reviewed`, `blocked`, `misc`. Within each group, sort by `ended_at` ascending. Render as Markdown:
 
 ```markdown
 ## Recap: 过去 <N> 天（<YYYY-MM-DD>）
@@ -99,210 +85,174 @@ sort by `ended_at` ascending. Print as Markdown:
 ### ✅ 解决（<count>）
 
 **1. <topic>**（<session.id[:8]>, <project>, <ended_at>）
-- **目的**: <中文：用户想做什么>
-- **过程**: <中文：agent 关键步骤/工具/PR/commit>
-- **结果**: <中文：当前状态/产出/用户最后确认>
-
-(No hard length cap on these three fields — write as much as the entry
-needs, no more. Tight paragraphs over filler.)
+- **目的**: <subagent.purpose>
+- **过程**: <subagent.process>
+- **结果**: <subagent.outcome>
 
 ...
 
 ### 🔎 调研（<count>）
-（同上格式）
+(same per-entry shape)
 
 ### 👀 Review（<count>）
-（同上格式）
+(same per-entry shape)
 
 ### 🚧 被 Block（<count>）
-（同上格式）
+(same per-entry shape)
 
 ### 🗒️ 杂项（<count>）— 默认不进同步候选
 
-- **<session.id[:8]>** (<ended_at>, <project>) — <一句杂项摘要>
+- **<session.id[:8]>** (<ended_at>, <project>) — <subagent.topic>
 
 ### ⚠️ 解析失败（<count>）
 - session <id> — <one-line reason>
 ```
 
-Always include every section header, even if a section has zero items
-(show `（0）` count and an empty body line). Always include the ⚠️ section
-at the end; print "(空)" inside if there were no parse failures.
+Rules:
 
-**Do NOT include any GitHub issue / PR reference in Stage 3.** Issue linkage
-is decided interactively by the user in Stage 5.1 after they review the recap.
+- Always include every section header, even with zero items. Show `(0)` in the count and `(empty)` in the body.
+- Always include the ⚠️ section. Print `(empty)` if no failures.
+- `purpose` / `process` / `outcome` are reproduced **verbatim** from the subagent JSON. Do NOT paraphrase or compress.
+- Do NOT print any GitHub issue / PR reference here. Issue linkage belongs to Phase 5.
 
-### Stage 4 — Human review
+### Phase 4: User review
 
-After printing the recap, say:
+After printing the recap, prompt the user:
 
 > 请审阅以上清单。可以说"删掉第 X 条"、"第 Y 条改成 ..."、"合并第 A 和 B"、"确认无误"。
 
-Apply the user's edits in memory (do NOT write to disk yet). Repeat until
-the user says "确认无误" or equivalent ("ok", "好"). If the user asks to stop
-(refuses to sync), skip Stage 5 entirely and exit.
+Apply edits in memory only (no disk writes yet). Loop until the user confirms or refuses sync.
 
-### Stage 5 — Sync to GitHub Issues (default dry-run)
+If the user declines sync ("不同步" / "我先不发" / similar), skip Phase 5 entirely.
 
-**Step 5.0 — Run cleanup of expired intents files first:**
+### Phase 5: Sync to GitHub (default dry-run, optional)
+
+#### 5.0 — Cleanup expired intents files
+
+Always run first:
 
 ```bash
 mkdir -p ~/.agent-recap
 find ~/.agent-recap -name "*-intents.json" -type f -mtime +30 -delete 2>/dev/null || true
 ```
 
-Files matching `~/.agent-recap/keep-*.json` are NEVER touched (the find
-pattern `*-intents.json` excludes them by name).
+Files named `keep-*.json` are exempt (the `*-intents.json` glob excludes them).
 
-**Step 5.1 — Ask the user to link each non-misc entry to an issue:**
+#### 5.1 — Per-entry issue-linkage decision
 
-After the user has confirmed the Stage 3 recap, present a per-entry decision
-table for every entry where `type` ∈ {solved, researched, reviewed, blocked}
-(misc is excluded by default — only include misc if user explicitly asks).
+Present a per-entry decision table for every confirmed entry in `{solved, researched, reviewed, blocked}`. `misc` entries are excluded by default; only include them if the user explicitly opts them in.
 
-Present like this:
+```markdown
+📌 issue 关联 / 创建 决策
 
-> 📌 issue 关联 / 创建 决策
->
-> | 编号 | 摘要 | 选项 |
-> |---|---|---|
-> | ✅1 | <topic> | skip / 关联 issue # / 创建新 issue |
-> | ✅2 | <topic> | skip / 关联 issue # / 创建新 issue |
-> | ... | ... | ... |
->
-> 请按编号告诉我每条的处理方式：
-> - **skip** — 不进同步
-> - **关联 <owner/repo>#<N>** — 会用 `gh issue comment` 在该 issue 下贴一条进展评论
-> - **创建新 issue** — 会**主动调用 `/beaver-create` skill** 走完整 Beaver 流程
->   （含 brainstorming QA + 自动 Status / Type / Size 字段填写 + 自动 commit/PR 钩子）
->
-> 回复格式举例：
-> ```
-> 1: skip
-> 2: 关联 sgl-project/sglang-jax#1234
-> 3: 创建新 issue
-> ```
-> 或一句话："全 skip" / "我先不同步，只看清单"
+| 编号 | 摘要 | 选项 |
+|---|---|---|
+| ✅1 | <topic> | skip / 关联 issue # / 创建新 issue |
+| ✅2 | <topic> | skip / 关联 issue # / 创建新 issue |
+| ... | ... | ... |
 
-Based on user replies, map each entry to one of three `kind` values:
-- `skip` — do nothing for this entry
-- `comment_on_issue` — user supplied an `owner/repo#N`
-- `create_issue` — user requested new issue creation (Stage 5.3 will
-  **invoke the `/beaver-create` skill**, NOT raw `gh issue create`)
+请按编号告诉我每条的处理方式：
+- **skip** — 不进同步
+- **关联 <owner/repo>#<N>** — 用 `gh issue comment` 在该 issue 下贴一条进展评论
+- **创建新 issue** — 主动调用 `/beaver-create` skill 走完整 Beaver 流程
+  （含 brainstorming QA + 自动 Status / Type / Size 字段填写 + 自动 commit/PR 钩子）
 
-If a `misc` entry is opted in by the user, treat it the same way.
+回复格式举例：
+1: skip
+2: 关联 sgl-project/sglang-jax#1234
+3: 创建新 issue
 
-**Step 5.2 — Write intents.json and show the dry-run list:**
+或一句话："全 skip" / "我先不同步，只看清单"
+```
 
-Write `~/.agent-recap/<ISO-8601-timestamp>-intents.json` with this shape:
+Map each user reply to one `kind`:
+
+- `skip` — no action.
+- `comment_on_issue` — user supplied `owner/repo#N`. Phase 5.3 will `gh issue comment` there.
+- `create_issue` — user wants a new issue. Phase 5.3 will invoke `/beaver-create` (NOT raw `gh issue create`).
+
+#### 5.2 — Write intents.json and show the dry-run preview
+
+Write `~/.agent-recap/<ISO-8601-timestamp>-intents.json`:
 
 ```json
 {
   "generated_at": "<ISO 8601>",
   "actions": [
-    {
-      "kind": "comment_on_issue",
-      "issue": "<owner/repo#N>",
-      "body": "<rendered comment body>",
-      "source_sessions": ["<session id>", ...]
-    },
-    {
-      "kind": "create_issue",
-      "repo": "<owner/repo>",
-      "title": "<title>",
-      "body": "<body>",
-      "source_sessions": [...]
-    },
-    {
-      "kind": "skip",
-      "reason": "user_skipped_unmatched",
-      "topic": "<topic>",
-      "source_sessions": [...]
-    }
+    {"kind": "comment_on_issue", "issue": "<owner/repo#N>", "body": "<...>", "source_sessions": ["<id>", ...]},
+    {"kind": "create_issue", "repo": "<owner/repo>", "title": "<...>", "body": "<...>", "source_sessions": ["<id>", ...]},
+    {"kind": "skip", "reason": "user_skipped", "topic": "<...>", "source_sessions": ["<id>", ...]}
   ]
 }
 ```
 
-When multiple entries share the same `issue` (`comment_on_issue` kind),
-**aggregate them into a single comment** with bullet points per entry.
+When multiple entries share the same target issue (`comment_on_issue` kind), aggregate them into a single comment with bullet points per entry.
 
-Then print the dry-run list:
+Print the dry-run preview and prompt for the final confirmation:
 
 ```
 即将执行：
-  1. gh issue comment primatrix/skills#42 --body "<first 80 chars>..."
-  2. gh issue comment sgl-jax#1088 --body "..."
-  3. /beaver-create primatrix/skills --title "..." --body "..."
-  ...
+  1. gh issue comment <owner/repo>#<N>   (body 前 80 chars...)
+  2. gh issue comment <owner/repo>#<N>   ...
+  3. /beaver-create <owner/repo>         ...
 
 ⚠️ 这些内容将以你的 GitHub 身份发到对应 Issue/PR，请确认无误。
-intents 已保存到 ~/.agent-recap/<filename>.json（30 天后自动清理；
+intents 已保存到 ~/.agent-recap/<filename>（30 天后自动清理；
 改名为 keep-*.json 可永久保留）。
 
 回复 "全部执行" / "只执行 1,3" / "取消"。
 ```
 
-**Step 5.3 — Execute selected actions:**
+#### 5.3 — Execute selected actions
 
 For each chosen action:
-- `kind == "comment_on_issue"` → **never inline the body in the shell command** (body is
-  Markdown and almost certainly contains quotes, backticks, `$`, `\`, or newlines).
-  Write the body to a temp file first, then pass it via `--body-file`:
+
+- **`kind == "comment_on_issue"`** — NEVER inline the body into the shell command (body is Markdown and almost certainly contains `"` / `` ` `` / `$` / `\` / newlines). Use a temp file:
+
   ```bash
   tmp=$(mktemp); printf '%s' "$BODY" > "$tmp"
   gh issue comment <owner/repo>#<N> --body-file "$tmp"
   rm -f "$tmp"
   ```
-  Equivalently, you may use a stdin heredoc with a sentinel that does not appear in
-  the body:
+
+  Or equivalently, a stdin heredoc with a sentinel that does not appear in the body:
+
   ```bash
   gh issue comment <owner/repo>#<N> --body-file - <<'AGENT_RECAP_EOF'
   <body>
   AGENT_RECAP_EOF
   ```
-- `kind == "create_issue"` → **always invoke the `/beaver-create` skill** (do NOT
-  call `gh issue create` directly). `/beaver-create` runs the full Beaver issue
-  lifecycle: brainstorming QA, Status / Type / Size field population on Project
-  V2 #14, label hygiene, and any guardrail checks the Beaver engine enforces.
-  Pass the repo, title, and pre-rendered body; if `/beaver-create` ultimately
-  shells out to `gh`, use the same temp-file pattern above so the body is never
-  inlined into the shell command.
-- `kind == "skip"` → do nothing
 
-Capture each action's exit status. After all actions run, summarize:
+- **`kind == "create_issue"`** — ALWAYS invoke the `/beaver-create` skill. `/beaver-create` runs the full Beaver lifecycle: brainstorming QA, Project V2 #14 Status / Type / Size field population, label hygiene, and engine guardrails. Pass the repo, title, and pre-rendered body. The same temp-file rule applies if `/beaver-create` shells out to `gh`. Do NOT call `gh issue create` directly.
+
+- **`kind == "skip"`** — no action.
+
+Capture each action's exit status. Append a `result` field to the on-disk `intents.json` per action so the user can retry failures by hand. Do NOT auto-retry.
+
+Summarize at the end:
 
 ```
 ✅ 成功 X 条
 ❌ 失败 Y 条
-  - 第 N 条: <reason from stderr>
+  - 第 N 条: <stderr reason>
 ```
 
-Append a `result` field to each action in the on-disk intents.json so the user
-can retry by hand if needed. Do NOT auto-retry.
+## Error handling
 
-## Error handling rules
+Format: `⚠️ <phase>: <one-line reason> (<locator>)`
 
-1. **Stage 1 — scanner exits non-zero**: print the stderr to the user and stop.
-2. **Stage 2 — subagent fails**: list that session in the ⚠️ section, continue.
-3. **Stage 2 — ALL subagents fail**: still print the recap with all sections empty
-   plus the ⚠️ section enumerating every failure. Do not stop.
-4. **Stage 5 — gh / beaver call fails**: per-action failure, record reason,
-   continue with remaining actions, do NOT retry.
+| Phase | Failure | Action |
+|---|---|---|
+| 1 | scanner exits non-zero | Print stderr, stop. |
+| 2 | one subagent fails | List in ⚠️ section, continue. |
+| 2 | ALL subagents fail | Still emit recap (empty groups + populated ⚠️). |
+| 5 | `gh` / `/beaver-create` non-zero | Per-action failure recorded in `intents.json`, continue, no retry. |
 
-Error message format:
-```
-⚠️ <stage>: <one-line reason> (<locator>)
-```
+## Constraints
 
-## Working in Codex CLI
-
-This skill works in both Claude Code and Codex. In Claude Code, Stage 2's
-parallel `Agent` tool dispatch makes processing fast. In Codex, if subagent
-dispatch isn't available, the runtime will degrade to having the main agent
-read each session jsonl in turn — slower but the classification logic is the
-same. Do not branch on the runtime; the same SKILL.md instructions cover both.
-
-## Reference files
-
-- `references/jsonl-schema.md` — Claude / Codex jsonl field reference
-- `references/classification-rubric.md` — The 5-type rubric and JSON contract
+- Main agent NEVER reads session jsonls directly — only via the Phase 1 scanner output and the Phase 2 subagent summaries. This is the only thing keeping the main context from exploding on multi-MB sessions.
+- `purpose` / `process` / `outcome` are reproduced verbatim from subagent JSON in Phase 3. Do not paraphrase.
+- Issue linkage is interactive in Phase 5.1. NEVER auto-link from Phase 2 / Phase 3.
+- Comment / issue bodies are NEVER inlined into shell commands — always via `--body-file` with `mktemp` or stdin heredoc.
+- `~/.agent-recap/*-intents.json` files older than 30 days are auto-deleted at Phase 5.0. Rename to `keep-*.json` to preserve.
+- Same instructions apply in Claude Code and Codex CLI. Runtime differences (parallel `Agent` dispatch vs sequential) are absorbed by the runtime, not by branching in this file.
