@@ -242,4 +242,3 @@ same. Do not branch on the runtime; the same SKILL.md instructions cover both.
 
 - `references/jsonl-schema.md` — Claude / Codex jsonl field reference
 - `references/classification-rubric.md` — The 5-type rubric and JSON contract
-- `references/smoke-test.md` — End-to-end manual verification steps
