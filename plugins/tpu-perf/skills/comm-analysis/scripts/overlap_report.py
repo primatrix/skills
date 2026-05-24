@@ -160,17 +160,17 @@ def report_for_plane(plane, *, warn_eps: float = 0.05) -> dict:
               "overlapped_ps": 0, "exposed_comm_ps": 0,
               "step_total_ps": 0}
     warns = []
+    ln = cc.async_xla_line(plane)
+    async_pairs = list(cc.pair_async_events(plane, ln)) if ln is not None else []
+    # Pre-compute per-pair (done_offset, exposed_ps) for window clipping below.
+    pair_meta = [(d.offset_ps, int(cc.event_stats(plane, d).get("device_duration_ps") or d.duration_ps))
+                 for _, d in async_pairs]
+
     for step_id, window in _step_windows(plane):
         comp = _clip(compute_all, window)
         comm = _clip(comm_all, window)
-        # For sanity check, recompute meta-exposed *clipped* to this window:
-        meta_exposed_in_step = 0
-        ln = cc.async_xla_line(plane)
-        if ln is not None:
-            for s, d in cc.pair_async_events(plane, ln):
-                if window[0] <= d.offset_ps < window[1]:
-                    ds = cc.event_stats(plane, d)
-                    meta_exposed_in_step += int(ds.get("device_duration_ps") or d.duration_ps)
+        meta_exposed_in_step = sum(exposed for off, exposed in pair_meta
+                                   if window[0] <= off < window[1])
 
         compute_busy = union_length(comp)
         comm_inflight = union_length(comm)
@@ -254,8 +254,11 @@ def _print_step_table(report: dict, label: str):
           f"{t['exposed_comm_ps']/1e6:>14.3f}"
           f"{_fmt_ratio(total_ratio):>8}")
     for step_id, sweep, meta in report["warns"]:
+        ratio_hint = ""
+        if meta > 0 and sweep / max(meta, 1) < 0.1:
+            ratio_hint = "  (unpaired-dominated capture: meta double-counts overlapped time)"
         print(f"  [warn] step {step_id}: sweep_exposed={sweep/1e6:.3f}us  "
-              f"meta_exposed={meta/1e6:.3f}us  Δ>5%; sweep authoritative")
+              f"meta_exposed={meta/1e6:.3f}us  Δ>5%; sweep authoritative{ratio_hint}")
 
 
 def main():
@@ -270,7 +273,7 @@ def main():
         print(f"[absent] no *.xplane.pb in {args.profile_dir}")
         return
 
-    planes = list(cc.iter_device_planes(xs))
+    planes = [p for p in cc.iter_device_planes(xs) if "CUSTOM" not in p.name]
     planes_by_name = {p.name: p for p in planes}
     tc_reports = []
     sc_reports = []

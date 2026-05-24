@@ -138,5 +138,13 @@ python3 plugins/tpu-perf/skills/comm-analysis/scripts/overlap_report.py \
 - **The sweep-derived `exposed_comm` is authoritative** when it disagrees
   with `Σ done.device_duration_ps` by >5%; the metadata sum doesn't
   account for parallel streams.
+- **`Σ stall_ps` (from `list_comm_primitives.py`) ≠ `Σ exposed_comm_ps` (from
+  `overlap_report.py`) on captures where async events are flow-singletons.**
+  When every Async XLA Op is unpaired (no flow start/done pair), each row's
+  `stall_ps` falls back to `device_duration_ps`, which measures the comm
+  engine's busy time — NOT the exposed (un-overlapped) slice. Multiple ICI
+  links and SC lanes can be busy in parallel and overlap with TC compute,
+  so summed `stall_ps` legitimately exceeds wall-clock. Always trust
+  `overlap_report.py`'s sweep-derived `exposed_comm` for true exposed time.
 - **`xplane_pb2.py` is reused from profile-anatomy** via
   `sys.path.insert`. Don't re-vendor it.
