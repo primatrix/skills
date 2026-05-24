@@ -63,8 +63,9 @@ message PerfEnv {
   // peak_bws_giga_bytes_per_second on newer payloads.
   double peak_bw_giga_bytes_per_second = 4;
   // Peak memory bandwidths of a TPU core or a GPU in GiB/s, indexed by
-  // upstream MemBwType (HBM_RW, SHM_RD, etc.; ICI per-link entry observed at
-  // the tail). See the index-convention comment in the file header.
+  // upstream MemBwType (HBM_RW, SRAM_RD, SRAM_WR, CMEM_RD, CMEM_WR, VMEM_RD,
+  // VMEM_WR). Does NOT carry ICI bandwidth. See the index-convention comment
+  // in the file header.
   repeated double peak_bws_giga_bytes_per_second = 5;
 }
 
