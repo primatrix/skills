@@ -1,0 +1,77 @@
+// Vendored subset of tensorflow.profiler.OpStats for the comm-analysis skill.
+//
+// Upstream:
+//   https://raw.githubusercontent.com/openxla/xprof/master/plugin/xprof/protobuf/op_stats.proto
+//   (the path tensorflow/core/profiler/protobuf/op_stats.proto in the
+//   tensorflow repo is a public-import shim that re-exports the openxla/xprof
+//   definition.)
+//
+// Field numbers MUST match upstream exactly. proto3 unknown-field preservation
+// lets us declare only the messages and fields we actually read; everything
+// else in the on-disk OpStats payload is silently kept as unknown bytes.
+//
+// Regeneration:
+//   cd plugins/tpu-perf/skills/comm-analysis/scripts/_proto
+//   protoc --python_out=. op_stats.proto
+//
+// Toolchain note (observed during Task 2 of comm-analysis):
+//   The generated *_pb2.py imports google.protobuf.runtime_version and asserts
+//   a minimum runtime of 7.35.x. Use protoc 35.0 + google-protobuf >= 7.35.0.
+//
+// Index convention for PerfEnv.peak_bws_giga_bytes_per_second (field 5):
+//   Indices follow upstream MemBwType
+//   (plugin/xprof/protobuf/op_metrics.proto):
+//     0 = HBM_RW   (off-chip / HBM read+write)
+//     1 = SRAM_RD  (on-chip SRAM read)
+//     2 = SRAM_WR  (on-chip SRAM write)
+//     3 = CMEM_RD
+//     4 = CMEM_WR
+//     5 = VMEM_RD
+//     6 = VMEM_WR
+//
+//   Observed on the dp8_fsdp128 fixture (TPU v6e, ALL_HOSTS aggregation):
+//     [0] HBM_RW  ~ 3686.16 GB/s
+//     [1] SRAM_RD ~ 29184.30 GB/s
+//     [2] SRAM_WR ~ 21401.82 GB/s
+//     [3] CMEM_RD = 0.0
+//     [4] CMEM_WR = 0.0
+//     [5] VMEM_RD ~ 29184.30 GB/s
+//     [6] VMEM_WR ~ 21401.82 GB/s
+//
+//   Note: this list does NOT carry ICI / interconnect peak bandwidth — the
+//   MemBwType enum only covers on/off-chip memory hierarchies. Comm-analysis
+//   reads ICI peak BW from xplane XStats (e.g. `peak_ici_bandwidth_*`) rather
+//   than from this list; see the comm-analysis _comm_common helpers.
+
+syntax = "proto3";
+
+package tensorflow.profiler;
+
+// Performance environment, e.g. the peak performance capabilities of the
+// device. Subset of upstream tensorflow.profiler.PerfEnv. Field numbers
+// match upstream; unused fields are intentionally omitted and preserved as
+// unknown fields by proto3 when present in the wire payload.
+message PerfEnv {
+  // Peak performance of a TPU core or a GPU in TFLOP/s.
+  double peak_tera_flops_per_second = 1;
+  // Peak off-chip (HBM) memory bandwidth in GiB/s. Legacy scalar; modern
+  // payloads also populate peak_bws_giga_bytes_per_second.
+  double peak_hbm_bw_giga_bytes_per_second = 2;
+  // The ridge point of the roofline model in FLOP/Byte.
+  double ridge_point = 3;
+  // Peak memory bandwidth in GiB/s. Legacy scalar superseded by
+  // peak_bws_giga_bytes_per_second on newer payloads.
+  double peak_bw_giga_bytes_per_second = 4;
+  // Peak memory bandwidths of a TPU core or a GPU in GiB/s, indexed by
+  // upstream MemBwType (HBM_RW, SHM_RD, etc.; ICI per-link entry observed at
+  // the tail). See the index-convention comment in the file header.
+  repeated double peak_bws_giga_bytes_per_second = 5;
+}
+
+// Operator Statistics. Subset of upstream tensorflow.profiler.OpStats. Only
+// the perf_env subfield is declared; all other OpStats fields are preserved
+// as unknown fields when parsing real payloads.
+message OpStats {
+  // Performance environment of the op metrics collected.
+  PerfEnv perf_env = 3;
+}
