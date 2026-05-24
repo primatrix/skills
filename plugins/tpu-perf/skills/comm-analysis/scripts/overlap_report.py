@@ -209,13 +209,13 @@ def top_exposed_per_collective(plane, *, limit: int) -> list[dict]:
     out = []
     async_ln = cc.async_xla_line(plane)
     if async_ln is not None:
+        # Unpaired events represent exposed-only slices (no start event to span the
+        # overlapped window), so hidden_ratio collapses to 0% — that's accurate, not noise.
         for s, d in cc.pair_async_events(plane, async_ln):
-            if s is None:
-                continue
             ds = cc.event_stats(plane, d)
             md = cc.event_metadata_stats(plane, d)
             stall = int(ds.get("device_duration_ps") or d.duration_ps)
-            wall = d.offset_ps + d.duration_ps - s.offset_ps
+            wall = (d.offset_ps + d.duration_ps - s.offset_ps) if s is not None else d.duration_ps
             hidden = max(0, wall - stall)
             out.append({
                 "op_name": cc.canonical_op_name(str(ds.get("hlo_op") or cc.event_name(plane, d))),
