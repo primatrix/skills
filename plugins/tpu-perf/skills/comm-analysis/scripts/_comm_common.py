@@ -116,11 +116,13 @@ def pair_async_events(
     plane: xplane_pb2.XPlane, line: xplane_pb2.XLine
 ) -> list[tuple[Optional[xplane_pb2.XEvent], xplane_pb2.XEvent]]:
     """
-    Group events on `line` by their 'flow' XStat. For each flow:
-      - pair_size==2: yield (start, done) sorted by offset_ps
-      - pair_size==1: yield (None, ev) — caller treats as fully exposed
-      - pair_size>=3: yield (start_min, done_max); other events ignored
-                       (rare; logged as warning by caller if needed)
+    Group events on `line` by their 'flow' XStat. For each flow group:
+      - 1 event:  yield (None, ev) — caller treats as fully exposed.
+      - 2 events: yield (start, done) sorted by offset_ps.
+      - >=3:      yield (start_min, done_max); intermediate events are
+                   silently dropped. This case is vanishingly rare in
+                   practice; if a caller needs to detect it, build the
+                   flow grouping directly rather than via this helper.
     Events with no 'flow' stat are returned as (None, ev).
     """
     by_flow: dict[int, list[xplane_pb2.XEvent]] = {}
