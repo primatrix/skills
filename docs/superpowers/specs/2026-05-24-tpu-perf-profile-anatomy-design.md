@@ -193,7 +193,7 @@ deviation would mislead future skills:
   stat_metadata`, `repeated XStat stats`.
 - **`XLine`**: `int64 id`, `int64 display_id`, `string name`, `string
   display_name`, `int64 timestamp_ns` (start of line, ns since epoch),
-  `int64 duration_ps`, `repeated XEvent events`. (Field 5–8 reserved.)
+  `int64 duration_ps`, `repeated XEvent events`. (`reserved 5, 6, 7, 8`.)
 - **`XEvent`**: `int64 metadata_id`, oneof `data { int64 offset_ps |
   int64 num_occurrences }`, `int64 duration_ps`, `repeated XStat stats`.
   Note **both `offset_ps` and `duration_ps` are picoseconds**, while
@@ -245,8 +245,9 @@ claim exist:
 `symbol_id`, `tc_offload_start_id`, `temperature`, `tf_op`,
 `throttle %`.
 
-(81 stat metadata entries total. The full list is reproduced in the
-SKILL.md "Stat metadata reference" subsection.)
+(81 stat metadata entries total on this host's xplane.pb. The full
+list is reproduced in the SKILL.md "Stat metadata reference"
+subsection.)
 
 **Stat names previously listed in round 1 that do NOT exist and must
 not be cited**: `is_root`, `occupancy_pct`. These were fabrications.
@@ -351,10 +352,10 @@ touched:
 - **Why vendor `xplane_pb2.py` instead of importing from a system package?**
   Round-1 review verified that none of the installed packages on the
   target machine ship `xplane_pb2` as a Python module (`xprof` ships only
-  the C++ shim; tensorflow is not installed). Vendoring a single 6 KB
-  generated file plus the upstream `.proto` (no transitive imports)
-  removes the runtime dependency entirely while still letting future
-  maintainers regenerate from a known source.
+  the C++ shim; tensorflow is not installed). Vendoring a single
+  generated file plus the upstream `.proto` (which has no transitive
+  imports) removes the runtime dependency entirely while still letting
+  future maintainers regenerate from a known source.
 
 - **Why not cover HLO proto files?**
   The user removed them from scope. They're a substantially different
@@ -368,4 +369,3 @@ touched:
 | 1. Resolve xplane proto import path | **Resolved** — vendored `xplane_pb2.py` under `scripts/_proto/`; verification step #4 added. |
 | 2. Update every script's `Source proto:` and "Dependencies" bullet | **Resolved** — see "Per-script contract": import path is now `_proto/xplane_pb2`, dependencies are stdlib + `protobuf`. |
 | 3. Cite a concrete source for `is_root` (script #6) | **Resolved by removal** — empirical inspection of dp8_fsdp128 confirms `is_root` is **not** a stat name in real data. Replaced with the actually-present `flow` stat for async start/done pairing, plus `device_duration_ps` as the comm-stall metric. The fabricated `occupancy_pct` (script #4) was likewise removed and replaced with verified stat names. |
-| Nit: stale `tpu-perf-model` entry in marketplace.json | Acknowledged but **out of scope** for this skill; will be addressed in a separate cleanup commit if the user requests. |
