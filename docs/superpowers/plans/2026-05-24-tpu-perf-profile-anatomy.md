@@ -583,9 +583,9 @@ The order below is dependency-friendly: `walk_xplane.py` first (broadest, lets u
 **Files:**
 - Create: `plugins/tpu-perf/skills/profile-anatomy/scripts/extract_hlo_events.py`
 
-**Schema illustrated:** `"XLA Ops"` line on `/device:TPU:0`. Each event is one HLO operation; the rich metadata is in its stats.
+**Schema illustrated:** `"XLA Ops"` line on `/device:TPU:0`. Each event is one HLO operation. **Important correction discovered during implementation:** the rich op-level metadata lives on `XEventMetadata.stats` (one prototype shared across all runs of the same HLO op), NOT on the per-`XEvent.stats` list. The HLO op text itself is `XEventMetadata.name` — there is no separate `hlo_op` stat. The per-`XEvent.stats` list on this line carries only execution-time counters (`device_offset_ps`, `device_duration_ps`, `Time Scale Multiplier`).
 
-**Stat names this script knows are present** (verified during planning by direct parse of `dp8_fsdp128`): `hlo_category`, `hlo_op`, `tf_op`, `program_id`, `flops`, `model_flops`, `bytes_accessed`, `raw_bytes_accessed`, `shape_with_layout`. The script must handle the case where any of them is missing on a particular event (just skip that field in the print).
+**Stat names looked up on `XEventMetadata.stats`** (verified by direct parse of `dp8_fsdp128`): `hlo_category`, `tf_op`, `program_id`, `flops`, `model_flops`, `bytes_accessed`, `raw_bytes_accessed`, `shape_with_layout`. The script must handle the case where any of them is missing on a particular metadata entry (just skip that field in the print).
 
 - [ ] **Step 1: Write the script**
 
@@ -595,24 +595,32 @@ The order below is dependency-friendly: `walk_xplane.py` first (broadest, lets u
   """
   Extract HLO-op-level XEvents from the device plane's "XLA Ops" line.
 
-  Each event is a single HLO operation execution. The interesting payload
-  is in XEvent.stats, which is keyed via XPlane.stat_metadata. This script
-  illustrates the most informative stat names commonly found on HLO events.
+  Each event is a single HLO operation execution. For HLO events the rich
+  payload (`hlo_category`, `flops`, etc.) lives on the *EventMetadata*,
+  NOT on the per-event stats list — XLA shares one XEventMetadata across
+  every run of the same HLO op and attaches the op-level stats there. The
+  HLO op text itself is XEventMetadata.name (no separate `hlo_op` stat).
+  The per-XEvent stats list on this line carries only execution-time
+  counters: device_offset_ps, device_duration_ps, Time Scale Multiplier.
 
   Schema shown:
       XPlane(name startswith '/device:') -> XLine(name='XLA Ops') -> XEvent
-      XEvent.stats -> XStat (resolved via XPlane.stat_metadata).
+      XEvent.metadata_id -> XEventMetadata (.name = HLO op text;
+          .stats carry hlo_category / flops / ... resolved via
+          XPlane.stat_metadata).
 
   Fields illustrated:
       XEvent.{metadata_id, offset_ps, duration_ps, stats}
+      XEventMetadata.{name, stats}
       XStat.{metadata_id, value oneof}
-      Stat names actually present in dp8_fsdp128 we look for:
-          hlo_category, hlo_op, tf_op, program_id, flops, model_flops,
+      Stat names looked up on XEventMetadata.stats (verified present on
+      /device:TPU:0 in dp8_fsdp128):
+          hlo_category, tf_op, program_id, flops, model_flops,
           bytes_accessed, raw_bytes_accessed, shape_with_layout.
 
   Source proto:
       _proto/xplane_pb2.XLine.events,
-      _proto/xplane_pb2.XEvent.stats
+      _proto/xplane_pb2.XEventMetadata.stats
   """
   import sys
   import pathlib
@@ -622,7 +630,7 @@ The order below is dependency-friendly: `walk_xplane.py` first (broadest, lets u
 
 
   INTERESTING_STATS = (
-      "hlo_category", "hlo_op", "tf_op", "program_id",
+      "hlo_category", "tf_op", "program_id",
       "flops", "model_flops", "bytes_accessed", "raw_bytes_accessed",
       "shape_with_layout",
   )
@@ -659,10 +667,13 @@ The order below is dependency-friendly: `walk_xplane.py` first (broadest, lets u
       print(f"Plane {device_plane.name!r}  Line 'XLA Ops'  "
             f"events={len(ops_line.events)}  (showing first {limit})")
       for ev in ops_line.events[:limit]:
-          ev_name = device_plane.event_metadata[ev.metadata_id].name if ev.metadata_id in device_plane.event_metadata else "?"
-          stats = {stat_name_by_id.get(s.metadata_id, "?"): _stat_value(s) for s in ev.stats}
-          shown = {k: stats[k] for k in INTERESTING_STATS if k in stats}
-          print(f"  event metadata.name={ev_name[:60]!r} duration_ps={ev.duration_ps}")
+          em = device_plane.event_metadata.get(ev.metadata_id)
+          hlo_op = em.name if em is not None else "?"
+          # Op-level stats live on XEventMetadata.stats, not XEvent.stats.
+          meta_stats = {stat_name_by_id.get(s.metadata_id, "?"): _stat_value(s)
+                        for s in (em.stats if em is not None else [])}
+          shown = {k: meta_stats[k] for k in INTERESTING_STATS if k in meta_stats}
+          print(f"  event hlo_op={hlo_op[:60]!r} duration_ps={ev.duration_ps}")
           for k, (vf, vv) in shown.items():
               print(f"    {k}: ({vf}) {vv!r}")
       if len(ops_line.events) > limit:
