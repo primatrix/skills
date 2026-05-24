@@ -1904,7 +1904,7 @@ Returns the `totals` block per spec §5: per-kind durations and counts, while_co
 - Modify: `plugins/tpu-perf/skills/compute-breakdown/scripts/compute_breakdown.py`
 - Modify: `plugins/tpu-perf/skills/compute-breakdown/scripts/tests/test_summary_mode.py`
 
-Builds the full mode-1 JSON object: filters records (drop comm by default; keep with `--include-comm`), aggregates compute groups, sorts by `total_dur_ps` desc, slices `top_compute_groups[:K]`, builds `tail_compute` rollup, builds `by_kind_rollup`, fills `agg_key_coverage` (count of `agg_key_kind` across all records).
+Builds the full mode-1 JSON object: computes `totals` from the unfiltered record list (so `comm` and `data_move` always appear in totals/`by_kind_rollup` regardless of flags), then derives the rankable subset (compute-only by default, compute+comm with `--include-comm`), aggregates compute groups, sorts by `total_dur_ps` desc, slices `top_compute_groups[:K]`, builds `tail_compute` rollup, fills `agg_key_coverage` (count of `agg_key_kind` across the rankable compute subset, NOT the full record list — describes coverage of source attribution for the events that ranked).
 
 - [ ] **Step 1: Write the failing tests**
 
