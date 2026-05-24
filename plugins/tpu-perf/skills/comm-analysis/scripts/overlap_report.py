@@ -102,16 +102,14 @@ def _compute_intervals(plane) -> list[tuple[int, int]]:
     return out
 
 
-def _comm_intervals(plane) -> tuple[list[tuple[int, int]], int]:
+def _comm_intervals(plane) -> list[tuple[int, int]]:
     """
-    Returns (intervals, sum_metadata_exposed_ps).
+    Returns the list of communication intervals on this plane.
 
-    sum_metadata_exposed_ps is Σ done.device_duration_ps for paired async
-    plus Σ duration_ps for sync collectives — used as the sanity-check
-    reference.
+    Combines async collective pairs (start..done) and sync collectives
+    identified via the XLA-ops line's hlo_category metadata.
     """
     intervals: list[tuple[int, int]] = []
-    sum_meta_exposed = 0
 
     async_ln = cc.async_xla_line(plane)
     if async_ln is not None:
@@ -121,9 +119,6 @@ def _comm_intervals(plane) -> tuple[list[tuple[int, int]], int]:
             else:
                 # Unpaired: treat the done-event's window as the interval.
                 intervals.append((d.offset_ps, d.offset_ps + d.duration_ps))
-            ds = cc.event_stats(plane, d)
-            ddur = ds.get("device_duration_ps") or d.duration_ps
-            sum_meta_exposed += int(ddur)
 
     xla_ln = cc.xla_ops_line(plane)
     if xla_ln is not None:
@@ -131,9 +126,8 @@ def _comm_intervals(plane) -> tuple[list[tuple[int, int]], int]:
             md = cc.event_metadata_stats(plane, ev)
             if md.get("hlo_category") in _COMM_HLO_CATEGORIES:
                 intervals.append((ev.offset_ps, ev.offset_ps + ev.duration_ps))
-                sum_meta_exposed += ev.duration_ps
 
-    return intervals, sum_meta_exposed
+    return intervals
 
 
 # ---------------------------------------------------------------------------
@@ -159,7 +153,7 @@ def _step_windows(plane) -> list[tuple[int, tuple[int, int]]]:
 
 def report_for_plane(plane, *, warn_eps: float = 0.05) -> dict:
     compute_all = _compute_intervals(plane)
-    comm_all, _ = _comm_intervals(plane)
+    comm_all = _comm_intervals(plane)
 
     rows = []
     totals = {"compute_busy_ps": 0, "comm_inflight_ps": 0,
@@ -216,10 +210,12 @@ def top_exposed_per_collective(plane, *, limit: int) -> list[dict]:
     async_ln = cc.async_xla_line(plane)
     if async_ln is not None:
         for s, d in cc.pair_async_events(plane, async_ln):
+            if s is None:
+                continue
             ds = cc.event_stats(plane, d)
             md = cc.event_metadata_stats(plane, d)
             stall = int(ds.get("device_duration_ps") or d.duration_ps)
-            wall = (d.offset_ps + d.duration_ps - s.offset_ps) if s is not None else d.duration_ps
+            wall = d.offset_ps + d.duration_ps - s.offset_ps
             hidden = max(0, wall - stall)
             out.append({
                 "op_name": cc.canonical_op_name(str(ds.get("hlo_op") or cc.event_name(plane, d))),
@@ -236,24 +232,27 @@ def top_exposed_per_collective(plane, *, limit: int) -> list[dict]:
 # ---------------------------------------------------------------------------
 
 def _print_step_table(report: dict, label: str):
+    def _fmt_ratio(r: float) -> str:
+        return f"{r:.2f}" if r == r else "—"
+
     rows = report["rows"]; t = report["totals"]
     print(f"\n=== {label} ({report['plane']}) ===")
     print(f"{'step':>6}{'step(us)':>12}{'compute(us)':>14}"
           f"{'comm(us)':>12}{'overlap(us)':>14}{'exposed(us)':>14}{'ratio':>8}")
     for r in rows:
-        ratio = r["overlap_ratio"]
         print(f"{r['step']:>6}{r['step_ps']/1e6:>12.3f}"
               f"{r['compute_busy_ps']/1e6:>14.3f}"
               f"{r['comm_inflight_ps']/1e6:>12.3f}"
               f"{r['overlapped_ps']/1e6:>14.3f}"
               f"{r['exposed_comm_ps']/1e6:>14.3f}"
-              f"{(f'{ratio:.2f}' if ratio == ratio else '—'):>8}")
+              f"{_fmt_ratio(r['overlap_ratio']):>8}")
+    total_ratio = (t['overlapped_ps'] / t['comm_inflight_ps']) if t['comm_inflight_ps'] else float('nan')
     print(f"{'TOTAL':>6}{t['step_total_ps']/1e6:>12.3f}"
           f"{t['compute_busy_ps']/1e6:>14.3f}"
           f"{t['comm_inflight_ps']/1e6:>12.3f}"
           f"{t['overlapped_ps']/1e6:>14.3f}"
           f"{t['exposed_comm_ps']/1e6:>14.3f}"
-          f"{(t['overlapped_ps']/t['comm_inflight_ps']) if t['comm_inflight_ps'] else float('nan'):>8.2f}")
+          f"{_fmt_ratio(total_ratio):>8}")
     for step_id, sweep, meta in report["warns"]:
         print(f"  [warn] step {step_id}: sweep_exposed={sweep/1e6:.3f}us  "
               f"meta_exposed={meta/1e6:.3f}us  Δ>5%; sweep authoritative")
@@ -271,9 +270,11 @@ def main():
         print(f"[absent] no *.xplane.pb in {args.profile_dir}")
         return
 
+    planes = list(cc.iter_device_planes(xs))
+    planes_by_name = {p.name: p for p in planes}
     tc_reports = []
     sc_reports = []
-    for plane in cc.iter_device_planes(xs):
+    for plane in planes:
         rep = report_for_plane(plane)
         if cc.core_kind(plane) == "TC":
             tc_reports.append(rep)
@@ -298,16 +299,14 @@ def main():
     print(f"\nTop-{args.limit} TC exposed-comm contributors:")
     print(f"{'op_name':<48}{'hlo_category':<20}{'wall(us)':>11}{'stall(us)':>11}{'hidden':>9}")
     for rep in tc_reports:
-        for plane in cc.iter_device_planes(xs):
-            if plane.name != rep["plane"]:
-                continue
-            top = top_exposed_per_collective(plane, limit=args.limit)
-            for r in top:
-                print(f"{r['op_name'][:46]:<48}"
-                      f"{(r['hlo_category'] or '?')[:18]:<20}"
-                      f"{r['wall_ps']/1e6:>11.3f}"
-                      f"{r['stall_ps']/1e6:>11.3f}"
-                      f"{r['hidden_ratio']*100:>8.1f}%")
+        plane = planes_by_name[rep["plane"]]
+        top = top_exposed_per_collective(plane, limit=args.limit)
+        for r in top:
+            print(f"{r['op_name'][:46]:<48}"
+                  f"{(r['hlo_category'] or '?')[:18]:<20}"
+                  f"{r['wall_ps']/1e6:>11.3f}"
+                  f"{r['stall_ps']/1e6:>11.3f}"
+                  f"{r['hidden_ratio']*100:>8.1f}%")
 
     if args.json_out:
         with open(args.json_out, "w") as f:
