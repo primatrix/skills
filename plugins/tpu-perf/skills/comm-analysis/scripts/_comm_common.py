@@ -146,3 +146,163 @@ def pair_async_events(
     for ev in unpaired:
         pairs.append((None, ev))
     return pairs
+
+
+# ---------------------------------------------------------------------------
+# HLO module loading and joining
+# ---------------------------------------------------------------------------
+#
+# Important: *.hlo_proto.pb files in xprof captures are serialized
+# `xla.HloProto` (with `hlo_module = 1`), NOT bare `HloModuleProto`. We MUST
+# parse via HloProto and then read `.hlo_module`. (Verified on the fixture
+# during plan task 2.)
+
+import re
+
+_CALL_SUFFIX = re.compile(r"\.(call-start|call-done|start|done)$")
+
+
+def canonical_op_name(name: str) -> str:
+    """Strip async-pairing suffixes so start/done events join to one HLO instr."""
+    return _CALL_SUFFIX.sub("", name)
+
+
+def _hlo_program_id(module: hlo_pb2.HloModuleProto) -> int:
+    """HloModuleProto.id is the program_id used in xprof XStats."""
+    return module.id
+
+
+def load_hlo_module(
+    profile_dir: str | pathlib.Path,
+    *,
+    prefer_program_id: int | None = None,
+) -> Optional[hlo_pb2.HloModuleProto]:
+    """
+    Pick the most relevant *.hlo_proto.pb in profile_dir.
+
+    *.hlo_proto.pb files are serialized xla.HloProto (with hlo_module = 1),
+    not bare HloModuleProto — parse via HloProto and return .hlo_module.
+
+    Selection order:
+      1. If `prefer_program_id` is given, return the module with matching id.
+      2. Largest file size.
+      3. Lexicographic name as final tie-break.
+    """
+    pbs = sorted(pathlib.Path(profile_dir).glob("*.hlo_proto.pb"))
+    if not pbs:
+        return None
+
+    parsed: list[tuple[pathlib.Path, hlo_pb2.HloModuleProto]] = []
+    for pb in pbs:
+        hp = hlo_pb2.HloProto()
+        try:
+            hp.ParseFromString(pb.read_bytes())
+        except Exception:
+            continue
+        parsed.append((pb, hp.hlo_module))
+    if not parsed:
+        return None
+
+    if prefer_program_id is not None:
+        for _, m in parsed:
+            if _hlo_program_id(m) == prefer_program_id:
+                return m
+    parsed.sort(key=lambda t: (-t[0].stat().st_size, t[0].name))
+    return parsed[0][1]
+
+
+def hlo_instructions(
+    module: hlo_pb2.HloModuleProto,
+) -> dict[str, hlo_pb2.HloInstructionProto]:
+    """Flatten every (computation, instruction) into a {canonical_name: instr} map.
+
+    Note: the legacy `instruction.replica_groups` (field 49) is empty in
+    modern HLO. Callers extracting replica info should walk
+    `instruction.collective_device_list.replica_groups` or
+    `instruction.iota_collective_device_list` instead.
+    """
+    out: dict[str, hlo_pb2.HloInstructionProto] = {}
+    for c in module.computations:
+        for i in c.instructions:
+            out[canonical_op_name(i.name)] = i
+    return out
+
+
+# ---------------------------------------------------------------------------
+# op_stats.pb — memory roofline only (interconnect peaks live in xprof XStats)
+# ---------------------------------------------------------------------------
+#
+# OpStats.perf_env.peak_bws_giga_bytes_per_second (field 5, repeated double)
+# is indexed by upstream MemBwType: HBM_RW, SRAM_RD, SRAM_WR, CMEM_RD,
+# CMEM_WR, VMEM_RD, VMEM_WR. There is NO ICI / interconnect entry — do NOT
+# add a `peak_ici_link_gbps_from_op_stats` helper; ICI peak BW must come
+# from xprof XStats via peak_ici_link_gbps_from_xprof().
+#
+# (The plan's original draft used `peak_bw_giga_bytes_per_second_list` and
+# `ICI_PEAK_INDEX = 7`; both are wrong per upstream proto, fixed here.)
+
+def load_op_stats(profile_dir: str | pathlib.Path) -> Optional[op_stats_pb2.OpStats]:
+    pbs = sorted(pathlib.Path(profile_dir).glob("*op_stats.pb"))
+    if not pbs:
+        return None
+    o = op_stats_pb2.OpStats()
+    try:
+        o.ParseFromString(pbs[0].read_bytes())
+    except Exception:
+        return None
+    return o
+
+
+# MemBwType index of HBM_RW within peak_bws_giga_bytes_per_second.
+HBM_PEAK_INDEX = 0
+
+
+def peak_hbm_gbps_from_op_stats(o: op_stats_pb2.OpStats) -> Optional[float]:
+    """Read peak HBM bandwidth (GiB/s) from OpStats.
+
+    Prefers the MemBwType-indexed list (modern); falls back to the legacy
+    scalar `peak_hbm_bw_giga_bytes_per_second` if the list is unset.
+    """
+    arr = list(o.perf_env.peak_bws_giga_bytes_per_second)
+    if len(arr) > HBM_PEAK_INDEX and arr[HBM_PEAK_INDEX] > 0:
+        return float(arr[HBM_PEAK_INDEX])
+    legacy = o.perf_env.peak_hbm_bw_giga_bytes_per_second
+    return float(legacy) if legacy > 0 else None
+
+
+def peak_ici_link_gbps_from_xprof(xs: xplane_pb2.XSpace) -> Optional[float]:
+    """Search XStats across device + Task Environment + host planes for an
+    ICI peak link bandwidth.
+
+    Per the user's roofline-source convention, ICI peak BW lives in xprof
+    XStats — most commonly on the device plane or the Task Environment plane,
+    NOT in op_stats. Match any stat name containing both 'peak' and 'ici'
+    (case-insensitive). Returns None if no matching stat is present.
+
+    Note (verified on the dp8_fsdp128 fixture): the fixture publishes
+    peak_hbm/cmem/sram/vmem/teraflops stats but NO peak_ici_* stat. In that
+    case this function returns None, and callers (e.g. roofline computation)
+    must accept the absence and either skip the ICI roofline or fall back
+    to a CLI flag with a warning.
+    """
+    def _scan(plane: xplane_pb2.XPlane) -> Optional[float]:
+        names = stat_name_by_id(plane)
+        # Plane-level stats: resolve metadata-id -> name and match.
+        for stat in plane.stats:
+            nm = names.get(stat.metadata_id, "").lower()
+            if "peak" in nm and "ici" in nm:
+                v = _xstat_value(stat)
+                if isinstance(v, (int, float)) and v > 0:
+                    return float(v)
+        return None
+
+    for plane in xs.planes:
+        if (
+            plane.name.startswith("/device:")
+            or plane.name.startswith("/host:")
+            or "Task Environment" in plane.name
+        ):
+            v = _scan(plane)
+            if v is not None:
+                return v
+    return None
