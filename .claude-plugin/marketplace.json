@@ -87,6 +87,15 @@
       "license": "Apache-2.0",
       "keywords": ["recap", "session", "summary", "report", "agent-history"],
       "category": "productivity"
+    },
+    {
+      "name": "tpu-perf",
+      "source": "./plugins/tpu-perf",
+      "description": "Systematic TPU pretraining efficiency analysis — profile schema reference and (future) optimization-point detection skills",
+      "version": "0.1.0",
+      "license": "Apache-2.0",
+      "keywords": ["tpu", "profiling", "xplane", "pretraining", "performance"],
+      "category": "performance"
     }
   ]
 }
