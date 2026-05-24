@@ -309,7 +309,7 @@ python3 compute_breakdown.py <profile_dir> --mode summary
     "comm_duration_ps":     12345678,
     "other_duration_ps":           0,
     "while_container_duration_ps": 56789012,
-    "non_while_duration_ps":      54322089,
+    "non_while_duration_ps_sum":  54322089,
     "while_pct_of_step":          51.1,
     "unknown_categories":         {}
   },
@@ -321,7 +321,7 @@ python3 compute_breakdown.py <profile_dir> --mode summary
       "rank": 1,
       "agg_key":      "stack:a3f8...",
       "agg_key_kind": "stack",
-      "source":       "/root/maxtext/.../attention.py:312",
+      "source_inner": "/root/maxtext/.../attention.py:312",
       "tf_op":        "jit(loss_fn)/.../FlashAttention",
       "source_stack": "/root/.../attention.py:312:18\n...",
       "n_executions": 1024,
@@ -365,8 +365,13 @@ other_duration_ps    = Σ duration_ps over admitted records with kind="other"
 while_container_duration_ps = Σ duration_ps over admitted XLA-Ops events whose
                               hlo_category == "while" (these events are NOT
                               normalized into records but ARE summed here)
-non_while_duration_ps = compute_duration_ps + data_move_duration_ps
-                      + comm_duration_ps + other_duration_ps
+non_while_duration_ps_sum = compute_duration_ps + data_move_duration_ps
+                          + comm_duration_ps + other_duration_ps
+                          # Named "..._sum" because this is a sum of
+                          # potentially-overlapping per-event durations,
+                          # NOT a wall-clock duration. See concurrency
+                          # caveat below; do not subtract from
+                          # step_duration_ps.
 while_pct_of_step    = 100.0 * while_container_duration_ps / step_duration_ps
 ```
 
@@ -405,18 +410,22 @@ python3 compute_breakdown.py <profile_dir> --mode by_source
   "notes": [],
 
   "totals": {
-    "compute_duration_ps":   87654321,
-    "data_move_duration_ps":  5432100,
-    "comm_duration_ps":      12345678,
+    "compute_duration_ps":      87654321,
+    "data_move_duration_ps":     5432100,
+    "comm_duration_ps":         12345678,
+    "other_duration_ps":               0,
     "while_container_duration_ps": 56789012,
-    "n_groups_total":             832
+    "n_events_other":                  0,
+    "n_events_unresolved":             0,
+    "unknown_categories":             {},
+    "n_groups_total":                832
   },
 
   "groups": [
     {
       "agg_key":      "stack:a3f8...",
       "agg_key_kind": "stack",
-      "source":       "/root/.../attention.py:312",
+      "source_inner": "/root/.../attention.py:312",
       "source_stack": "/root/.../attention.py:312:18\n...",
       "tf_op":        "jit(loss_fn)/.../FlashAttention",
       "kind":         "compute",
@@ -473,11 +482,15 @@ By default `async-done` events are included as `hlo_category="async-done (comm s
   "notes": ["async-done included as comm-stall non-compute time; pass --no-comm-stalls to exclude"],
 
   "totals": {
-    "compute_duration_ps":      87654321,
-    "data_move_duration_ps":     5432100,
-    "comm_duration_ps":         12345678,
-    "non_compute_pct_of_step":      4.9,
-    "non_compute_pct_of_compute":   6.2
+    "compute_duration_ps":          87654321,
+    "data_move_duration_ps":         5432100,
+    "comm_duration_ps":             12345678,
+    "other_duration_ps":                   0,
+    "n_events_other":                      0,
+    "n_events_unresolved":                 0,
+    "unknown_categories":                 {},
+    "non_compute_pct_of_step":           4.9,
+    "non_compute_pct_of_compute":        6.2
   },
 
   "by_category": [
@@ -498,7 +511,7 @@ By default `async-done` events are included as `hlo_category="async-done (comm s
       "hlo_category":  "data formatting",
       "agg_key":       "stack:a3f8...",
       "agg_key_kind":  "stack",
-      "source":        "/root/.../attention.py:312",
+      "source_inner":  "/root/.../attention.py:312",
       "source_stack":  "...",
       "tf_op":         "jit(loss_fn)/.../transpose",
       "n_executions":  1024,
@@ -670,7 +683,7 @@ python3 compute_breakdown.py <profile_dir> --mode roofline
     "top_shortfall_groups": [
       {
         "agg_key":      "stack:a3f8...",
-        "source":       "/root/.../attention.py:312",
+        "source_inner": "/root/.../attention.py:312",
         "tf_op":        "jit(loss_fn)/.../FlashAttention",
         "total_dur_ps": 12345678,
         "shortfall_ps":  4567890,
@@ -683,7 +696,7 @@ python3 compute_breakdown.py <profile_dir> --mode roofline
     {
       "agg_key":      "stack:a3f8...",
       "agg_key_kind": "stack",
-      "source":       "/root/.../attention.py:312",
+      "source_inner": "/root/.../attention.py:312",
       "tf_op":        "jit(loss_fn)/.../FlashAttention",
       "hlo_categories": {"convolution fusion": 32},
       "n_executions": 32,
@@ -722,7 +735,7 @@ python3 compute_breakdown.py <profile_dir> --mode roofline
 - Roofline mode runs on `kind=compute` only by default. `data_move` is excluded (flops typically 0). To inspect data_move HBM utilization, use mode 3.
 - `dtype_uncertain=true` groups are still computed; the flag is propagated but the script does not silently switch to a higher peak.
 - `peaks_used.source` ∈ `{"builtin v7x table", "cli override", "profile peak_*"}`. Default precedence: builtin → cli override (if any flag passed). Profile-derived peaks are not used by default; reserved for a future `--peak-source profile` flag.
-- `top_shortfall_groups` carries 5 fields per entry (source, tf_op, total_dur_ps, shortfall_ps, bound), top 10 by shortfall_ps. Lets Claude answer "where is the biggest waste" in one glance.
+- `top_shortfall_groups` carries 5 fields per entry (`source_inner`, `tf_op`, `total_dur_ps`, `shortfall_ps`, `bound`) plus `agg_key`, top 10 by `shortfall_ps`. Lets Claude answer "where is the biggest waste" in one glance.
 
 ## 9. SKILL.md structure
 
@@ -825,9 +838,31 @@ No build/lint/test framework in repo. Manual verification steps for the spec's i
      non_compute.totals.data_move_duration_ps` when mode 3 is invoked
      with `--no-comm-stalls` (otherwise mode 3 also includes
      `async-done`, breaking equality on purpose).
+   - `summary.totals.other_duration_ps ==
+     by_source.totals.other_duration_ps ==
+     non_compute.totals.other_duration_ps`.
+   - `summary.totals.n_events_unresolved ==
+     by_source.totals.n_events_unresolved ==
+     non_compute.totals.n_events_unresolved`.
+   - `summary.totals.unknown_categories ==
+     by_source.totals.unknown_categories ==
+     non_compute.totals.unknown_categories` (key-by-key equality of
+     the {hlo_category: count} dicts).
    - All four modes return identical `step_window_ps`.
    - `roofline.step_summary.step_compute_duration_ps ==
      summary.totals.compute_duration_ps`.
+
+   Note: records with `kind="other"` are present in `summary.totals`
+   and `by_source.totals`, but are **excluded** from
+   `summary.top_compute_groups`, from `by_source.groups` (which is
+   `kind=compute` only by default; turn on `--include-data-move` and
+   you get data_move groups but still not `other`), and from
+   `roofline.groups` (compute-only). Mode 4's JSON does not currently
+   surface `unknown_categories`; the `skipped_groups` block carries
+   only the roofline-eligibility skip reasons. If `kind="other"`
+   records are observed in a fixture, they must be brought to the
+   spec maintainer's attention via `summary` or `by_source`, then
+   §4.4 must be updated to classify them.
 3. **Error paths:**
    - non-existent dir → `status=absent`, `reason=no_xplane_pb`, exit 0
    - non-existent device → `status=absent`, `reason=device_not_found`, exit 0
