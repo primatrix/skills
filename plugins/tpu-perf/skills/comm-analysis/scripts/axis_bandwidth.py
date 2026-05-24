@@ -12,42 +12,18 @@ Peak BW resolution order:
   3. --peak-ici-link-gbps flag
   4. None  ⇒ utilization column dropped, [warn] printed.
 
+When `bidir=yes`, the displayed `util%` doubles the single-direction bus_BW
+because both ICI directions carry traffic simultaneously.
+
 ---------------------------------------------------------------------------
-Deviations from the original plan (docs/.../2026-05-24-tpu-perf-comm-analysis.md
-lines 1150-1432).  These are intentional corrections — see Task 7 spec.
+KNOWN LIMITATION — cloned-wrapper join failure
 ---------------------------------------------------------------------------
-
-1. Removed the `op_stats` branch from `resolve_peak_link_gbps`.  The op_stats
-   proto's `peak_bws_giga_bytes_per_second` is keyed by MemBwType (HBM_RW /
-   SRAM / CMEM / VMEM) and has NO ICI entry; `peak_ici_link_gbps_from_op_stats`
-   was deleted in Task 5.  Order is now xprof → mesh-spec → CLI flag → None.
-
-2. `peak_ici_link_gbps_from_xprof` was changed in Task 5 to take `XSpace`
-   (it walks device + Task Environment + host planes internally), not a
-   single plane.  Old per-plane loop replaced with one call.
-
-3. `replica_groups` (legacy field 49) is empty in modern HLO — the data lives
-   in `collective_device_list` or `iota_collective_device_list`.  We use
-   `_replica_ids` from list_comm_primitives, which already walks all three
-   locations.
-
-4. `channel_id` is an `int64` scalar in our vendored proto, not a message.
-   proto3 scalars don't support `HasField` (raises ValueError).  Replaced
-   `i.channel_id.handle if i.HasField("channel_id") else None` with
-   `int(i.channel_id) if i.channel_id else None`.
-
-5. `instr.HasField("sharding")` works because `sharding` is a message type.
-   Verified empirically on the vendored proto — returns False on default.
-   Kept as-is.
-
-6. KNOWN LIMITATION (cloned-wrapper join failure): on the dp8_fsdp128 fixture
-   xprof events reference op names like `all-reduce.3008.cloned.1`, which
-   exist in HLO as opcode=`call` wrappers, NOT as actual collectives.  The
-   `_replica_ids` lookup on the wrapper returns [], so axis stays "—" and
-   group_size stays 0 for those rows.  We do NOT attempt a substring fallback
-   here (too risky — could attribute to the wrong group).  Instead we count
-   how many collective rows could not be axis-attributed and emit a single
-   `[warn]` summary line so the limitation is visible in the output.
+On some captures, xprof events reference op names like `all-reduce.3008.cloned.1`,
+which exist in HLO as opcode=`call` wrappers around the real collective rather
+than the collective itself. The wrapper has no replica info, so axis stays "—"
+and group_size stays 0 for those rows. Substring-matching back to the real
+collective is too risky (could attribute to the wrong group), so we count the
+unattributed rows and emit a single `[warn]` summary line instead.
 """
 from __future__ import annotations
 
@@ -253,7 +229,8 @@ def main():
     bidir_map = bidir_clusters(hlo_module)
 
     # Annotate rows in place: axis (with mesh-spec join) and bidir.
-    unattributed = 0
+    unattributed_cloned = 0   # HLO entry exists but has no replica info
+    unattributed_no_hlo = 0   # No HLO entry at all
     for r in rows:
         instr = hlo_instrs.get(r["op_name"])
         if instr is not None:
@@ -264,16 +241,19 @@ def main():
                 if r["group_size"] == 0:
                     r["group_size"] = gs
             elif r["kind"] in _COLLECTIVE_KINDS:
-                # KNOWN LIMITATION (correction 6): cloned-wrapper join failure.
+                # KNOWN LIMITATION: cloned-wrapper join failure.
                 # The HLO entry exists but has no replica info (likely a
                 # `call` wrapper around the actual collective).
-                unattributed += 1
+                unattributed_cloned += 1
         elif r["kind"] in _COLLECTIVE_KINDS:
             # No HLO entry at all for this collective op_name.
-            unattributed += 1
+            unattributed_no_hlo += 1
         r["bidir"] = "yes" if bidir_map.get(r["op_name"]) else "no"
         r["bus_bw_gbps"] = bus_bw_gbps(r["kind"], r["group_size"],
                                        r["bytes"], r["wall_ps"])
+        r["effective_bus_bw_gbps"] = (r["bus_bw_gbps"] * 2.0
+                                      if r["bus_bw_gbps"] and r["bidir"] == "yes"
+                                      else r["bus_bw_gbps"])
 
     peak_link, peak_src = resolve_peak_link_gbps(args.profile_dir, mesh_spec,
                                                   args.peak_ici_link_gbps)
@@ -302,8 +282,8 @@ def main():
         if sw > 0 and sb > 0:
             kinds = collections.Counter(r["kind"] for r in grp)
             dom_kind = kinds.most_common(1)[0][0]
-            avg_gs = max((r["group_size"] for r in grp), default=0)
-            bw = bus_bw_gbps(dom_kind, avg_gs, sb, sw)
+            dom_gs = max((r["group_size"] for r in grp), default=0)
+            bw = bus_bw_gbps(dom_kind, dom_gs, sb, sw)
         util = (bw / peak_axis_gbps * 100.0) if (bw and peak_axis_gbps) else None
         print(f"{axis:<14}{core:<6}{len(grp):>7}"
               f"{sb/1e6:>14.2f}{sw/1e6:>13.3f}"
@@ -316,15 +296,19 @@ def main():
           f"{'bidir':<6}{'wall(us)':>11}{'stall(us)':>11}{'bus_BW(GB/s)':>14}{'util%':>7}")
     for r in sorted(rows, key=lambda r: -r["stall_ps"])[:args.limit]:
         bw = r.get("bus_bw_gbps")
-        util = (bw / peak_axis_gbps * 100.0) if (bw and peak_axis_gbps) else None
+        eff_bw = r.get("effective_bus_bw_gbps")
+        util = (eff_bw / peak_axis_gbps * 100.0) if (eff_bw and peak_axis_gbps) else None
         print(f"{r['op_name'][:46]:<48}{r['kind']:<16}{r['axis']:<10}{r['core']:<6}"
               f"{r['bidir']:<6}{r['wall_ps']/1e6:>11.3f}{r['stall_ps']/1e6:>11.3f}"
               f"{(f'{bw:.2f}' if bw else '—'):>14}"
               f"{(f'{util:.1f}' if util is not None else '—'):>7}")
 
-    if unattributed:
-        print(f"\n[warn] {unattributed} collective rows could not be "
+    if unattributed_cloned:
+        print(f"\n[warn] {unattributed_cloned} collective rows could not be "
               f"axis-attributed (cloned-wrapper join failure — see banner)")
+    if unattributed_no_hlo:
+        print(f"\n[warn] {unattributed_no_hlo} collective rows have no HLO "
+              f"counterpart (HLO module missing or op renamed)")
 
     if args.json_out:
         out = {"peak_link_gbps": peak_link, "peak_src": peak_src,
