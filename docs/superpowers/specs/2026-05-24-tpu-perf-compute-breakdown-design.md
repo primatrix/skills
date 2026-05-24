@@ -47,9 +47,15 @@ Stage 2  step window
    ▼
 Stage 3  iterate 'XLA Ops' line, per-event records
    for each XEvent in window:
+     if XEvent.metadata_id has no entry in event_metadata:
+       drop event, increment totals.n_events_unresolved,
+       record once-per-mode in notes;
+       continue
      resolve metadata → category, source_stack, ...
-     skip 'while' (container; double-counts)
-     classify into kind ∈ {compute, data_move, comm}
+     if hlo_category == "while":
+       accumulate while_total_ps; do not emit a record
+       continue
+     classify into kind ∈ {compute, data_move, comm, other}
      resolve aggregation key:
        source_stack → tf_op → '<no source>:'+category
    emit one normalized record per event
@@ -65,7 +71,11 @@ Stage 4  mode-specific projection
 JSON to stdout (one top-level object per invocation)
 ```
 
-`comm` (async-* / all-reduce) is excluded from all modes by default. `--include-comm` re-enables it. Mode 3 includes `async-done` by default as a "comm-stall" non-compute category; pass `--no-comm-stalls` to exclude.
+`comm` (async-* / all-reduce) is excluded from all modes by default,
+**except** mode 3 (`non_compute`) includes `async-done` by default as a
+"comm-stall" non-compute category. `--include-comm` re-enables full
+comm category in any mode; `--no-comm-stalls` (mode 3 only) excludes
+the default `async-done` inclusion.
 
 ## 4. Per-event record schema (Stage 3 output)
 
@@ -74,14 +84,23 @@ All four modes derive from the same per-event normalized record:
 ```python
 {
   "duration_ps":        int,       # XEvent.duration_ps
-  "device_offset_ps":   int,       # from XEvent.stats (relative to XLine.timestamp_ns)
+  "offset_ps":          int,       # XEvent.offset_ps (the canonical line-relative
+                                   # picosecond offset; XLine.timestamp_ns is 0
+                                   # for device planes in observed fixtures, so
+                                   # offset_ps is also the absolute device-clock
+                                   # value used for step admission, see §4.5)
   "step_id":            int,       # the step (Stage 2) the event was assigned to
   "hlo_category":       str,       # 'loop fusion' | 'custom-call' | ...
-  "kind":               str,       # 'compute' | 'data_move' | 'comm'
+  "kind":               str,       # 'compute' | 'data_move' | 'comm' | 'other'
   "hlo_op":             str,       # XEventMetadata.name (full HLO IR text, not truncated)
   "tf_op":              str|None,  # JAX/XLA jaxpr op-path
-  "source":             str|None,  # innermost frame of source_stack
-  "source_stack":       str|None,  # full multi-line stack
+  "source_stat":        str|None,  # raw `source` stat from XEventMetadata.stats
+                                   # (XLA-emitted; one source line)
+  "source_stack":       str|None,  # raw `source_stack` stat (multi-line)
+  "source_inner":       str|None,  # innermost frame parsed from source_stack:
+                                   #   last non-empty line, with trailing
+                                   #   ":<col>" suffix stripped to "file:line"
+                                   # null when source_stack is null
   "source_stack_hash":  str|None,  # sha1(source_stack)[:16] when source_stack present
   "agg_key":            str,       # unified aggregation key after fallback
   "agg_key_kind":       str,       # 'stack' | 'tf_op' | 'no_source'
@@ -97,6 +116,19 @@ All four modes derive from the same per-event normalized record:
 }
 ```
 
+Field-name rename note (vs an earlier draft of this spec):
+- `device_offset_ps` is dropped from the record. Step admission uses
+  `XEvent.offset_ps` as the authoritative time base for both the `Steps`
+  line and the `XLA Ops` line (see §4.5). The `device_offset_ps` stat
+  exists on `XEvent.stats` but differs from `offset_ps` only by a sub-µs
+  host/device clock skew (`Time Scale Multiplier` ≈ 1.16 in the fixture);
+  using `offset_ps` consistently across lines avoids a unit-conversion
+  trap.
+- Old `source` field renamed to `source_stat` (raw XLA stat) and a
+  derived `source_inner` (parsed innermost frame) is added separately.
+  Aggregation in §5/§6/§7 uses `source_stack` / `source_inner`; the raw
+  `source_stat` is included for completeness but not used as agg input.
+
 ### 4.1 `agg_key` three-tier fallback
 
 | Priority | Condition | `agg_key` value | `agg_key_kind` |
@@ -105,7 +137,16 @@ All four modes derive from the same per-event normalized record:
 | 2 | `source_stack` empty, `tf_op` non-empty | `"tfop:" + tf_op` | `"tf_op"` |
 | 3 | both absent | `"nosrc:" + hlo_category` | `"no_source"` |
 
-This three-tier fallback achieves ~100% event coverage. Real-data validation on `dp8_fsdp128`: 79.7% of events carry `source_stack`, 97.3% carry `tf_op`, 100% carry `hlo_category`.
+This three-tier fallback achieves ~100% event coverage. Real-data
+validation on `dp8_fsdp128`: 79.7% of events carry `source_stack`,
+97.3% carry `tf_op`, 100% carry `hlo_category`.
+
+`source_stack_hash` uses 16 hex chars of SHA-1 (64 bits). Birthday-
+collision probability is negligible at the typical scale of distinct
+stacks observed in this fixture (≤ ~1000); each group emits the full
+`source_stack` alongside the hash so that any collision (if it ever
+occurred) would be detectable by visual inspection. If a future fixture
+shows ≥ 10^4 distinct stacks, widen to 24 hex chars.
 
 ### 4.2 `dtype` parsing
 
@@ -119,7 +160,35 @@ This three-tier fallback achieves ~100% event coverage. Real-data validation on 
 
 ### 4.3 `dtype_uncertain` flag
 
-Set `dtype_uncertain=true` when `hlo_category` ∈ `{"convolution fusion", "custom-call", "custom fusion", "output fusion"}` and `dtype` ∈ `{"bf16", "fp32"}`. Rationale: `shape_with_layout` describes the output; mixed-precision matmul/conv may take fp8 inputs and write bf16 outputs, so picking `peak_tflops_bf16` would over-estimate the theoretical ceiling. Other categories (elementwise, data_move) are typically input-output dtype-consistent and stay `false`. The roofline mode still computes, but propagates the flag for Claude's interpretation; the script does not silently switch to a "best-case" peak.
+Set `dtype_uncertain=true` when **both** of the following hold:
+
+1. `hlo_category` ∈ `{"convolution fusion", "custom fusion",
+   "output fusion", "custom-call"}` — the four categories that XLA uses
+   to wrap potentially-mixed-precision compute (matmul / conv / external
+   kernels like flash-attention). `loop fusion` and
+   `non-fusion elementwise` are excluded because XLA does not
+   downcast inputs inside an elementwise loop body — output dtype equals
+   input dtype for those categories. (This is a deliberate, narrow rule
+   that errs on the side of *under*-flagging; if a real workload
+   produces a mixed-precision loop fusion, the spec maintainer can
+   widen the set after empirical verification.)
+2. `dtype` ∈ `{"bf16", "fp32"}` — the dtypes whose declared peak
+   could overstate the true theoretical bound when inputs are FP8.
+   (`fp32` is included because some XLA passes accumulate FP8 matmuls
+   in FP32; the output dtype then misrepresents the input compute.)
+
+Rationale: `shape_with_layout` describes the output; mixed-precision
+matmul/conv may take fp8 inputs and write bf16/fp32 outputs, so picking
+`peak_tflops_bf16` (or `_fp32`) would *over*-estimate the theoretical
+ceiling and *under*-estimate MFU.
+
+The roofline mode still computes using the output-dtype peak, but
+propagates the flag for Claude's interpretation; the script does **not**
+silently switch to a "best-case" peak (the user explicitly rejected
+auto-switching). When SKILL.md instructs Claude on roofline reading, it
+must include: "for `dtype_uncertain=true` groups, the reported MFU is
+an upper bound (true MFU may be ~2× lower if inputs were FP8), so
+the under-utilization gap is also an upper bound."
 
 ### 4.4 `kind` classification
 
@@ -128,18 +197,80 @@ Set `dtype_uncertain=true` when `hlo_category` ∈ `{"convolution fusion", "cust
 | `compute` | `loop fusion`, `convolution fusion`, `custom fusion`, `output fusion`, `non-fusion elementwise`, `reduce`, `reduce-window`, `sort`, `rng-bit-generator`, `custom-call` |
 | `data_move` | `copy-start`, `copy-done`, `data formatting`, `pad`, `broadcast`, `slice`, `dynamic-slice`, `dynamic-update-slice`, `iota`, `convert` |
 | `comm` | `async-start`, `async-done`, `all-reduce`, `all-gather`, `reduce-scatter`, `collective-permute` |
+| `other` | any `hlo_category` not in the above lists (default fallback) |
 | (skipped) | `while` (container; sub-events already counted under their own categories) |
 
-`while` is identified at Stage 3 and never produces a record. Stage 1 separately accumulates `while_total_ps` for reporting in `totals`.
+`while` is identified at Stage 3 and never produces a record. Stage 1
+separately accumulates `while_total_ps` for reporting in `totals`.
+
+Categories not covered by the explicit lists default to `kind="other"`.
+These records still count in totals and aggregations, but are excluded
+from `top_compute_groups` (mode 1, which only ranks `kind=compute`),
+from `non_compute` mode tables, and from `roofline` mode (which is
+`kind=compute` only). Each mode's top-level `totals` block adds:
+
+```
+"unknown_categories": {"<hlo_category>": <count>, ...}
+```
+
+so Claude (and the spec maintainer) can see when XLA emits a category
+the spec hasn't yet classified. Verification (§11) requires running
+`extract_hlo_events.py` (or an equivalent enumeration) over the
+dp8_fsdp128 fixture once at implementation time to confirm
+`unknown_categories` is empty for that fixture; any non-empty result
+must update §4.4.
+
+`async-start` is included in `kind=comm` but NOT surfaced by mode 3's
+default include-comm-stalls behavior (only `async-done` is). Rationale:
+on TPU, `async-start` issues the collective without blocking the device
+pipeline, while `async-done` blocks until the collective completes — so
+`async-done` carries the device-stall semantics that mode 3 wants to
+expose as a "non-compute" item. Pass `--include-comm` to mode 3 to
+include `async-start` and other comm categories.
 
 ### 4.5 Step window
 
-- Read device plane's `Steps` line, sort events by `device_offset_ps`.
-- Default: pick `events[len(events)//2]`.
-- `--step N` (0-indexed): pick `events[N]`. Out-of-range → stderr error + exit 1.
-- `--step-id ID`: match by `XEventMetadata.name` (e.g. step number string).
-- The chosen step's `[start_ps, end_ps]` defines the window; events with `device_offset_ps` falling inside are admitted.
-- If `Steps` line is missing or empty, fall back to the full plane time range; record `notes: ["no Steps line; falling back to full-plane window"]` in output.
+**Time-base contract.** The `Steps` line and the `XLA Ops` line both live
+on the same device plane (`/device:TPU:0`). The fixture confirms
+`XLine.timestamp_ns == 0` for both lines, and `XEvent.offset_ps` on each
+event is a picosecond offset against that shared zero. Therefore
+`XEvent.offset_ps` is directly comparable across the two lines without
+any further conversion. The algorithm below uses `offset_ps`
+exclusively; `XEvent.stats.device_offset_ps` is *not* used (it differs
+from `offset_ps` only by sub-µs host/device clock skew, recorded in the
+`Time Scale Multiplier` stat ≈ 1.16 in the fixture).
+
+**Algorithm.**
+
+1. On the device plane, find the `Steps` line. Sort its events by
+   `XEvent.offset_ps`.
+2. Select the target step:
+   - Default: `step_event = sorted_steps[len(sorted_steps)//2]`.
+   - `--step N` (0-indexed integer): `step_event = sorted_steps[N]`. If
+     `N` is out of range → stderr error + exit 1.
+   - `--step-id ID` (string): exact equality match against
+     `XEventMetadata.name` of the Step events. Zero matches → stderr
+     error + exit 1. Multiple matches → pick the earliest by
+     `offset_ps`, append note
+     `"multi-match for step-id; picked first"`.
+3. Compute the half-open window
+   `[step_start_ps, step_end_ps) = [step_event.offset_ps,
+   step_event.offset_ps + step_event.duration_ps)`.
+4. On the same device plane, find the `XLA Ops` line. An XLA Ops event
+   `ev` is admitted to the window iff
+   `step_start_ps ≤ ev.offset_ps < step_end_ps`. (Events are admitted
+   by start-time only; events that begin in the window but extend
+   past `step_end_ps` are still admitted in full. Events whose start
+   precedes the window are excluded even if they extend into it.
+   This matches XLA's per-event accounting model: each HLO op is
+   atomic from a profiling standpoint.)
+5. If the `Steps` line is missing or empty, degrade to the full
+   `[min(ev.offset_ps), max(ev.offset_ps + ev.duration_ps))` of the
+   `XLA Ops` line; append note
+   `"no Steps line; falling back to full-plane window"`.
+
+`step_window_ps` in the JSON output is `[step_start_ps, step_end_ps]`.
+`step_duration_ps = step_end_ps - step_start_ps`.
 
 ## 5. Mode 1 — `summary` (capability 1)
 
@@ -171,12 +302,16 @@ python3 compute_breakdown.py <profile_dir> --mode summary
     "n_events_compute":    32100,
     "n_events_data_move":   9876,
     "n_events_comm":        3147,
+    "n_events_other":          0,
+    "n_events_unresolved":     0,
     "compute_duration_ps":  87654321,
     "data_move_duration_ps": 5432100,
     "comm_duration_ps":     12345678,
+    "other_duration_ps":           0,
     "while_container_duration_ps": 56789012,
     "non_while_duration_ps":      54322089,
-    "while_pct_of_step":          51.1
+    "while_pct_of_step":          51.1,
+    "unknown_categories":         {}
   },
 
   "agg_key_coverage": {"stack": 25600, "tf_op": 6480, "no_source": 20},
@@ -218,6 +353,31 @@ python3 compute_breakdown.py <profile_dir> --mode summary
 - `pct_of_compute` denominator: `compute_duration_ps`. `pct_of_step` denominator: `step_duration_ps` (includes while).
 - `flops_sum` / `bytes_accessed_sum` per-group: skip individual events with null fields when summing; emit `null` only if all events in the group lack the field.
 - `example_hlo_op`: first hlo_op text seen for the agg_key (not full enumeration).
+
+**Totals — closed-form definitions** (all four modes):
+
+```
+step_duration_ps     = step_end_ps - step_start_ps           # wall-clock window
+compute_duration_ps  = Σ duration_ps over admitted records with kind="compute"
+data_move_duration_ps= Σ duration_ps over admitted records with kind="data_move"
+comm_duration_ps     = Σ duration_ps over admitted records with kind="comm"
+other_duration_ps    = Σ duration_ps over admitted records with kind="other"
+while_container_duration_ps = Σ duration_ps over admitted XLA-Ops events whose
+                              hlo_category == "while" (these events are NOT
+                              normalized into records but ARE summed here)
+non_while_duration_ps = compute_duration_ps + data_move_duration_ps
+                      + comm_duration_ps + other_duration_ps
+while_pct_of_step    = 100.0 * while_container_duration_ps / step_duration_ps
+```
+
+**Caveat that MUST appear in SKILL.md (concurrency disclaimer):** TPU
+functional units (MXU, vector unit, scalar unit, async HBM controller)
+execute in parallel, so `compute + data_move + comm + other +
+while_container` can exceed `step_duration_ps`. Summed event durations
+are upper bounds on the wall-clock contribution of each category, not
+disjoint slices of the timeline. Claude must not present these as
+"adding to 100%". The percentage-of-step values are *occupancy ratios*,
+not partitions.
 
 ## 6. Mode 2 — `by_source` (capability 2)
 
@@ -358,8 +518,40 @@ By default `async-done` events are included as `hlo_category="async-done (comm s
 
 **Notes:**
 - Two layers: `by_category` (one row per hlo_category, no thresholding), `by_source_within_category` (full (category, agg_key) breakdown, not truncated, not sorted).
-- `dtype_change` / `layout_change` heuristic: regex-parse the `hlo_op` IR text to extract `op_name = T_out[shape_out]{layout_out} <op>(T_in[shape_in]{layout_in}, ...)`. Compare dtype prefixes and `{...}` layout. If parse fails → both fields `null` (Claude is told null = unknown, not "no change").
-- `shapes_in` / `shapes_out`: cap at 4 each; `null` if not parseable.
+- `dtype_change` / `layout_change` heuristic — concrete regex:
+
+  ```
+  HLO_OP_RE = re.compile(
+      r'^\s*%?[\w.]+\s*=\s*'                        # lhs: "%name =" or "name ="
+      r'([a-z][a-z0-9]*)\['                         # group 1: out dtype
+      r'[^\]]*\]'                                   # out shape
+      r'(\{[^}]*\})?'                               # group 2: out layout (optional)
+      r'\s+\w[-\w]*\s*\('                           # opcode + "("
+      r'\s*([a-z][a-z0-9]*)\['                      # group 3: first-operand dtype
+      r'[^\]]*\]'                                   # first-operand shape
+      r'(\{[^}]*\})?'                               # group 4: first-operand layout (optional)
+  )
+  ```
+
+  Applied to the verbatim `XEventMetadata.name` (the full HLO IR text
+  the fixture puts there, e.g.
+  `"%copy.1 = s32[2,8192]{1,0:T(2,128)} copy(s32[2,8192]{0,1} ...)"`).
+
+  - On match: `dtype_change = (group1 != group3)`,
+    `layout_change = (group2 != group4)`. If either layout group is
+    `None` (operand or output omitted layout in the IR), set
+    `layout_change = null` (cannot decide), but still set
+    `dtype_change` if dtypes were captured.
+  - On no match: both `dtype_change` and `layout_change` = `null`.
+  - The regex only inspects the **first operand** (sufficient for
+    `convert`, `transpose`, `copy`, `pad`, `broadcast`, single-input
+    `data formatting` ops, which is the population mode 3 surfaces).
+    Multi-operand ops (e.g. `dynamic-slice` with index operands) will
+    still produce a meaningful `dtype_change` against operand 0.
+  - SKILL.md must communicate to Claude that `null` ≠ "no change".
+
+- `shapes_in` / `shapes_out`: extract via the same regex (group "shape"
+  inside `[...]`); cap at 4 each, deduped; `null` if not parseable.
 - SKILL.md note: `copy-start` / `copy-done` carry no source — XLA-internal DMA, not user-code-driven; real copy waste shows up in `data formatting` and `broadcast`.
 
 ## 8. Mode 4 — `roofline` (capability 4)
@@ -383,15 +575,41 @@ Source: https://docs.cloud.google.com/tpu/docs/tpu7x. v7x chip has 2 TensorCores
 
 ### 8.2 Formulas
 
-For each group with `flops_sum` not null and `bytes_accessed_sum` not null and `dtype` ∈ {"bf16", "fp8", "fp16", "fp32"} (where peak is known):
+**Group eligibility for roofline computation.** A group is eligible iff
+all of:
+- `flops_sum is not None` AND `flops_sum > 0`
+- `bytes_accessed_sum is not None` AND `bytes_accessed_sum > 0`
+- `dtype ∈ {"bf16", "fp8", "fp16", "fp32"}`
+- the relevant peak (per-dtype TFLOPS and HBM GiB/s) is known
+  (non-null in `peaks_used`)
+
+Groups failing any check go to `skipped_groups` with the matching
+counter (`n_no_flops` for null-or-zero FLOPS, `n_no_bytes` for
+null-or-zero bytes, `n_dtype_other` for `dtype="other"` or `null`,
+`n_peak_unknown_for_dtype` for known dtype but null peak).
+
+**Formulas** (note the unit mismatch between TFLOPS base-10 and HBM
+GiB/s base-2; both scaling factors are required and do *not* cancel):
 
 ```
-arithmetic_intensity = flops_sum / bytes_accessed_sum                       [FLOPs/byte]
-ridge_point          = peak_tflops * 1e12 / (peak_hbm_gibps * (1024**3))    [FLOPs/byte]
+# Two-step decomposition for clarity (avoids combined-constant errors).
+t_compute_seconds = flops_sum / (peak_tflops * 1e12)
+                                            # peak_tflops uses base-10 (TFLOPS = 10^12 FLOPS)
+t_compute_theory_ps = t_compute_seconds * 1e12
+                                            # 1 second = 1e12 picoseconds
 
-t_compute_theory_ps  = flops_sum / (peak_tflops * 1e12) * 1e12              [ps]
-t_hbm_theory_ps      = bytes_accessed_sum / (peak_hbm_gibps * (1024**3)) * 1e12   [ps]
+t_hbm_seconds  = bytes_accessed_sum / (peak_hbm_gibps * (1024 ** 3))
+                                            # peak_hbm_gibps uses base-2 (GiB = 2^30 bytes)
+t_hbm_theory_ps = t_hbm_seconds * 1e12
+
 t_roofline_theory_ps = max(t_compute_theory_ps, t_hbm_theory_ps)
+
+arithmetic_intensity = flops_sum / bytes_accessed_sum
+                                            # FLOPs/byte
+ridge_point = (peak_tflops * 1e12) / (peak_hbm_gibps * (1024 ** 3))
+                                            # FLOPs/byte; the two constants
+                                            # 1e12 (base-10) and 2^30 (base-2)
+                                            # are NOT cancelable
 
 bound = "compute" if arithmetic_intensity >= ridge_point else "memory"
 
@@ -402,7 +620,9 @@ shortfall_ps  = total_dur_ps - t_roofline_theory_ps         # absolute waste vs 
 shortfall_pct = (1 - roofline_util) * 100
 ```
 
-The shortfall formula is the user's "actual vs theoretical" decomposition: `shortfall_ps` is the slack between observed time and the roofline-theoretical lower bound, given the per-group dtype.
+The shortfall formula is the user's "actual vs theoretical"
+decomposition: `shortfall_ps` is the slack between observed time and
+the roofline-theoretical lower bound, given the per-group dtype.
 
 ### 8.3 CLI
 
@@ -516,6 +736,7 @@ description: Use when analyzing TPU pretraining compute efficiency from
   scoped breakdowns, non-compute (padding/cast/copy) audits, and v7x
   roofline shortfall vs theoretical peak. Reads schema documented by
   profile-anatomy.
+argument-hint: "<profile_dir> --mode {summary|by_source|non_compute|roofline} [--step N] [--top K]"
 ---
 
 # Compute Breakdown
@@ -555,6 +776,10 @@ description: Use when analyzing TPU pretraining compute efficiency from
 ## Mode 4 — roofline
 [invocation, peaks_used, MFU/HBM_util/bound interpretation,
  shortfall formula recap]
+[explicit instruction to Claude: when a roofline group has
+ dtype_uncertain=true, present both the bf16-peak MFU and a note
+ that the true peak may be fp8 (~2× higher), making the MFU number
+ an upper bound on under-utilization, not a definitive figure.]
 
 ## Common gotchas
 [mirror profile-anatomy's gotchas + new ones for this skill]
@@ -591,10 +816,18 @@ No build/lint/test framework in repo. Manual verification steps for the spec's i
        --mode $m | python3 -m json.tool > /dev/null
    done
    ```
-2. **Cross-mode consistency:**
-   - `summary.totals.compute_duration_ps` ≈ `by_source.totals.compute_duration_ps`
-   - `summary.totals.data_move_duration_ps` ≈ `non_compute.totals.data_move_duration_ps` (with `--no-comm-stalls`)
-   - All four modes agree on `step_window_ps`.
+2. **Cross-mode consistency** (must hold exactly when invoked with
+   identical `--device` / `--step` and no extra include flags):
+   - `summary.totals.compute_duration_ps == by_source.totals.compute_duration_ps`
+     (both modes derive from the same Stage 3 records, mode 2 just adds
+     `--include-data-move=false` filter on top of the same records).
+   - `summary.totals.data_move_duration_ps ==
+     non_compute.totals.data_move_duration_ps` when mode 3 is invoked
+     with `--no-comm-stalls` (otherwise mode 3 also includes
+     `async-done`, breaking equality on purpose).
+   - All four modes return identical `step_window_ps`.
+   - `roofline.step_summary.step_compute_duration_ps ==
+     summary.totals.compute_duration_ps`.
 3. **Error paths:**
    - non-existent dir → `status=absent`, `reason=no_xplane_pb`, exit 0
    - non-existent device → `status=absent`, `reason=device_not_found`, exit 0
