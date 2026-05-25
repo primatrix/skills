@@ -424,6 +424,83 @@ def _compute_totals(records: list[EventRecord], *, pstats: _PipelineStats,
     }
 
 
+def _run_summary_mode(records: list[EventRecord], *, ctx: dict,
+                        include_comm: bool, top: int) -> dict:
+    pstats = ctx["pipeline_stats"]
+    step_dur = ctx["step_duration_ps"]
+    # Spec §5: `totals` and `by_kind_rollup` are cross-kind summaries of
+    # the *whole* step — they reflect the actual breakdown including
+    # comm/data_move regardless of the include_comm flag. The flag only
+    # controls which records get ranked into `top_compute_groups`.
+    # `include_comm` historically allowed comm into the ranking too;
+    # we keep that for parity with --include-data-move (mode 2).
+    totals = _compute_totals(records, pstats=pstats, step_duration_ps=step_dur)
+    if include_comm:
+        rankable = [r for r in records if r.kind in ("compute", "comm")]
+    else:
+        rankable = [r for r in records if r.kind == "compute"]
+    compute_records = rankable
+    groups = _aggregate_by_key(compute_records)
+    ordered = sorted(groups.values(), key=lambda g: -g.total_dur_ps)
+
+    compute_dur = totals["compute_duration_ps"] or 1
+    step_dur_safe = step_dur or 1
+
+    def _g_to_dict(g: _GroupAgg, rank: int) -> dict:
+        return {
+            "rank": rank,
+            "agg_key":      g.agg_key,
+            "agg_key_kind": g.agg_key_kind,
+            "source_inner": g.source_inner,
+            "tf_op":        g.tf_op,
+            "source_stack": g.source_stack,
+            "n_executions": g.n_executions,
+            "total_dur_ps": g.total_dur_ps,
+            "min_dur_ps":   g.min_dur_ps,
+            "max_dur_ps":   g.max_dur_ps,
+            "avg_dur_ps":   round(g.avg_dur_ps, 3),
+            "pct_of_compute": round(100.0 * g.total_dur_ps / compute_dur, 3),
+            "pct_of_step":    round(100.0 * g.total_dur_ps / step_dur_safe, 3),
+            "hlo_categories": dict(g.hlo_categories),
+            "flops_sum":          g.flops_sum,
+            "bytes_accessed_sum": g.bytes_accessed_sum,
+            "example_hlo_op":     g.example_hlo_op,
+        }
+
+    top_list = [_g_to_dict(g, i + 1) for i, g in enumerate(ordered[:top])]
+    tail = ordered[top:]
+    tail_dur = sum(g.total_dur_ps for g in tail)
+
+    coverage = {"stack": 0, "tf_op": 0, "no_source": 0}
+    for r in compute_records:
+        coverage[r.agg_key_kind] = coverage.get(r.agg_key_kind, 0) + 1
+
+    by_kind_rollup: dict = {}
+    for kind in ("compute", "data_move", "comm"):
+        n = totals[f"n_events_{kind}"]
+        d = totals[f"{kind}_duration_ps"]
+        by_kind_rollup[kind] = {
+            "n": n, "dur_ps": d,
+            "pct_of_step": round(100.0 * d / step_dur_safe, 3),
+        }
+
+    return {
+        "status": "ok",
+        "mode": "summary",
+        "profile_dir": ctx["profile_dir"],
+        "device": ctx["device"],
+        "step_id": ctx["step_id"],
+        "step_window_ps": ctx["step_window_ps"],
+        "step_duration_ps": step_dur,
+        "notes": list(ctx["notes"]),
+        "totals": totals,
+        "agg_key_coverage": coverage,
+        "top_compute_groups": top_list,
+        "tail_compute": {"n_groups_omitted": len(tail), "dur_ps": tail_dur},
+        "by_kind_rollup": by_kind_rollup,
+    }
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="compute_breakdown.py",
