@@ -218,6 +218,24 @@ sys.path.insert(0, str(_PROTO_DIR.parent))
 import compute_breakdown as cb  # noqa: E402  -- after sys.path insert above
 
 
+def _make_record(**overrides):
+    """Build an EventRecord with sensible defaults; override any field.
+    Shared factory used by all test modules."""
+    defaults = dict(
+        duration_ps=100, offset_ps=0, step_id=0,
+        hlo_category="loop fusion", kind="compute",
+        hlo_op="x", tf_op=None, source_stat=None,
+        source_stack=None, source_inner=None, source_stack_hash=None,
+        agg_key="tfop:x", agg_key_kind="tf_op",
+        flops=None, model_flops=None, bytes_accessed=None,
+        raw_bytes_accessed=None, shape_with_layout=None,
+        dtype=None, dtype_uncertain=False,
+        program_id=None, deduplicated_name=None,
+    )
+    defaults.update(overrides)
+    return cb.EventRecord(**defaults)
+
+
 class TestEventRecord(unittest.TestCase):
     def test_event_record_has_all_spec_fields(self):
         # Fields per spec §4

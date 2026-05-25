@@ -328,6 +328,7 @@ class _GroupAgg:
     _model_flops_seen: int = 0
     hlo_categories: dict = dataclasses.field(default_factory=dict)
     shapes: list = dataclasses.field(default_factory=list)
+    shapes_truncated: bool = False
     dtypes: dict = dataclasses.field(default_factory=dict)
     dtype_uncertain: bool = False        # OR of all member records
     first_dtype: str | None = None       # dtype of the FIRST record in
@@ -387,6 +388,8 @@ def _aggregate_by_key(records: list[EventRecord],
         if r.shape_with_layout and r.shape_with_layout not in g.shapes:
             if len(g.shapes) < dedupe_shapes_cap:
                 g.shapes.append(r.shape_with_layout)
+            else:
+                g.shapes_truncated = True
         if r.dtype:
             g.dtypes[r.dtype] = g.dtypes.get(r.dtype, 0) + 1
         if r.dtype_uncertain:
@@ -498,6 +501,61 @@ def _run_summary_mode(records: list[EventRecord], *, ctx: dict,
         "top_compute_groups": top_list,
         "tail_compute": {"n_groups_omitted": len(tail), "dur_ps": tail_dur},
         "by_kind_rollup": by_kind_rollup,
+    }
+
+
+def _run_by_source_mode(records: list[EventRecord], *, ctx: dict,
+                          include_comm: bool,
+                          include_data_move: bool) -> dict:
+    """Mode 2: full per-agg_key table for client-side scope filtering."""
+    step_dur = ctx["step_duration_ps"]
+    pstats = ctx["pipeline_stats"]
+    totals = _compute_totals(records, pstats=pstats, step_duration_ps=step_dur)
+    kept_kinds = {"compute"}
+    if include_data_move:
+        kept_kinds.add("data_move")
+    if include_comm:
+        kept_kinds.add("comm")
+    visible = [r for r in records if r.kind in kept_kinds]
+    groups = _aggregate_by_key(visible, dedupe_shapes_cap=8)
+    group_rows = []
+    for g in groups.values():
+        n = g.n_executions
+        group_rows.append({
+            "agg_key": g.agg_key,
+            "agg_key_kind": g.agg_key_kind,
+            "source_inner": g.source_inner,
+            "source_stack": g.source_stack,
+            "tf_op": g.tf_op,
+            "kind": g.kind,
+            "hlo_categories": dict(g.hlo_categories),
+            "n_executions": n,
+            "total_dur_ps": g.total_dur_ps,
+            "min_dur_ps": g.min_dur_ps,
+            "max_dur_ps": g.max_dur_ps,
+            "avg_dur_ps": g.total_dur_ps // n if n else 0,
+            "flops_sum": g.flops_sum,
+            "model_flops_sum": g.model_flops_sum,
+            "bytes_accessed_sum": g.bytes_accessed_sum,
+            "shapes": list(g.shapes),
+            "shapes_truncated": g.shapes_truncated,
+            "dtypes": dict(g.dtypes),
+            "dtype_uncertain": g.dtype_uncertain,
+            "example_hlo_op": g.example_hlo_op,
+        })
+    totals_out = dict(totals)
+    totals_out["n_groups_total"] = len(group_rows)
+    return {
+        "status": "ok",
+        "mode": "by_source",
+        "profile_dir": ctx["profile_dir"],
+        "device": ctx["device"],
+        "step_id": ctx["step_id"],
+        "step_window_ps": ctx["step_window_ps"],
+        "step_duration_ps": step_dur,
+        "notes": list(ctx["notes"]),
+        "totals": totals_out,
+        "groups": group_rows,
     }
 
 
