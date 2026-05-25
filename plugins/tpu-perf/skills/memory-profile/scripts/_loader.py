@@ -190,3 +190,126 @@ def load_host_allocator_events(
         pool_capacity=pool_capacity, host_plane_present=True,
         n_planes=len(xs.planes),
     ), None
+
+
+class StepPolicyError(ValueError):
+    """Raised when the requested step policy cannot be satisfied."""
+
+
+@dataclasses.dataclass(slots=True)
+class StepWindow:
+    id: Optional[str]                 # event metadata.name (e.g. "step_3"); None for all-trace
+    range_ns: tuple[int, int]
+    source: str                       # "steps_line" | "execute_event" | "all_trace"
+    policy_used: str                  # "explicit" | "peak" | "last" | "first" | "all_trace"
+
+
+def _steps_line_intervals(xs: xplane_pb2.XSpace) -> list[tuple[str, int, int]]:
+    """Return [(name, start_ns, end_ns)] for /device:TPU:0 'Steps' events."""
+    for plane in xs.planes:
+        if plane.name != "/device:TPU:0":
+            continue
+        em = {meta.id: meta.name for _, meta in plane.event_metadata.items()}
+        for line in plane.lines:
+            if line.name != "Steps":
+                continue
+            out: list[tuple[str, int, int]] = []
+            for ev in line.events:
+                start_ns = line.timestamp_ns + ev.offset_ps // 1000
+                end_ns = start_ns + ev.duration_ps // 1000
+                out.append((em.get(ev.metadata_id, ""), start_ns, end_ns))
+            return out
+    return []
+
+
+def _execute_event_intervals(xs: xplane_pb2.XSpace) -> list[tuple[str, int, int]]:
+    """Return [(name, start_ns, end_ns)] for outer 'Execute (jit_*)' events on /host:CPU."""
+    for plane in xs.planes:
+        if plane.name != "/host:CPU":
+            continue
+        em = {meta.id: meta.name for _, meta in plane.event_metadata.items()}
+        out: list[tuple[str, int, int]] = []
+        for line in plane.lines:
+            for ev in line.events:
+                name = em.get(ev.metadata_id, "")
+                if "Execute (jit_" not in name:
+                    continue
+                if ev.duration_ps <= 0:
+                    continue
+                start_ns = line.timestamp_ns + ev.offset_ps // 1000
+                end_ns = start_ns + ev.duration_ps // 1000
+                out.append((name, start_ns, end_ns))
+        out.sort(key=lambda x: x[1])
+        return out
+    return []
+
+
+def pick_step_window(
+    xs: xplane_pb2.XSpace, *, all_trace: bool, policy: str,
+    explicit: Optional[int], peak_ts_ns_hint: Optional[int],
+) -> Optional[StepWindow]:
+    if all_trace:
+        return StepWindow(id=None, range_ns=(0, (1 << 63) - 1),
+                          source="all_trace", policy_used="all_trace")
+
+    steps = _steps_line_intervals(xs)
+    if explicit is not None:
+        if not steps:
+            raise StepPolicyError("explicit --step requires a 'Steps' line on /device:TPU:0")
+        if explicit < 0 or explicit >= len(steps):
+            raise StepPolicyError(
+                f"--step {explicit} out of range; Steps line has {len(steps)} events"
+            )
+        name, start, end = steps[explicit]
+        return StepWindow(id=name, range_ns=(start, end),
+                          source="steps_line", policy_used="explicit")
+
+    if steps:
+        if policy == "first":
+            name, start, end = steps[0]
+        elif policy == "last":
+            name, start, end = steps[-1]
+        elif policy == "peak":
+            if peak_ts_ns_hint is None:
+                name, start, end = steps[0]
+            else:
+                hit = next(
+                    ((n, s, e) for (n, s, e) in steps if s <= peak_ts_ns_hint <= e),
+                    None,
+                )
+                if hit is None:
+                    # Pick the closest step.
+                    hit = min(steps, key=lambda t: min(
+                        abs(t[1] - peak_ts_ns_hint), abs(t[2] - peak_ts_ns_hint)
+                    ))
+                name, start, end = hit
+        else:
+            raise StepPolicyError(f"unknown policy: {policy}")
+        return StepWindow(id=name, range_ns=(start, end),
+                          source="steps_line", policy_used=policy)
+
+    # Fallback: outer Execute (jit_*) events on /host:CPU.
+    execs = _execute_event_intervals(xs)
+    if not execs:
+        return None
+    if policy == "first":
+        name, start, end = execs[0]
+    elif policy == "last":
+        name, start, end = execs[-1]
+    elif policy == "peak":
+        if peak_ts_ns_hint is None:
+            name, start, end = execs[0]
+        else:
+            hit = next(
+                ((n, s, e) for (n, s, e) in execs if s <= peak_ts_ns_hint <= e),
+                None,
+            )
+            if hit is None:
+                hit = min(execs, key=lambda t: min(
+                    abs(t[1] - peak_ts_ns_hint), abs(t[2] - peak_ts_ns_hint)
+                ))
+            name, start, end = hit
+    else:
+        raise StepPolicyError(f"unknown policy: {policy}")
+    return StepWindow(id=name, range_ns=(start, end),
+                      source="execute_event", policy_used=policy)
