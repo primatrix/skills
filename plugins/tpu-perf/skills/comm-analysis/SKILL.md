@@ -135,6 +135,24 @@ python3 plugins/tpu-perf/skills/comm-analysis/scripts/overlap_report.py \
 - **SparseCore comm is reported in a separate sub-table** in
   `overlap_report.py` because SC and TC compute don't compete; mixing
   them would muddle the math.
+- **`overlap_report.py` excludes wrapper / control-flow categories from
+  the compute set.** The "XLA Ops" line on the TC device plane carries
+  events whose `hlo_category` is `while`, `call`, `conditional`,
+  `async-start`, `async-done`, `copy-start`, `copy-done`, etc. These are
+  CONTAINERS or comm-completion wrappers, not real compute:
+  - `while` / `call` / `conditional` cover their entire body — in
+    MaxText captures the outer `jax.lax.while_loop` is one event whose
+    `duration_ps` ≈ full step time (~hundreds of seconds).
+  - `async-done` carries the full async-collective wall (mirror of
+    Async XLA Ops) — the same time also appears on the comm side.
+  Counting any of these as compute makes `compute_busy ≈ step_time` and
+  forces every comm interval to overlap ⇒ fake 100% overlap and
+  exposed≈0. The script now drops them in `_compute_intervals` and
+  prints an `[info] excluded from compute (wrapper/container ops): …`
+  line so the reader can sanity-check the fix on their own capture.
+  When the per-step `compute(us)` column is suspiciously close to
+  `step(us)`, look at that `[info]` line first — a missing wrapper
+  category is the usual culprit.
 - **The sweep-derived `exposed_comm` is authoritative** when it disagrees
   with `Σ done.device_duration_ps` by >5%; the metadata sum doesn't
   account for parallel streams.

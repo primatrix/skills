@@ -10,9 +10,25 @@ Per step on the device plane, computes:
 
 Sweep-line union math; intervals are clipped to the step window.
 
+Compute intervals come from the "XLA Ops" line, EXCLUDING:
+  1. comm categories (collectives — already accounted for in comm)
+  2. wrapper / control-flow categories (`while`, `call`, `conditional`,
+     `async-start/done`, `copy-start/done`, `*-done`).
+
+The wrapper exclusion is non-obvious but critical: in MaxText / `jax.lax`
+captures, the outer `while_loop` appears on XLA Ops as a single event whose
+duration spans the entire body (often = the whole step). `async-done`
+events likewise carry the full async wall as their `duration_ps`. Counting
+either as "compute" makes compute_busy ≈ step_time, and every comm interval
+falls inside it ⇒ fake 100% overlap, ~0us exposed. See `_WRAPPER_HLO_CATEGORIES`.
+
 Sanity-check: the sweep-derived exposed_comm vs Σ done.device_duration_ps
 within the step (the metadata-reported exposed time). Mismatch above 5%
 prints `[warn] step N`. Sweep is authoritative.
+
+After the table an `[info]` line reports which wrapper categories were
+excluded and how much time they covered, so a reader can sanity-check the
+fix on their own capture.
 """
 from __future__ import annotations
 
@@ -30,6 +46,29 @@ _COMM_HLO_CATEGORIES = {
     "all-reduce", "all-gather", "reduce-scatter",
     "all-to-all", "collective-permute", "send", "recv",
 }
+
+# Categories that appear on the "XLA Ops" line but do NOT represent real TC
+# compute. Excluded from compute_intervals so they don't fake-overlap comm.
+#
+# - async-start / async-done: collective wrappers; async-done's duration is the
+#   full async wall (mirror of Async XLA Ops). Counting it as compute would
+#   make every async collective look fully hidden.
+# - while / call / conditional: control-flow CONTAINERS whose duration spans
+#   their entire body. In MaxText captures the outer `while_loop` is one event
+#   covering the whole training step (~hundreds of seconds), which by itself
+#   makes compute_busy ≈ step_time and forces overlap_ratio → 1.0.
+# - copy-start / copy-done / send-done / recv-done /
+#   collective-permute-start / collective-permute-done: DMA / collective
+#   completion wrappers, not compute.
+_WRAPPER_HLO_CATEGORIES = {
+    "while", "call", "conditional",
+    "async-start", "async-done",
+    "copy-start", "copy-done",
+    "send-done", "recv-done",
+    "collective-permute-start", "collective-permute-done",
+}
+
+_NON_COMPUTE_HLO_CATEGORIES = _COMM_HLO_CATEGORIES | _WRAPPER_HLO_CATEGORIES
 
 
 # ---------------------------------------------------------------------------
@@ -88,18 +127,28 @@ def intersection_intervals(
 # Per-plane interval extraction
 # ---------------------------------------------------------------------------
 
-def _compute_intervals(plane) -> list[tuple[int, int]]:
+def _compute_intervals(plane) -> tuple[list[tuple[int, int]], dict[str, int]]:
+    """
+    Returns (intervals, dropped_by_category).
+
+    `dropped_by_category` is the per-category Σduration of XLA Ops events
+    that were NOT counted as compute (comm + wrappers). Reported alongside
+    the overlap table as a sanity check — if a wrapper category dominates,
+    the user can see what was excluded.
+    """
     ln = cc.xla_ops_line(plane)
     if ln is None:
-        return []
-    out = []
+        return [], {}
+    out: list[tuple[int, int]] = []
+    dropped: dict[str, int] = {}
     for ev in ln.events:
         md = cc.event_metadata_stats(plane, ev)
         cat = md.get("hlo_category")
-        if cat in _COMM_HLO_CATEGORIES:
+        if cat in _NON_COMPUTE_HLO_CATEGORIES:
+            dropped[cat] = dropped.get(cat, 0) + ev.duration_ps
             continue
         out.append((ev.offset_ps, ev.offset_ps + ev.duration_ps))
-    return out
+    return out, dropped
 
 
 def _comm_intervals(plane) -> list[tuple[int, int]]:
@@ -152,7 +201,7 @@ def _step_windows(plane) -> list[tuple[int, tuple[int, int]]]:
 
 
 def report_for_plane(plane, *, warn_eps: float = 0.05) -> dict:
-    compute_all = _compute_intervals(plane)
+    compute_all, dropped_by_cat = _compute_intervals(plane)
     comm_all = _comm_intervals(plane)
 
     rows = []
@@ -198,7 +247,8 @@ def report_for_plane(plane, *, warn_eps: float = 0.05) -> dict:
                 totals[k] += rows[-1][k]
 
     return {"plane": plane.name, "core": cc.core_kind(plane),
-            "rows": rows, "totals": totals, "warns": warns}
+            "rows": rows, "totals": totals, "warns": warns,
+            "dropped_by_category": dropped_by_cat}
 
 
 # ---------------------------------------------------------------------------
@@ -259,6 +309,16 @@ def _print_step_table(report: dict, label: str):
             ratio_hint = "  (unpaired-dominated capture: meta double-counts overlapped time)"
         print(f"  [warn] step {step_id}: sweep_exposed={sweep/1e6:.3f}us  "
               f"meta_exposed={meta/1e6:.3f}us  Δ>5%; sweep authoritative{ratio_hint}")
+
+    dropped = report.get("dropped_by_category", {})
+    if dropped:
+        # Show only wrapper categories — comm exclusions are obvious.
+        wrapper_drop = {c: d for c, d in dropped.items() if c in _WRAPPER_HLO_CATEGORIES}
+        if wrapper_drop:
+            parts = ", ".join(f"{c}={d/1e6:.0f}us"
+                              for c, d in sorted(wrapper_drop.items(),
+                                                 key=lambda kv: -kv[1]))
+            print(f"  [info] excluded from compute (wrapper/container ops): {parts}")
 
 
 def main():
