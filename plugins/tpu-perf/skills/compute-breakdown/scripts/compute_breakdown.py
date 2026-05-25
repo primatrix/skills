@@ -555,14 +555,37 @@ def main(argv=None) -> int:
         print("error: cannot pass both --step and --step-id", file=sys.stderr)
         return 1
 
-    profile_dir = pathlib.Path(args.profile_dir)
-    pbs = sorted(profile_dir.glob("*.xplane.pb")) if profile_dir.is_dir() else []
-    if not pbs:
-        _emit(_absent("no_xplane_pb", args.mode, args.profile_dir))
+    try:
+        records, ctx = _load_and_normalize(
+            profile_dir=args.profile_dir,
+            device=args.device,
+            step_idx=args.step,
+            step_id=args.step_id,
+        )
+    except ValueError as ex:
+        print(f"error: {ex}", file=sys.stderr)
+        return 1
+
+    if records is None:
+        # Absent path. ctx already carries status/reason/notes.
+        out = {
+            "status": ctx["status"], "reason": ctx["reason"],
+            "mode": args.mode, "profile_dir": args.profile_dir,
+            "notes": ctx.get("notes", []),
+        }
+        _emit(out)
         return 0
 
-    # Stages 1-4 not yet implemented; placeholder for chunk 2+.
-    _emit(_absent("not_implemented", args.mode, args.profile_dir))
+    if args.mode == "summary":
+        _emit(_run_summary_mode(records, ctx=ctx,
+                                  include_comm=args.include_comm,
+                                  top=args.top))
+        return 0
+
+    # Other modes wired up in later chunks.
+    _emit({"status": "absent", "reason": "not_implemented",
+           "mode": args.mode, "profile_dir": args.profile_dir,
+           "notes": []})
     return 0
 
 

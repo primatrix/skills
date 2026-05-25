@@ -219,3 +219,40 @@ class TestRunSummaryMode(unittest.TestCase):
                 for i in range(60)]
         doc = cb._run_summary_mode(recs, ctx=self._ctx(), include_comm=False, top=50)
         self.assertEqual(len(doc["top_compute_groups"]), 50)
+
+
+class TestSummaryEndToEnd(unittest.TestCase):
+    def test_summary_on_synthetic_xspace_emits_valid_json(self):
+        xs = make_minimal_xspace(steps=[(1, 0, 1_000_000_000)])
+        add_hlo_event(xs, em_id=10, hlo_op_text="big = bf16[8] fusion(...)",
+                       offset_ps=100, duration_ps=400_000_000,
+                       hlo_category="loop fusion", tf_op="jit/Big",
+                       flops=1_000_000, bytes_accessed=1024,
+                       shape_with_layout="bf16[8]{0}")
+        add_hlo_event(xs, em_id=11, hlo_op_text="small = bf16[2] fusion(...)",
+                       offset_ps=600, duration_ps=10_000_000,
+                       hlo_category="loop fusion", tf_op="jit/Small",
+                       flops=50_000, bytes_accessed=64,
+                       shape_with_layout="bf16[2]{0}")
+        add_hlo_event(xs, em_id=12, hlo_op_text="copy.0",
+                       offset_ps=800, duration_ps=5_000_000,
+                       hlo_category="data formatting")
+        with tempfile.TemporaryDirectory() as tmp:
+            pathlib.Path(tmp, "x.xplane.pb").write_bytes(xs.SerializeToString())
+            r = subprocess.run(
+                [sys.executable, str(SCRIPT), tmp, "--mode", "summary"],
+                capture_output=True, text=True,
+            )
+        self.assertEqual(r.returncode, 0, r.stderr)
+        doc = json.loads(r.stdout)
+        self.assertEqual(doc["status"], "ok")
+        self.assertEqual(doc["mode"], "summary")
+        self.assertEqual(doc["totals"]["n_events_total"], 3)
+        self.assertEqual(doc["totals"]["n_events_compute"], 2)
+        self.assertEqual(doc["totals"]["n_events_data_move"], 1)
+        self.assertGreaterEqual(len(doc["top_compute_groups"]), 1)
+        self.assertEqual(doc["top_compute_groups"][0]["agg_key"], "tfop:jit/Big")
+
+
+if __name__ == "__main__":
+    unittest.main()
