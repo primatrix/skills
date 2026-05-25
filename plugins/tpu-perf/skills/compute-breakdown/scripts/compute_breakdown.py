@@ -112,10 +112,21 @@ _DATA_MOVE_CATS = frozenset({
     "copy-start", "copy-done", "data formatting", "pad", "broadcast",
     "slice", "dynamic-slice", "dynamic-update-slice", "iota", "convert",
 })
+ASYNC_DONE_CATEGORIES = frozenset({
+    "async-done",
+    "all-reduce-done",
+    "all-gather-done",
+    "reduce-scatter-done",
+    "collective-permute-done",
+    "send-done",
+    "recv-done",
+})
+
 _COMM_CATS = frozenset({
     "async-start", "async-done", "all-reduce", "all-gather",
     "reduce-scatter", "collective-permute",
-})
+    "send", "recv",
+}) | ASYNC_DONE_CATEGORIES
 
 _DTYPE_PREFIX_RE = re.compile(r"^([a-z][a-z0-9]*)\[")
 _DTYPE_MAP = {
@@ -592,6 +603,182 @@ def _run_by_source_mode(records: list[EventRecord], *, ctx: dict,
         "notes": list(ctx["notes"]),
         "totals": totals_out,
         "groups": group_rows,
+    }
+
+
+_COMM_STALL_CATEGORY = "async-done (comm stall)"
+_COMM_STALL_NOTE = (
+    "async-done included as comm-stall non-compute time; "
+    "pass --no-comm-stalls to exclude"
+)
+
+
+def _run_non_compute_mode(records: list[EventRecord], *, ctx: dict,
+                            include_comm: bool,
+                            include_comm_stalls: bool) -> dict:
+    """Mode 3: padding/cast/copy/transpose audit. Two layers:
+    by_category and by_source_within_category."""
+    step_dur = ctx["step_duration_ps"]
+    pstats = ctx["pipeline_stats"]
+    totals = _compute_totals(records, pstats=pstats, step_duration_ps=step_dur)
+
+    visible: list[EventRecord] = []
+    for r in records:
+        if r.kind == "data_move":
+            visible.append(r)
+        elif (include_comm_stalls and r.kind == "comm"
+              and r.hlo_category in ASYNC_DONE_CATEGORIES):
+            visible.append(dataclasses.replace(
+                r, hlo_category=_COMM_STALL_CATEGORY
+            ))
+        elif include_comm and r.kind == "comm":
+            visible.append(r)
+
+    cat_acc: dict[str, dict] = {}
+    for r in visible:
+        c = cat_acc.get(r.hlo_category)
+        if c is None:
+            c = {
+                "hlo_category": r.hlo_category,
+                "n_executions": 0, "total_dur_ps": 0,
+                "min_dur_ps": r.duration_ps, "max_dur_ps": r.duration_ps,
+                "agg_keys": set(),
+                "agg_key_coverage": {"stack": 0, "tf_op": 0, "no_source": 0},
+            }
+            cat_acc[r.hlo_category] = c
+        c["n_executions"] += 1
+        c["total_dur_ps"] += r.duration_ps
+        if r.duration_ps < c["min_dur_ps"]:
+            c["min_dur_ps"] = r.duration_ps
+        if r.duration_ps > c["max_dur_ps"]:
+            c["max_dur_ps"] = r.duration_ps
+        c["agg_keys"].add(r.agg_key)
+        c["agg_key_coverage"][r.agg_key_kind] = (
+            c["agg_key_coverage"].get(r.agg_key_kind, 0) + 1
+        )
+    by_category = []
+    for c in cat_acc.values():
+        n = c["n_executions"]
+        by_category.append({
+            "hlo_category":     c["hlo_category"],
+            "n_executions":     n,
+            "total_dur_ps":     c["total_dur_ps"],
+            "min_dur_ps":       c["min_dur_ps"],
+            "max_dur_ps":       c["max_dur_ps"],
+            "avg_dur_ps":       c["total_dur_ps"] // n if n else 0,
+            "n_groups":         len(c["agg_keys"]),
+            "agg_key_coverage": c["agg_key_coverage"],
+        })
+
+    pair_acc: dict = {}
+    for r in visible:
+        key = (r.hlo_category, r.agg_key)
+        p = pair_acc.get(key)
+        if p is None:
+            p = {
+                "hlo_category":  r.hlo_category,
+                "agg_key":       r.agg_key,
+                "agg_key_kind":  r.agg_key_kind,
+                "source_inner":  r.source_inner,
+                "source_stack":  r.source_stack,
+                "tf_op":         r.tf_op,
+                "n_executions": 0, "total_dur_ps": 0,
+                "min_dur_ps":   r.duration_ps, "max_dur_ps": r.duration_ps,
+                "shapes_in":  [], "shapes_out": [],
+                "example_hlo_op": r.hlo_op,
+                "_dtype_change_seen": False,
+                "_dtype_change_value": False,
+                "_layout_change_seen": False,
+                "_layout_change_value": False,
+                "_layout_change_null": False,
+            }
+            pair_acc[key] = p
+        p["n_executions"] += 1
+        p["total_dur_ps"] += r.duration_ps
+        if r.duration_ps < p["min_dur_ps"]:
+            p["min_dur_ps"] = r.duration_ps
+        if r.duration_ps > p["max_dur_ps"]:
+            p["max_dur_ps"] = r.duration_ps
+        (out_dt, out_shape, out_lay,
+         in_dt, in_shape, in_lay) = _parse_hlo_op_text_full(r.hlo_op)
+        if out_dt is not None and in_dt is not None:
+            p["_dtype_change_seen"] = True
+            if out_dt != in_dt:
+                p["_dtype_change_value"] = True
+            if out_shape is not None and len(p["shapes_out"]) < 4:
+                s = f"{out_dt}[{out_shape}]" + (out_lay if out_lay else "")
+                if s not in p["shapes_out"]:
+                    p["shapes_out"].append(s)
+            if in_shape is not None and len(p["shapes_in"]) < 4:
+                s = f"{in_dt}[{in_shape}]" + (in_lay if in_lay else "")
+                if s not in p["shapes_in"]:
+                    p["shapes_in"].append(s)
+            if out_lay is None or in_lay is None:
+                p["_layout_change_null"] = True
+            else:
+                p["_layout_change_seen"] = True
+                if out_lay != in_lay:
+                    p["_layout_change_value"] = True
+
+    by_source_within_category = []
+    for p in pair_acc.values():
+        n = p["n_executions"]
+        dtype_change = (p["_dtype_change_value"]
+                          if p["_dtype_change_seen"] else None)
+        if p["_layout_change_seen"]:
+            layout_change = p["_layout_change_value"]
+        elif p["_layout_change_null"]:
+            layout_change = None
+        else:
+            layout_change = None
+        by_source_within_category.append({
+            "hlo_category":   p["hlo_category"],
+            "agg_key":        p["agg_key"],
+            "agg_key_kind":   p["agg_key_kind"],
+            "source_inner":   p["source_inner"],
+            "source_stack":   p["source_stack"],
+            "tf_op":          p["tf_op"],
+            "n_executions":   n,
+            "total_dur_ps":   p["total_dur_ps"],
+            "min_dur_ps":     p["min_dur_ps"],
+            "max_dur_ps":     p["max_dur_ps"],
+            "avg_dur_ps":     p["total_dur_ps"] // n if n else 0,
+            "shapes_in":      p["shapes_in"] or None,
+            "shapes_out":     p["shapes_out"] or None,
+            "dtype_change":   dtype_change,
+            "layout_change":  layout_change,
+            "example_hlo_op": p["example_hlo_op"],
+        })
+
+    non_compute_dur = sum(p["total_dur_ps"] for p in pair_acc.values())
+    compute_dur = totals["compute_duration_ps"]
+    totals_out = dict(totals)
+    totals_out["non_compute_pct_of_step"] = (
+        round(100.0 * non_compute_dur / step_dur, 3) if step_dur > 0 else 0.0
+    )
+    totals_out["non_compute_pct_of_compute"] = (
+        round(100.0 * non_compute_dur / compute_dur, 3) if compute_dur > 0 else 0.0
+    )
+
+    notes = list(ctx["notes"])
+    if include_comm_stalls and any(
+        r.kind == "comm" and r.hlo_category in ASYNC_DONE_CATEGORIES
+        for r in records
+    ):
+        notes.append(_COMM_STALL_NOTE)
+
+    return {
+        "status":           "ok",
+        "mode":             "non_compute",
+        "profile_dir":      ctx["profile_dir"],
+        "device":           ctx["device"],
+        "step_id":          ctx["step_id"],
+        "step_window_ps":   ctx["step_window_ps"],
+        "step_duration_ps": step_dur,
+        "notes":            notes,
+        "totals":           totals_out,
+        "by_category":      by_category,
+        "by_source_within_category": by_source_within_category,
     }
 
 
