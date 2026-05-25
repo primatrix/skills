@@ -412,14 +412,37 @@ class TestPickStepWindow(unittest.TestCase):
             (3, 13_000_000, 5_000_000),      # step 2 ends at 18_000_000
         ])
 
-    def test_default_picks_middle_step(self):
+    def test_default_falls_back_to_middle_when_no_xla_ops_events(self):
+        # Three steps, but the XLA Ops line is empty: nothing to score on, so
+        # the picker falls back to middle (idx 1) and emits a fallback note.
         xs = self._xs_three_steps()
         plane = xs.planes[0]
         ev, sid, s, e, notes = cb._pick_step_window(plane, step_idx=None, step_id=None)
         self.assertEqual(sid, 1)
         self.assertEqual(s, 7_000_000)
         self.assertEqual(e, 12_000_000)
-        self.assertEqual(notes, [])
+        self.assertEqual(len(notes), 1)
+        self.assertIn("auto-picked middle step", notes[0])
+        self.assertIn("no XLA Ops events", notes[0])
+
+    def test_default_picks_busiest_step_by_event_count(self):
+        # Three steps; only step 2 has XLA Ops events. Picker should pick it
+        # over the middle step.
+        xs = self._xs_three_steps()
+        # Add 5 events all landing inside step 2's window [13e6, 18e6)
+        for k in range(5):
+            add_hlo_event(xs, em_id=20 + k, hlo_op_text=f"op{k}",
+                          offset_ps=14_000_000 + k * 100,
+                          duration_ps=50, hlo_category="loop fusion")
+        plane = xs.planes[0]
+        ev, sid, s, e, notes = cb._pick_step_window(plane, step_idx=None, step_id=None)
+        self.assertEqual(sid, 2)
+        self.assertEqual(s, 13_000_000)
+        self.assertEqual(e, 18_000_000)
+        self.assertEqual(len(notes), 1)
+        self.assertIn("auto-picked busiest step", notes[0])
+        self.assertIn("idx=2", notes[0])
+        self.assertIn("n_xla_ops_events=5", notes[0])
 
     def test_step_idx_picks_specific(self):
         xs = self._xs_three_steps()
@@ -623,20 +646,24 @@ class TestLoadAndNormalize(unittest.TestCase):
                       duration_ps=100, hlo_category="loop fusion",
                       tf_op="jit/Foo", flops=10, bytes_accessed=2,
                       shape_with_layout="bf16[1]{0}")
+        # Two events in step 1 vs one in step 0 => busiest pick = step 1.
         add_hlo_event(xs, em_id=11, hlo_op_text="y",
                       offset_ps=1_000_000_500, duration_ps=200,
+                      hlo_category="loop fusion")
+        add_hlo_event(xs, em_id=12, hlo_op_text="z",
+                      offset_ps=1_000_001_500, duration_ps=200,
                       hlo_category="loop fusion")
         with tempfile.TemporaryDirectory() as tmp:
             self._write_xspace(xs, tmp)
             records, ctx = cb._load_and_normalize(
                 profile_dir=tmp, device="/device:TPU:0",
                 step_idx=None, step_id=None)
-        # default = middle step (idx 1) -> window [1e9, 2e9)
+        # busiest pick = step 1 (2 events in window vs step 0's 1 event)
         self.assertEqual(ctx["step_id"], 1)
         self.assertEqual(ctx["step_window_ps"], [1_000_000_000, 2_000_000_000])
         self.assertEqual(ctx["step_duration_ps"], 1_000_000_000)
-        self.assertEqual(len(records), 1)
-        self.assertEqual(records[0].hlo_op, "y")
+        self.assertEqual(len(records), 2)
+        self.assertEqual({r.hlo_op for r in records}, {"y", "z"})
 
     def test_device_not_found_returns_none(self):
         import tempfile
