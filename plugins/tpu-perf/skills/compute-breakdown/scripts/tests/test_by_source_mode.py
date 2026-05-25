@@ -175,5 +175,51 @@ class TestBySourceCLI(unittest.TestCase):
         self.assertFalse(ns.include_data_move)
 
 
+class TestBySourceEndToEnd(unittest.TestCase):
+    def test_emits_valid_json_with_groups_block(self):
+        xs = make_minimal_xspace(steps=[(1, 0, 1_000_000_000)])
+        add_hlo_event(xs, em_id=10, hlo_op_text="big = bf16[8] fusion(...)",
+                       offset_ps=100, duration_ps=400_000_000,
+                       hlo_category="loop fusion", tf_op="jit/Big",
+                       flops=1_000_000, bytes_accessed=1024,
+                       shape_with_layout="bf16[8]{0}")
+        add_hlo_event(xs, em_id=11, hlo_op_text="copy.0",
+                       offset_ps=600, duration_ps=5_000_000,
+                       hlo_category="data formatting")
+        with tempfile.TemporaryDirectory() as tmp:
+            pathlib.Path(tmp, "x.xplane.pb").write_bytes(xs.SerializeToString())
+            r = subprocess.run(
+                [sys.executable, str(SCRIPT), tmp, "--mode", "by_source"],
+                capture_output=True, text=True,
+            )
+        self.assertEqual(r.returncode, 0, r.stderr)
+        doc = json.loads(r.stdout)
+        self.assertEqual(doc["status"], "ok")
+        self.assertEqual(doc["mode"], "by_source")
+        self.assertEqual(doc["totals"]["n_events_compute"], 1)
+        self.assertEqual(doc["totals"]["n_events_data_move"], 1)
+        self.assertEqual(len(doc["groups"]), 1)
+        self.assertEqual(doc["groups"][0]["tf_op"], "jit/Big")
+
+    def test_include_data_move_adds_data_move_groups(self):
+        xs = make_minimal_xspace(steps=[(1, 0, 1_000_000_000)])
+        add_hlo_event(xs, em_id=10, hlo_op_text="big = bf16[8] fusion(...)",
+                       offset_ps=100, duration_ps=400_000_000,
+                       hlo_category="loop fusion", tf_op="jit/Big")
+        add_hlo_event(xs, em_id=11, hlo_op_text="copy.0",
+                       offset_ps=600, duration_ps=5_000_000,
+                       hlo_category="data formatting", tf_op="jit/Copy")
+        with tempfile.TemporaryDirectory() as tmp:
+            pathlib.Path(tmp, "x.xplane.pb").write_bytes(xs.SerializeToString())
+            r = subprocess.run(
+                [sys.executable, str(SCRIPT), tmp, "--mode", "by_source",
+                 "--include-data-move"],
+                capture_output=True, text=True,
+            )
+        self.assertEqual(r.returncode, 0, r.stderr)
+        doc = json.loads(r.stdout)
+        self.assertEqual(len(doc["groups"]), 2)
+
+
 if __name__ == "__main__":
     unittest.main()

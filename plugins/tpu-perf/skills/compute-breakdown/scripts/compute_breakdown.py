@@ -640,6 +640,12 @@ def main(argv=None) -> int:
                                   top=args.top))
         return 0
 
+    if args.mode == "by_source":
+        _emit(_run_by_source_mode(records, ctx=ctx,
+                                     include_comm=args.include_comm,
+                                     include_data_move=args.include_data_move))
+        return 0
+
     # Other modes wired up in later chunks.
     _emit({"status": "absent", "reason": "not_implemented",
            "mode": args.mode, "profile_dir": args.profile_dir,
