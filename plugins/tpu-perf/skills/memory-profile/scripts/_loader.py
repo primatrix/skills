@@ -573,3 +573,88 @@ def snapshot_at_peak(events: HostAllocatorEvents, *, peak_ts_ns: int,
         alive=alive_buffers,
         alive_total_bytes=sum(b.size_bytes for b in alive_buffers),
     )
+
+
+def pick_parent_jit(parent_chain: list[str]) -> str:
+    if not parent_chain:
+        return "<no parent>"
+    for n in parent_chain:
+        if "jit_" in n:
+            return n
+    return parent_chain[0]
+
+
+_LIFETIME_KEYS = ("persistent", "transient", "unknown")
+
+
+def _empty_mix() -> dict[str, int]:
+    return {k: 0 for k in _LIFETIME_KEYS}
+
+
+def _group_with_mix(buffers: list[AliveBuffer], key_fn,
+                    *, top_k: int, total_bytes: int,
+                    truncate: bool) -> list[dict]:
+    groups: dict[str, dict] = {}
+    for b in buffers:
+        k = key_fn(b)
+        g = groups.setdefault(k, {
+            "key": k, "n_buffers": 0, "total_bytes": 0,
+            "lifetime_mix": _empty_mix(),
+        })
+        g["n_buffers"] += 1
+        g["total_bytes"] += b.size_bytes
+        g["lifetime_mix"][b.lifetime_class] += b.size_bytes
+    rows = sorted(groups.values(), key=lambda r: r["total_bytes"], reverse=True)
+    for r in rows:
+        r["pct_of_peak"] = (r["total_bytes"] / total_bytes * 100.0) if total_bytes else 0.0
+    if truncate and len(rows) > top_k:
+        head = rows[:top_k]
+        tail_rows = rows[top_k:]
+        tail = {
+            "key": "<tail>",
+            "n_buffers": sum(r["n_buffers"] for r in tail_rows),
+            "total_bytes": sum(r["total_bytes"] for r in tail_rows),
+            "lifetime_mix": {
+                k: sum(r["lifetime_mix"][k] for r in tail_rows)
+                for k in _LIFETIME_KEYS
+            },
+        }
+        tail["pct_of_peak"] = (
+            tail["total_bytes"] / total_bytes * 100.0 if total_bytes else 0.0
+        )
+        return head + [tail]
+    return rows
+
+
+def _group_simple(buffers: list[AliveBuffer], key_fn,
+                  *, total_bytes: int) -> list[dict]:
+    """Rollup without lifetime_mix or Top-K (used for by_lifetime_class, by_dtype)."""
+    groups: dict[str, dict] = {}
+    for b in buffers:
+        k = key_fn(b)
+        g = groups.setdefault(k, {"key": k, "n_buffers": 0, "total_bytes": 0})
+        g["n_buffers"] += 1
+        g["total_bytes"] += b.size_bytes
+    rows = sorted(groups.values(), key=lambda r: r["total_bytes"], reverse=True)
+    for r in rows:
+        r["pct_of_peak"] = (r["total_bytes"] / total_bytes * 100.0) if total_bytes else 0.0
+    return rows
+
+
+def build_rollups(alive: list[AliveBuffer], *, top_k: int,
+                  total_bytes: int) -> dict[str, list[dict]]:
+    return {
+        "by_lifetime_class": _group_simple(alive, lambda b: b.lifetime_class,
+                                           total_bytes=total_bytes),
+        "by_shape": _group_with_mix(alive, lambda b: b.shape,
+                                    top_k=top_k, total_bytes=total_bytes,
+                                    truncate=True),
+        "by_tf_op": _group_with_mix(alive, lambda b: b.tf_op,
+                                    top_k=top_k, total_bytes=total_bytes,
+                                    truncate=True),
+        "by_parent_jit": _group_with_mix(alive, lambda b: pick_parent_jit(b.parent_chain),
+                                         top_k=top_k, total_bytes=total_bytes,
+                                         truncate=True),
+        "by_dtype": _group_simple(alive, lambda b: b.data_type,
+                                  total_bytes=total_bytes),
+    }
