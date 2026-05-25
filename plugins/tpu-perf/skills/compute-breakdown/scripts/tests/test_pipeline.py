@@ -144,6 +144,7 @@ def add_hlo_event(xs, *, em_id: int, hlo_op_text: str, offset_ps: int,
                    source_stack: str | None = None,
                    source_inner: str | None = None,
                    flops: int | None = None,
+                   model_flops: int | None = None,
                    bytes_accessed: int | None = None,
                    raw_bytes_accessed: int | None = None,
                    shape_with_layout: str | None = None,
@@ -162,6 +163,8 @@ def add_hlo_event(xs, *, em_id: int, hlo_op_text: str, offset_ps: int,
         meta_stats[SM_SOURCE] = ("str_value", source_inner)
     if flops is not None:
         meta_stats[SM_FLOPS] = ("int64_value", flops)
+    if model_flops is not None:
+        meta_stats[SM_MODEL_FLOPS] = ("int64_value", model_flops)
     if bytes_accessed is not None:
         meta_stats[SM_BYTES_ACCESSED] = ("int64_value", bytes_accessed)
     if raw_bytes_accessed is not None:
@@ -454,6 +457,138 @@ class TestPickStepWindow(unittest.TestCase):
         self.assertEqual(s, 10)
         self.assertEqual(e, 90)
         self.assertIn("no Steps line; falling back to full-plane window", notes)
+
+
+class TestIterEventRecords(unittest.TestCase):
+    def _xs_with_step_and_ops(self):
+        xs = make_minimal_xspace(steps=[(1, 0, 1_000_000_000)])
+        # In window: [0, 1e9)
+        add_hlo_event(xs, em_id=10,
+                      hlo_op_text="fusion.0 = bf16[8,8] fusion(bf16[8,8] %p)",
+                      offset_ps=100, duration_ps=500,
+                      hlo_category="loop fusion",
+                      tf_op="jit/Foo",
+                      flops=1024, bytes_accessed=128,
+                      shape_with_layout="bf16[8,8]{1,0}",
+                      source_stack="/x/foo.py:5:1\n/x/bar.py:9:2")
+        # Out of window (after end)
+        add_hlo_event(xs, em_id=11, hlo_op_text="late",
+                      offset_ps=2_000_000_000, duration_ps=500,
+                      hlo_category="loop fusion")
+        # while event in window
+        add_hlo_event(xs, em_id=12, hlo_op_text="while.0 = ...",
+                      offset_ps=1000, duration_ps=10_000,
+                      hlo_category="while")
+        # data_move with shape_with_layout
+        add_hlo_event(xs, em_id=13, hlo_op_text="copy.0 = bf16[8] copy(bf16[8])",
+                      offset_ps=2000, duration_ps=200,
+                      hlo_category="data formatting",
+                      shape_with_layout="bf16[8]{0}")
+        # unknown category
+        add_hlo_event(xs, em_id=14, hlo_op_text="weirdo",
+                      offset_ps=3000, duration_ps=50,
+                      hlo_category="never-seen-category")
+        return xs
+
+    def test_yields_records_for_in_window_non_while_events(self):
+        xs = self._xs_with_step_and_ops()
+        plane = xs.planes[0]
+        stats = cb._PipelineStats()
+        recs = list(cb._iter_event_records(plane, start_ps=0, end_ps=1_000_000_000,
+                                            step_id=0, stats=stats))
+        # 3 records: fusion.0, copy.0, weirdo. (while skipped, late out of window.)
+        self.assertEqual(len(recs), 3)
+        kinds = sorted(r.kind for r in recs)
+        self.assertEqual(kinds, ["compute", "data_move", "other"])
+
+    def test_window_admission_is_start_inclusive_end_exclusive(self):
+        xs = make_minimal_xspace(steps=[(1, 0, 100)])
+        # Event starts exactly at start_ps -> admit
+        add_hlo_event(xs, em_id=10, hlo_op_text="a", offset_ps=0,
+                      duration_ps=10, hlo_category="loop fusion")
+        # Event starts exactly at end_ps -> exclude
+        add_hlo_event(xs, em_id=11, hlo_op_text="b", offset_ps=100,
+                      duration_ps=10, hlo_category="loop fusion")
+        # Event starts before start_ps -> exclude (even if extends in)
+        add_hlo_event(xs, em_id=12, hlo_op_text="c", offset_ps=-50,
+                      duration_ps=200, hlo_category="loop fusion")
+        plane = xs.planes[0]
+        stats = cb._PipelineStats()
+        recs = list(cb._iter_event_records(plane, start_ps=0, end_ps=100,
+                                            step_id=0, stats=stats))
+        ops = sorted(r.hlo_op for r in recs)
+        self.assertEqual(ops, ["a"])
+
+    def test_while_skipped_and_accumulated(self):
+        xs = self._xs_with_step_and_ops()
+        plane = xs.planes[0]
+        stats = cb._PipelineStats()
+        list(cb._iter_event_records(plane, start_ps=0, end_ps=1_000_000_000,
+                                     step_id=0, stats=stats))
+        self.assertEqual(stats.while_total_ps, 10_000)
+
+    def test_unknown_category_counted(self):
+        xs = self._xs_with_step_and_ops()
+        plane = xs.planes[0]
+        stats = cb._PipelineStats()
+        list(cb._iter_event_records(plane, start_ps=0, end_ps=1_000_000_000,
+                                     step_id=0, stats=stats))
+        self.assertEqual(stats.unknown_categories, {"never-seen-category": 1})
+
+    def test_unresolved_event_metadata_dropped_and_counted(self):
+        xs = make_minimal_xspace(steps=[(1, 0, 1_000_000_000)])
+        plane = xs.planes[0]
+        ops = next(l for l in plane.lines if l.name == "XLA Ops")
+        # Event references an event_metadata id that doesn't exist
+        ev = ops.events.add()
+        ev.metadata_id = 9999
+        ev.offset_ps = 100
+        ev.duration_ps = 50
+        stats = cb._PipelineStats()
+        recs = list(cb._iter_event_records(plane, start_ps=0, end_ps=1_000_000_000,
+                                            step_id=0, stats=stats))
+        self.assertEqual(recs, [])
+        self.assertEqual(stats.n_events_unresolved, 1)
+
+    def test_record_field_population(self):
+        xs = make_minimal_xspace(steps=[(1, 0, 1_000_000_000)])
+        add_hlo_event(xs, em_id=10,
+                      hlo_op_text="fusion.0 = bf16[8,8] fusion(...)",
+                      offset_ps=200, duration_ps=300,
+                      hlo_category="loop fusion",
+                      tf_op="jit/Foo",
+                      flops=2048, bytes_accessed=64,
+                      raw_bytes_accessed=72, model_flops=1024,
+                      shape_with_layout="bf16[8,8]{1,0}",
+                      program_id=5,
+                      deduplicated_name="dedup.0",
+                      source_inner="/x/foo.py:5",
+                      source_stack="/x/foo.py:5:1\n/x/bar.py:9:2")
+        plane = xs.planes[0]
+        stats = cb._PipelineStats()
+        recs = list(cb._iter_event_records(plane, start_ps=0, end_ps=1_000_000_000,
+                                            step_id=42, stats=stats))
+        self.assertEqual(len(recs), 1)
+        r = recs[0]
+        self.assertEqual(r.duration_ps, 300)
+        self.assertEqual(r.offset_ps, 200)
+        self.assertEqual(r.step_id, 42)
+        self.assertEqual(r.hlo_category, "loop fusion")
+        self.assertEqual(r.kind, "compute")
+        self.assertEqual(r.tf_op, "jit/Foo")
+        self.assertEqual(r.source_stat, "/x/foo.py:5")
+        self.assertEqual(r.source_stack, "/x/foo.py:5:1\n/x/bar.py:9:2")
+        self.assertEqual(r.source_inner, "/x/bar.py:9")
+        self.assertEqual(r.agg_key_kind, "stack")
+        self.assertEqual(r.flops, 2048)
+        self.assertEqual(r.model_flops, 1024)
+        self.assertEqual(r.bytes_accessed, 64)
+        self.assertEqual(r.raw_bytes_accessed, 72)
+        self.assertEqual(r.shape_with_layout, "bf16[8,8]{1,0}")
+        self.assertEqual(r.dtype, "bf16")
+        self.assertFalse(r.dtype_uncertain)
+        self.assertEqual(r.program_id, 5)
+        self.assertEqual(r.deduplicated_name, "dedup.0")
 
 
 if __name__ == "__main__":

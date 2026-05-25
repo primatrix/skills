@@ -190,6 +190,75 @@ def _pick_step_window(plane, *, step_idx: int | None, step_id: str | None):
     return ev, idx, ev.offset_ps, ev.offset_ps + ev.duration_ps, notes
 
 
+@dataclasses.dataclass
+class _PipelineStats:
+    """Sidechannel from _iter_event_records to the caller."""
+    n_events_unresolved: int = 0
+    while_total_ps: int = 0
+    unknown_categories: dict = dataclasses.field(default_factory=dict)
+
+
+def _iter_event_records(plane, *, start_ps: int, end_ps: int, step_id: int,
+                         stats: _PipelineStats):
+    """Yield one EventRecord per admitted XLA-Ops event in [start_ps, end_ps).
+    Mutates `stats` for events that don't yield a record (unresolved, while,
+    unknown category)."""
+    ops_line = next((l for l in plane.lines if l.name == "XLA Ops"), None)
+    if ops_line is None:
+        return
+    stat_name_by_id = {smid: sm.name for smid, sm in plane.stat_metadata.items()}
+
+    for ev in ops_line.events:
+        if not (start_ps <= ev.offset_ps < end_ps):
+            continue
+        em = plane.event_metadata.get(ev.metadata_id)
+        if em is None:
+            stats.n_events_unresolved += 1
+            continue
+        mstats = _extract_meta_stats(em, stat_name_by_id)
+        hlo_cat = mstats.get("hlo_category", "")
+        if hlo_cat == "while":
+            stats.while_total_ps += ev.duration_ps
+            continue
+
+        kind = _classify_kind(hlo_cat)
+        if kind == "other":
+            # Track unrecognized categories so the spec maintainer can update §4.4.
+            stats.unknown_categories[hlo_cat] = stats.unknown_categories.get(hlo_cat, 0) + 1
+
+        source_stack = mstats.get("source_stack")
+        tf_op = mstats.get("tf_op")
+        shape = mstats.get("shape_with_layout")
+        dtype = _parse_dtype(shape) if shape else None
+        agg_key, agg_kind, stack_hash = _compute_agg_key(
+            source_stack=source_stack, tf_op=tf_op, hlo_category=hlo_cat)
+
+        yield EventRecord(
+            duration_ps=ev.duration_ps,
+            offset_ps=ev.offset_ps,
+            step_id=step_id,
+            hlo_category=hlo_cat,
+            kind=kind,
+            hlo_op=em.name,
+            tf_op=tf_op,
+            source_stat=mstats.get("source"),
+            source_stack=source_stack,
+            source_inner=_inner_frame(source_stack),
+            source_stack_hash=stack_hash,
+            agg_key=agg_key,
+            agg_key_kind=agg_kind,
+            flops=mstats.get("flops"),
+            model_flops=mstats.get("model_flops"),
+            bytes_accessed=mstats.get("bytes_accessed"),
+            raw_bytes_accessed=mstats.get("raw_bytes_accessed"),
+            shape_with_layout=shape,
+            dtype=dtype,
+            dtype_uncertain=_is_dtype_uncertain(hlo_cat, dtype),
+            program_id=mstats.get("program_id"),
+            deduplicated_name=mstats.get("deduplicated_name"),
+        )
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="compute_breakdown.py",
