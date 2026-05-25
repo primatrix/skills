@@ -289,7 +289,6 @@ in bytes. Buffers are not double-counted; per-rollup sums equal
     "pools_summary": [{"pool_id": 0, "n_alloc": 3698, "n_dealloc": 106,
                        "max_peak_bytes_in_use": 12109042176}],
     "step_line_present": true,
-    "step_selection_fallback": null,
     "shape_missing_count": 0,
     "tf_op_missing_count": 12,
     "warnings": []
@@ -327,7 +326,8 @@ Trigger conditions (all exit 0, no traceback):
 | # | Invariant | Tolerance |
 |---|---|---|
 | I1 | `Σ buffers[*].size_bytes + tail.total_bytes == alive_at_peak.total_bytes` | exact |
-| I2 | `alive_at_peak.total_bytes == peak.bytes_total` | ≤ 1% drift; warning above |
+| I2 | `alive_at_peak.total_bytes == peak.bytes_total` | exact (both are `Σ requested_bytes` of the same live set) |
+| I2b | `\|peak.bytes_total − allocator's reported bytes_allocated at peak_ts_ns\| / peak.bytes_total ≤ 0.01` | soft; >1% raises a warning. Surfaces alignment padding and allocator metadata overhead, recorded as `diagnostics.alloc_accounting_drift_pct`. |
 | I3 | `Σ rollups.by_shape[*].total_bytes == alive_at_peak.total_bytes` | exact |
 | I4 | `Σ rollups.by_tf_op` and `by_parent_jit` and `by_lifetime_class` and `by_dtype` each = `alive_at_peak.total_bytes` | exact |
 | I5 | `peak.bytes_total ≤ pool.bytes_reserved` | exact |
