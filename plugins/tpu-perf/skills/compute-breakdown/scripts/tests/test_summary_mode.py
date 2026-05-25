@@ -84,3 +84,33 @@ class TestAggregateByKey(unittest.TestCase):
         ]
         out = cb._aggregate_by_key(recs)
         self.assertEqual(out["A"].example_hlo_op, "first")
+
+
+class TestComputeTotals(unittest.TestCase):
+    def test_per_kind_aggregation(self):
+        recs = [
+            _make_record(kind="compute",   duration_ps=100),
+            _make_record(kind="compute",   duration_ps=200),
+            _make_record(kind="data_move", duration_ps=50),
+            _make_record(kind="comm",      duration_ps=30),
+            _make_record(kind="other",     duration_ps=5,
+                         hlo_category="never-seen"),
+        ]
+        pstats = cb._PipelineStats(while_total_ps=4242,
+                                     unknown_categories={"never-seen": 1},
+                                     n_events_unresolved=7)
+        totals = cb._compute_totals(recs, pstats=pstats, step_duration_ps=10_000)
+        self.assertEqual(totals["n_events_total"], 5)
+        self.assertEqual(totals["n_events_compute"], 2)
+        self.assertEqual(totals["n_events_data_move"], 1)
+        self.assertEqual(totals["n_events_comm"], 1)
+        self.assertEqual(totals["n_events_other"], 1)
+        self.assertEqual(totals["n_events_unresolved"], 7)
+        self.assertEqual(totals["compute_duration_ps"], 300)
+        self.assertEqual(totals["data_move_duration_ps"], 50)
+        self.assertEqual(totals["comm_duration_ps"], 30)
+        self.assertEqual(totals["other_duration_ps"], 5)
+        self.assertEqual(totals["while_container_duration_ps"], 4242)
+        self.assertEqual(totals["non_while_duration_ps_sum"], 300 + 50 + 30 + 5)
+        self.assertEqual(totals["unknown_categories"], {"never-seen": 1})
+        self.assertAlmostEqual(totals["while_pct_of_step"], 100.0 * 4242 / 10000)

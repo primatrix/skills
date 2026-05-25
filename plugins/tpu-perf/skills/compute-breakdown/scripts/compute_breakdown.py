@@ -394,6 +394,36 @@ def _aggregate_by_key(records: list[EventRecord],
     return groups
 
 
+def _compute_totals(records: list[EventRecord], *, pstats: _PipelineStats,
+                     step_duration_ps: int) -> dict:
+    """Spec §5 totals block: per-kind sums, counts, while accounting,
+    unknown_categories, unresolved counter."""
+    n_by_kind = {"compute": 0, "data_move": 0, "comm": 0, "other": 0}
+    d_by_kind = {"compute": 0, "data_move": 0, "comm": 0, "other": 0}
+    for r in records:
+        n_by_kind[r.kind] += 1
+        d_by_kind[r.kind] += r.duration_ps
+    non_while_sum = sum(d_by_kind.values())
+    while_pct = (100.0 * pstats.while_total_ps / step_duration_ps
+                 if step_duration_ps > 0 else 0.0)
+    return {
+        "n_events_total":         len(records),
+        "n_events_compute":       n_by_kind["compute"],
+        "n_events_data_move":     n_by_kind["data_move"],
+        "n_events_comm":          n_by_kind["comm"],
+        "n_events_other":         n_by_kind["other"],
+        "n_events_unresolved":    pstats.n_events_unresolved,
+        "compute_duration_ps":    d_by_kind["compute"],
+        "data_move_duration_ps":  d_by_kind["data_move"],
+        "comm_duration_ps":       d_by_kind["comm"],
+        "other_duration_ps":      d_by_kind["other"],
+        "while_container_duration_ps": pstats.while_total_ps,
+        "non_while_duration_ps_sum":   non_while_sum,
+        "while_pct_of_step":      round(while_pct, 3),
+        "unknown_categories":     dict(pstats.unknown_categories),
+    }
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="compute_breakdown.py",
