@@ -308,6 +308,92 @@ def _load_and_normalize(*, profile_dir: str, device: str,
     }
 
 
+@dataclasses.dataclass
+class _GroupAgg:
+    agg_key: str
+    agg_key_kind: str
+    source_inner: str | None
+    source_stack: str | None
+    tf_op: str | None
+    kind: str                            # canonical kind of the group
+    n_executions: int = 0
+    total_dur_ps: int = 0
+    min_dur_ps: int = 0
+    max_dur_ps: int = 0
+    _flops_sum: int = 0
+    _flops_seen: int = 0                 # how many records contributed flops
+    _bytes_sum: int = 0
+    _bytes_seen: int = 0
+    _model_flops_sum: int = 0
+    _model_flops_seen: int = 0
+    hlo_categories: dict = dataclasses.field(default_factory=dict)
+    shapes: list = dataclasses.field(default_factory=list)
+    dtypes: dict = dataclasses.field(default_factory=dict)
+    dtype_uncertain: bool = False        # OR of all member records
+    first_dtype: str | None = None       # dtype of the FIRST record in
+                                          # the group; never overwritten.
+                                          # Used by mode 4 (roofline) per
+                                          # spec §8.2.
+    example_hlo_op: str | None = None
+
+    @property
+    def avg_dur_ps(self) -> float:
+        return self.total_dur_ps / self.n_executions if self.n_executions else 0.0
+
+    @property
+    def flops_sum(self) -> int | None:
+        return self._flops_sum if self._flops_seen > 0 else None
+
+    @property
+    def bytes_accessed_sum(self) -> int | None:
+        return self._bytes_sum if self._bytes_seen > 0 else None
+
+    @property
+    def model_flops_sum(self) -> int | None:
+        return self._model_flops_sum if self._model_flops_seen > 0 else None
+
+
+def _aggregate_by_key(records: list[EventRecord],
+                        *, dedupe_shapes_cap: int = 8) -> dict:
+    groups: dict[str, _GroupAgg] = {}
+    for r in records:
+        g = groups.get(r.agg_key)
+        if g is None:
+            g = _GroupAgg(
+                agg_key=r.agg_key, agg_key_kind=r.agg_key_kind,
+                source_inner=r.source_inner, source_stack=r.source_stack,
+                tf_op=r.tf_op, kind=r.kind,
+                example_hlo_op=r.hlo_op,
+                min_dur_ps=r.duration_ps, max_dur_ps=r.duration_ps,
+                first_dtype=r.dtype,    # spec §8.2: first record wins.
+            )
+            groups[r.agg_key] = g
+        g.n_executions += 1
+        g.total_dur_ps += r.duration_ps
+        if r.duration_ps < g.min_dur_ps:
+            g.min_dur_ps = r.duration_ps
+        if r.duration_ps > g.max_dur_ps:
+            g.max_dur_ps = r.duration_ps
+        if r.flops is not None:
+            g._flops_sum += r.flops
+            g._flops_seen += 1
+        if r.bytes_accessed is not None:
+            g._bytes_sum += r.bytes_accessed
+            g._bytes_seen += 1
+        if r.model_flops is not None:
+            g._model_flops_sum += r.model_flops
+            g._model_flops_seen += 1
+        g.hlo_categories[r.hlo_category] = g.hlo_categories.get(r.hlo_category, 0) + 1
+        if r.shape_with_layout and r.shape_with_layout not in g.shapes:
+            if len(g.shapes) < dedupe_shapes_cap:
+                g.shapes.append(r.shape_with_layout)
+        if r.dtype:
+            g.dtypes[r.dtype] = g.dtypes.get(r.dtype, 0) + 1
+        if r.dtype_uncertain:
+            g.dtype_uncertain = True
+    return groups
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="compute_breakdown.py",
