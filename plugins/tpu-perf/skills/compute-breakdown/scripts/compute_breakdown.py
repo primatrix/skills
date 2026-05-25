@@ -12,6 +12,7 @@ import dataclasses
 import hashlib
 import json
 import pathlib
+import re
 import sys
 
 # Make the vendored protobuf module importable regardless of cwd. Stage 1
@@ -64,6 +65,48 @@ def _extract_meta_stats(event_metadata, stat_name_by_id: dict) -> dict:
             continue
         out[name] = getattr(s, vf)
     return out
+
+
+_COMPUTE_CATS = frozenset({
+    "loop fusion", "convolution fusion", "custom fusion", "output fusion",
+    "non-fusion elementwise", "reduce", "reduce-window",
+    "sort", "rng-bit-generator", "custom-call",
+})
+_DATA_MOVE_CATS = frozenset({
+    "copy-start", "copy-done", "data formatting", "pad", "broadcast",
+    "slice", "dynamic-slice", "dynamic-update-slice", "iota", "convert",
+})
+_COMM_CATS = frozenset({
+    "async-start", "async-done", "all-reduce", "all-gather",
+    "reduce-scatter", "collective-permute",
+})
+
+_DTYPE_PREFIX_RE = re.compile(r"^([a-z][a-z0-9]*)\[")
+_DTYPE_MAP = {
+    "bf16": "bf16",
+    "f8e4m3fn": "fp8", "f8e5m2": "fp8",
+    "f32": "fp32",
+    "f16": "fp16",
+}
+
+
+def _classify_kind(hlo_category: str) -> str:
+    if hlo_category in _COMPUTE_CATS:
+        return "compute"
+    if hlo_category in _DATA_MOVE_CATS:
+        return "data_move"
+    if hlo_category in _COMM_CATS:
+        return "comm"
+    return "other"
+
+
+def _parse_dtype(shape_with_layout: str | None) -> str | None:
+    if shape_with_layout is None:
+        return None
+    m = _DTYPE_PREFIX_RE.match(shape_with_layout)
+    if not m:
+        return "other"
+    return _DTYPE_MAP.get(m.group(1), "other")
 
 
 def build_parser() -> argparse.ArgumentParser:

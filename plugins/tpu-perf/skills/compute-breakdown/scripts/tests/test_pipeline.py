@@ -258,5 +258,45 @@ class TestExtractMetaStats(unittest.TestCase):
         self.assertEqual(cb._extract_meta_stats(plane.event_metadata[99], name_by_id), {})
 
 
+class TestClassifyKind(unittest.TestCase):
+    def test_compute_categories(self):
+        for cat in ["loop fusion", "convolution fusion", "custom fusion",
+                    "output fusion", "non-fusion elementwise", "reduce",
+                    "reduce-window", "sort", "rng-bit-generator", "custom-call"]:
+            self.assertEqual(cb._classify_kind(cat), "compute", cat)
+
+    def test_data_move_categories(self):
+        for cat in ["copy-start", "copy-done", "data formatting", "pad",
+                    "broadcast", "slice", "dynamic-slice",
+                    "dynamic-update-slice", "iota", "convert"]:
+            self.assertEqual(cb._classify_kind(cat), "data_move", cat)
+
+    def test_comm_categories(self):
+        for cat in ["async-start", "async-done", "all-reduce", "all-gather",
+                    "reduce-scatter", "collective-permute"]:
+            self.assertEqual(cb._classify_kind(cat), "comm", cat)
+
+    def test_unknown_category_falls_back_to_other(self):
+        self.assertEqual(cb._classify_kind("scalar-thing-2031"), "other")
+        self.assertEqual(cb._classify_kind(""), "other")
+
+
+class TestParseDtype(unittest.TestCase):
+    def test_known_dtypes(self):
+        self.assertEqual(cb._parse_dtype("bf16[8192,4096]{1,0}"), "bf16")
+        self.assertEqual(cb._parse_dtype("f8e4m3fn[1024,4096]{1,0}"), "fp8")
+        self.assertEqual(cb._parse_dtype("f8e5m2[64]{0}"), "fp8")
+        self.assertEqual(cb._parse_dtype("f32[]"), "fp32")
+        self.assertEqual(cb._parse_dtype("f16[16,16]{1,0}"), "fp16")
+
+    def test_other_for_unknown_or_unparseable(self):
+        self.assertEqual(cb._parse_dtype("s32[8]{0}"), "other")
+        self.assertEqual(cb._parse_dtype("s8[8]{0}"), "other")
+        self.assertEqual(cb._parse_dtype("pred[]"), "other")
+        self.assertEqual(cb._parse_dtype("(bf16[8],bf16[8])"), "other")
+        self.assertEqual(cb._parse_dtype("garbage no bracket"), "other")
+        self.assertIsNone(cb._parse_dtype(None))
+
+
 if __name__ == "__main__":
     unittest.main()
