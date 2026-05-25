@@ -6,6 +6,8 @@ argument-hint: "<profile_dir> --mode {summary|by_source|non_compute|roofline} [-
 
 # Compute Breakdown
 
+**回答语言要求：调用此 skill 时，所有面向用户的回答必须使用中文。**
+
 Analyze the compute portion of a TPU pretraining profile. One Python entry script with four `--mode` subcommands sharing a single load → step-pick → event-iterate → normalize pipeline. Always emits a single top-level JSON object on stdout (`status: ok | absent`), so output is consumed structurally — Claude reads the JSON, filters/sums client-side, and reports.
 
 This skill is built on top of `profile-anatomy`, which documents the XSpace/XPlane/XLine/XEvent/XStat hierarchy. Read that first if you need to know what an XEvent is, where source_stack lives, or how `XEventMetadata.stats` differs from `XEvent.stats`.

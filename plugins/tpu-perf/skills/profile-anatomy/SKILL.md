@@ -5,6 +5,8 @@ description: Use when reading TPU pretraining profiles (xplane.pb, trace.json.gz
 
 # Profile Anatomy
 
+**回答语言要求：调用此 skill 时，所有面向用户的回答必须使用中文。**
+
 Reference for what's inside a TPU pretraining profile directory and how
 to parse each artifact. This skill is **schema documentation**, not an
 analysis tool — it answers "what's in here and what does each field

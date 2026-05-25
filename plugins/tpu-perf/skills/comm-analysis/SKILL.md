@@ -5,6 +5,8 @@ description: Use when analyzing communication on a TPU pretraining profile — e
 
 # Communication Analysis
 
+**回答语言要求：调用此 skill 时，所有面向用户的回答必须使用中文。**
+
 Three reference scripts for analyzing the communication portion of a TPU
 pretraining profile. Each script accepts a profile directory as `argv[1]`
 (or `--profile-dir DIR`) and runs standalone with stdlib + `protobuf` +
