@@ -806,8 +806,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--include-data-move", action="store_true",
                    help="(by_source) also emit kind=data_move groups")
     # Mode 3
-    p.add_argument("--no-comm-stalls", action="store_true",
-                   help="(non_compute) exclude async-done from non-compute table")
+    p.add_argument("--no-comm-stalls", dest="include_comm_stalls",
+                   action="store_false", default=True,
+                   help="(non_compute) exclude async-done events; default is to include them as 'async-done (comm stall)'")
     # Mode 4
     p.add_argument("--chip", default="v7x", choices=["v7x"],
                    help="(roofline) chip generation; only v7x supported today")
@@ -867,6 +868,12 @@ def main(argv=None) -> int:
         _emit(_run_by_source_mode(records, ctx=ctx,
                                      include_comm=args.include_comm,
                                      include_data_move=args.include_data_move))
+        return 0
+
+    if args.mode == "non_compute":
+        _emit(_run_non_compute_mode(records, ctx=ctx,
+                                       include_comm=args.include_comm,
+                                       include_comm_stalls=args.include_comm_stalls))
         return 0
 
     # Other modes wired up in later chunks.

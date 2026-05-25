@@ -240,5 +240,43 @@ class TestRunNonComputeMode(unittest.TestCase):
         self.assertLessEqual(len(row["shapes_out"]), 4)
 
 
+class TestNonComputeCLIWiring(unittest.TestCase):
+    def test_default_includes_comm_stalls(self):
+        ns = cb.build_parser().parse_args(["/x", "--mode", "non_compute"])
+        self.assertTrue(ns.include_comm_stalls)
+
+    def test_no_comm_stalls_flag_flips_default(self):
+        ns = cb.build_parser().parse_args(
+            ["/x", "--mode", "non_compute", "--no-comm-stalls"]
+        )
+        self.assertFalse(ns.include_comm_stalls)
+
+
+class TestNonComputeEndToEnd(unittest.TestCase):
+    def test_emits_valid_json_with_both_layers(self):
+        xs = make_minimal_xspace(steps=[(1, 0, 1_000_000_000)])
+        add_hlo_event(xs, em_id=10, hlo_op_text="big = bf16[8] fusion(...)",
+                       offset_ps=100, duration_ps=400_000_000,
+                       hlo_category="loop fusion", tf_op="jit/Big")
+        add_hlo_event(xs, em_id=11,
+                       hlo_op_text="%c.0 = f32[8]{0} convert(bf16[8]{0} %x)",
+                       offset_ps=600, duration_ps=5_000_000,
+                       hlo_category="data formatting", tf_op="jit/Cast")
+        with tempfile.TemporaryDirectory() as tmp:
+            pathlib.Path(tmp, "x.xplane.pb").write_bytes(xs.SerializeToString())
+            r = subprocess.run(
+                [sys.executable, str(SCRIPT), tmp, "--mode", "non_compute"],
+                capture_output=True, text=True,
+            )
+        self.assertEqual(r.returncode, 0, r.stderr)
+        doc = json.loads(r.stdout)
+        self.assertEqual(doc["status"], "ok")
+        self.assertEqual(doc["mode"], "non_compute")
+        self.assertEqual(len(doc["by_category"]), 1)
+        self.assertEqual(doc["by_category"][0]["hlo_category"], "data formatting")
+        self.assertEqual(len(doc["by_source_within_category"]), 1)
+        self.assertTrue(doc["by_source_within_category"][0]["dtype_change"])
+
+
 if __name__ == "__main__":
     unittest.main()
