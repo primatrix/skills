@@ -150,6 +150,46 @@ def _is_dtype_uncertain(hlo_category: str, dtype: str | None) -> bool:
     return hlo_category in _UNCERTAIN_CATS and dtype in _UNCERTAIN_DTYPES
 
 
+def _pick_step_window(plane, *, step_idx: int | None, step_id: str | None):
+    """Spec §4.5. Returns (step_event_or_None, step_index_int, start_ps,
+    end_ps, notes_list)."""
+    steps_line = next((l for l in plane.lines if l.name == "Steps"), None)
+    notes: list[str] = []
+    if steps_line is None or len(steps_line.events) == 0:
+        # Fallback: full XLA Ops window.
+        ops = next((l for l in plane.lines if l.name == "XLA Ops"), None)
+        if ops is None or len(ops.events) == 0:
+            return None, -1, 0, 0, ["no Steps line; falling back to full-plane window",
+                                     "XLA Ops line empty or missing"]
+        starts = [ev.offset_ps for ev in ops.events]
+        ends = [ev.offset_ps + ev.duration_ps for ev in ops.events]
+        notes.append("no Steps line; falling back to full-plane window")
+        return None, -1, min(starts), max(ends), notes
+
+    sorted_steps = sorted(steps_line.events, key=lambda e: e.offset_ps)
+
+    if step_id is not None:
+        em_map = plane.event_metadata
+        matches = [(i, e) for i, e in enumerate(sorted_steps)
+                   if em_map.get(e.metadata_id) is not None
+                   and em_map[e.metadata_id].name == step_id]
+        if not matches:
+            raise ValueError(f"--step-id {step_id!r} matched zero Step events")
+        if len(matches) > 1:
+            notes.append("multi-match for step-id; picked first")
+        idx, ev = matches[0]
+    elif step_idx is not None:
+        if step_idx < 0 or step_idx >= len(sorted_steps):
+            raise ValueError(
+                f"--step {step_idx} out of range [0, {len(sorted_steps)})")
+        idx, ev = step_idx, sorted_steps[step_idx]
+    else:
+        idx = len(sorted_steps) // 2
+        ev = sorted_steps[idx]
+
+    return ev, idx, ev.offset_ps, ev.offset_ps + ev.duration_ps, notes
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="compute_breakdown.py",

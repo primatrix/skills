@@ -383,5 +383,78 @@ class TestDtypeUncertain(unittest.TestCase):
         self.assertFalse(cb._is_dtype_uncertain("convolution fusion", None))
 
 
+class TestPickStepWindow(unittest.TestCase):
+    def _xs_three_steps(self):
+        return make_minimal_xspace(steps=[
+            (1, 1_000_000, 5_000_000),       # step 0 ends at 6_000_000
+            (2, 7_000_000, 5_000_000),       # step 1 ends at 12_000_000
+            (3, 13_000_000, 5_000_000),      # step 2 ends at 18_000_000
+        ])
+
+    def test_default_picks_middle_step(self):
+        xs = self._xs_three_steps()
+        plane = xs.planes[0]
+        ev, sid, s, e, notes = cb._pick_step_window(plane, step_idx=None, step_id=None)
+        self.assertEqual(sid, 1)
+        self.assertEqual(s, 7_000_000)
+        self.assertEqual(e, 12_000_000)
+        self.assertEqual(notes, [])
+
+    def test_step_idx_picks_specific(self):
+        xs = self._xs_three_steps()
+        ev, sid, s, e, _ = cb._pick_step_window(xs.planes[0], step_idx=0, step_id=None)
+        self.assertEqual(sid, 0)
+        self.assertEqual(s, 1_000_000)
+        self.assertEqual(e, 6_000_000)
+
+    def test_step_idx_out_of_range_raises(self):
+        xs = self._xs_three_steps()
+        with self.assertRaises(ValueError):
+            cb._pick_step_window(xs.planes[0], step_idx=99, step_id=None)
+        with self.assertRaises(ValueError):
+            cb._pick_step_window(xs.planes[0], step_idx=-1, step_id=None)
+
+    def test_step_id_exact_match(self):
+        xs = self._xs_three_steps()
+        # Synthetic step names are step_1, step_2, step_3 (em_id mapped)
+        ev, sid, s, e, notes = cb._pick_step_window(
+            xs.planes[0], step_idx=None, step_id="step_2")
+        self.assertEqual(sid, 1)
+        self.assertEqual(s, 7_000_000)
+        self.assertEqual(notes, [])
+
+    def test_step_id_zero_matches_raises(self):
+        xs = self._xs_three_steps()
+        with self.assertRaises(ValueError):
+            cb._pick_step_window(xs.planes[0], step_idx=None, step_id="nope")
+
+    def test_step_id_multi_match_picks_earliest_with_note(self):
+        # Two steps share the same metadata name (we re-use em_id 1)
+        xs = make_minimal_xspace(steps=[(1, 5_000_000, 1_000_000),
+                                         (1, 1_000_000, 1_000_000),  # earlier
+                                         (1, 9_000_000, 1_000_000)])
+        ev, sid, s, e, notes = cb._pick_step_window(
+            xs.planes[0], step_idx=None, step_id="step_1")
+        self.assertEqual(s, 1_000_000)
+        self.assertIn("multi-match for step-id; picked first", notes)
+
+    def test_no_steps_line_falls_back_to_full_xla_ops_window(self):
+        xs = xplane_pb2.XSpace()
+        plane = xs.planes.add()
+        plane.name = "/device:TPU:0"
+        ops_line = plane.lines.add()
+        ops_line.name = "XLA Ops"
+        # Two events spanning [10, 30) and [40, 90)
+        _add_event_meta(plane, 1, "x")
+        _add_event(ops_line, 1, 10, 20)
+        _add_event(ops_line, 1, 40, 50)
+        ev, sid, s, e, notes = cb._pick_step_window(plane, step_idx=None, step_id=None)
+        self.assertIsNone(ev)
+        self.assertEqual(sid, -1)
+        self.assertEqual(s, 10)
+        self.assertEqual(e, 90)
+        self.assertIn("no Steps line; falling back to full-plane window", notes)
+
+
 if __name__ == "__main__":
     unittest.main()
