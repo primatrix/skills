@@ -298,5 +298,64 @@ class TestParseDtype(unittest.TestCase):
         self.assertIsNone(cb._parse_dtype(None))
 
 
+class TestAggKey(unittest.TestCase):
+    def test_priority1_stack(self):
+        k, kind, h = cb._compute_agg_key(
+            source_stack="/x/y.py:5:1\n/x/z.py:9:2",
+            tf_op="jit/Foo",
+            hlo_category="loop fusion")
+        self.assertTrue(k.startswith("stack:"))
+        self.assertEqual(kind, "stack")
+        self.assertEqual(len(h), 16)
+        self.assertEqual(k, f"stack:{h}")
+
+    def test_priority2_tfop(self):
+        k, kind, h = cb._compute_agg_key(
+            source_stack=None, tf_op="jit/Foo", hlo_category="loop fusion")
+        self.assertEqual(k, "tfop:jit/Foo")
+        self.assertEqual(kind, "tf_op")
+        self.assertIsNone(h)
+
+    def test_priority2_tfop_when_stack_is_empty_string(self):
+        # spec §4.1: "source_stack empty" — empty string treated same as None
+        k, kind, _ = cb._compute_agg_key(
+            source_stack="", tf_op="jit/Bar", hlo_category="reduce")
+        self.assertEqual(k, "tfop:jit/Bar")
+        self.assertEqual(kind, "tf_op")
+
+    def test_priority3_no_source(self):
+        k, kind, h = cb._compute_agg_key(
+            source_stack=None, tf_op=None, hlo_category="copy-done")
+        self.assertEqual(k, "nosrc:copy-done")
+        self.assertEqual(kind, "no_source")
+        self.assertIsNone(h)
+
+    def test_priority3_when_tfop_is_empty_string(self):
+        k, kind, _ = cb._compute_agg_key(
+            source_stack=None, tf_op="", hlo_category="pad")
+        self.assertEqual(k, "nosrc:pad")
+        self.assertEqual(kind, "no_source")
+
+
+class TestInnerFrame(unittest.TestCase):
+    def test_strips_column_suffix(self):
+        self.assertEqual(cb._inner_frame("/a/b.py:5:1\n/a/c.py:9:2"), "/a/c.py:9")
+
+    def test_keeps_file_line_when_no_column(self):
+        self.assertEqual(cb._inner_frame("/a/b.py:5\n/a/c.py:9"), "/a/c.py:9")
+
+    def test_skips_trailing_blank_lines(self):
+        self.assertEqual(cb._inner_frame("/a/b.py:5:1\n/a/c.py:9:2\n\n"),
+                         "/a/c.py:9")
+
+    def test_single_line(self):
+        self.assertEqual(cb._inner_frame("/single.py:42:0"), "/single.py:42")
+
+    def test_returns_none_for_none_or_empty(self):
+        self.assertIsNone(cb._inner_frame(None))
+        self.assertIsNone(cb._inner_frame(""))
+        self.assertIsNone(cb._inner_frame("\n\n"))
+
+
 if __name__ == "__main__":
     unittest.main()

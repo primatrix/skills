@@ -109,6 +109,35 @@ def _parse_dtype(shape_with_layout: str | None) -> str | None:
     return _DTYPE_MAP.get(m.group(1), "other")
 
 
+def _compute_agg_key(*, source_stack: str | None, tf_op: str | None,
+                      hlo_category: str) -> tuple[str, str, str | None]:
+    """Returns (agg_key, agg_key_kind, source_stack_hash | None).
+    Three-tier fallback per spec §4.1."""
+    if source_stack:
+        h = hashlib.sha1(source_stack.encode("utf-8")).hexdigest()[:16]
+        return f"stack:{h}", "stack", h
+    if tf_op:
+        return f"tfop:{tf_op}", "tf_op", None
+    return f"nosrc:{hlo_category}", "no_source", None
+
+
+def _inner_frame(source_stack: str | None) -> str | None:
+    """Innermost frame of `source_stack`: last non-empty line, stripped
+    to `file:line` (drop trailing `:<col>` suffix). Spec §4 record schema."""
+    if not source_stack:
+        return None
+    lines = [ln for ln in source_stack.splitlines() if ln.strip()]
+    if not lines:
+        return None
+    last = lines[-1]
+    # Strip trailing :<col> if present (last colon-separated token).
+    # Heuristic: file:line:col -> file:line; file:line -> file:line.
+    parts = last.rsplit(":", 2)
+    if len(parts) == 3:
+        return f"{parts[0]}:{parts[1]}"
+    return last
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="compute_breakdown.py",
