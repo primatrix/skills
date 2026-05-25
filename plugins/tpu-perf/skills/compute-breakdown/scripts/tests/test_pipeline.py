@@ -204,5 +204,59 @@ class TestSyntheticBuilders(unittest.TestCase):
         self.assertGreater(len(em.stats), 0, "op-level stats live on event_metadata")
 
 
+# ----------------------------------------------------------------------
+# EventRecord dataclass + meta-stat extraction.
+# ----------------------------------------------------------------------
+# _PROTO_DIR (set up in Task 5 Step 1) points at scripts/_proto. Its
+# parent is scripts/, where compute_breakdown.py lives — that directory
+# MUST be on sys.path before the import below or it raises
+# ModuleNotFoundError. Insert it first, then import.
+sys.path.insert(0, str(_PROTO_DIR.parent))
+import compute_breakdown as cb  # noqa: E402  -- after sys.path insert above
+
+
+class TestEventRecord(unittest.TestCase):
+    def test_event_record_has_all_spec_fields(self):
+        # Fields per spec §4
+        expected = {
+            "duration_ps", "offset_ps", "step_id",
+            "hlo_category", "kind",
+            "hlo_op", "tf_op",
+            "source_stat", "source_stack", "source_inner", "source_stack_hash",
+            "agg_key", "agg_key_kind",
+            "flops", "model_flops", "bytes_accessed", "raw_bytes_accessed",
+            "shape_with_layout", "dtype", "dtype_uncertain",
+            "program_id", "deduplicated_name",
+        }
+        actual = {f.name for f in cb.EventRecord.__dataclass_fields__.values()}
+        self.assertEqual(actual, expected)
+
+
+class TestExtractMetaStats(unittest.TestCase):
+    def test_resolves_stat_names_via_stat_metadata(self):
+        xs = make_minimal_xspace(steps=[(1, 0, 1_000_000_000)])
+        add_hlo_event(xs, em_id=10, hlo_op_text="fusion.0",
+                      offset_ps=0, duration_ps=100, hlo_category="loop fusion",
+                      tf_op="jit/Foo", flops=42, bytes_accessed=99,
+                      shape_with_layout="bf16[8]{0}")
+        plane = xs.planes[0]
+        em = plane.event_metadata[10]
+        name_by_id = {smid: sm.name for smid, sm in plane.stat_metadata.items()}
+        stats = cb._extract_meta_stats(em, name_by_id)
+        self.assertEqual(stats["hlo_category"], "loop fusion")
+        self.assertEqual(stats["tf_op"], "jit/Foo")
+        self.assertEqual(stats["flops"], 42)
+        self.assertEqual(stats["bytes_accessed"], 99)
+        self.assertEqual(stats["shape_with_layout"], "bf16[8]{0}")
+
+    def test_returns_empty_dict_for_no_stats(self):
+        xs = make_minimal_xspace(steps=[(1, 0, 1_000_000_000)])
+        plane = xs.planes[0]
+        # event_metadata with no stats
+        _add_event_meta(plane, 99, "bare-op")
+        name_by_id = {smid: sm.name for smid, sm in plane.stat_metadata.items()}
+        self.assertEqual(cb._extract_meta_stats(plane.event_metadata[99], name_by_id), {})
+
+
 if __name__ == "__main__":
     unittest.main()

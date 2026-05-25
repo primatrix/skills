@@ -8,6 +8,8 @@ stdout. See spec
 docs/superpowers/specs/2026-05-24-tpu-perf-compute-breakdown-design.md.
 """
 import argparse
+import dataclasses
+import hashlib
 import json
 import pathlib
 import sys
@@ -17,6 +19,51 @@ import sys
 _PROTO_DIR = pathlib.Path(__file__).parent / "_proto"
 sys.path.insert(0, str(_PROTO_DIR))
 import xplane_pb2  # noqa: E402  (after sys.path insert, by design)
+
+
+# ----------------------------------------------------------------------
+# Stage 3 per-event normalized record. Field schema per spec §4.
+# ----------------------------------------------------------------------
+@dataclasses.dataclass
+class EventRecord:
+    duration_ps: int
+    offset_ps: int
+    step_id: int
+    hlo_category: str
+    kind: str                     # 'compute' | 'data_move' | 'comm' | 'other'
+    hlo_op: str
+    tf_op: str | None
+    source_stat: str | None
+    source_stack: str | None
+    source_inner: str | None
+    source_stack_hash: str | None
+    agg_key: str
+    agg_key_kind: str             # 'stack' | 'tf_op' | 'no_source'
+    flops: int | None
+    model_flops: int | None
+    bytes_accessed: int | None
+    raw_bytes_accessed: int | None
+    shape_with_layout: str | None
+    dtype: str | None
+    dtype_uncertain: bool
+    program_id: int | None
+    deduplicated_name: str | None
+
+
+def _extract_meta_stats(event_metadata, stat_name_by_id: dict) -> dict:
+    """Resolve the stats list on an XEventMetadata into {name: value}.
+    Values use the discriminated `oneof value` (six variants) per
+    profile-anatomy schema."""
+    out: dict = {}
+    for s in event_metadata.stats:
+        name = stat_name_by_id.get(s.metadata_id)
+        if not name:
+            continue
+        vf = s.WhichOneof("value")
+        if vf is None:
+            continue
+        out[name] = getattr(s, vf)
+    return out
 
 
 def build_parser() -> argparse.ArgumentParser:
