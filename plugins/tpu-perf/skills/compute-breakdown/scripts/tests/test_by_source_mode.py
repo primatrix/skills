@@ -163,5 +163,17 @@ class TestRunBySourceMode(unittest.TestCase):
                               msg=f"totals[{k}] differs")
 
 
+class TestBySourceCLI(unittest.TestCase):
+    def test_include_data_move_flag_present(self):
+        ns = cb.build_parser().parse_args(
+            ["/x", "--mode", "by_source", "--include-data-move"]
+        )
+        self.assertTrue(ns.include_data_move)
+
+    def test_include_data_move_default_false(self):
+        ns = cb.build_parser().parse_args(["/x", "--mode", "by_source"])
+        self.assertFalse(ns.include_data_move)
+
+
 if __name__ == "__main__":
     unittest.main()
