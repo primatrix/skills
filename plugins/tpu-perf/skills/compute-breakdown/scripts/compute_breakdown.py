@@ -51,6 +51,42 @@ class EventRecord:
     deduplicated_name: str | None
 
 
+HLO_OP_RE = re.compile(
+    r'^\s*%?[\w.]+\s*=\s*'
+    r'([a-z][a-z0-9]*)\['
+    r'([^\]]*)\]'
+    r'(\{[^}]*\})?'
+    r'\s+\w[-\w]*\s*\('
+    r'\s*([a-z][a-z0-9]*)\['
+    r'([^\]]*)\]'
+    r'(\{[^}]*\})?'
+)
+
+
+def _parse_hlo_op_text(text: str) -> tuple:
+    """Extract (out_dtype, out_layout, in_dtype, in_layout) from an HLO IR
+    string. Inspects only the first operand. Returns all-None on no match."""
+    if not text:
+        return (None, None, None, None)
+    m = HLO_OP_RE.match(text)
+    if not m:
+        return (None, None, None, None)
+    return (m.group(1), m.group(3), m.group(4), m.group(6))
+
+
+def _parse_hlo_op_text_full(text: str) -> tuple:
+    """Like `_parse_hlo_op_text` but also returns the out/in shape strings.
+    Returns (out_dt, out_shape, out_lay, in_dt, in_shape, in_lay) or
+    a six-None tuple on no match."""
+    if not text:
+        return (None, None, None, None, None, None)
+    m = HLO_OP_RE.match(text)
+    if not m:
+        return (None, None, None, None, None, None)
+    return (m.group(1), m.group(2), m.group(3),
+            m.group(4), m.group(5), m.group(6))
+
+
 def _extract_meta_stats(event_metadata, stat_name_by_id: dict) -> dict:
     """Resolve the stats list on an XEventMetadata into {name: value}.
     Values use the discriminated `oneof value` (six variants) per
