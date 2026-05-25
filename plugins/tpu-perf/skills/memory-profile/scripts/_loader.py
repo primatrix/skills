@@ -313,3 +313,263 @@ def pick_step_window(
         raise StepPolicyError(f"unknown policy: {policy}")
     return StepWindow(id=name, range_ns=(start, end),
                       source="execute_event", policy_used=policy)
+
+
+@dataclasses.dataclass(slots=True)
+class TimelineSample:
+    ts_ns: int
+    bytes_allocated: int
+    live_count: int
+    fragmentation: float
+
+
+@dataclasses.dataclass(slots=True)
+class AliveBuffer:
+    addr: int
+    pool_id: int
+    size_bytes: int
+    alloc_bytes: int
+    shape: str
+    tf_op: str
+    data_type: str
+    alloc_ts_ns: int
+    age_ns_at_peak: int
+    crossed_step_boundaries: int
+    parent_chain: list[str]
+    lifetime_class: str
+    deallocated: bool
+
+
+@dataclasses.dataclass(slots=True)
+class FirstPassResult:
+    global_peak_ts_ns: int
+    global_peak_bytes: int
+    timeline_samples: list[TimelineSample]
+    alloc_accounting_drift_pct: float
+    unmatched_dealloc_count: int
+    unmatched_alloc_count: int
+    trace_end_live_bytes: int
+    pool_max_peak_in_use: dict[int, int]
+    n_alloc: int
+    n_dealloc: int
+
+
+@dataclasses.dataclass(slots=True)
+class PeakSnapshot:
+    peak_ts_ns: int
+    bytes_total: int
+    bytes_by_pool: dict[int, int]
+    fragmentation_at_peak: float
+    is_global_peak: bool
+    alive: list[AliveBuffer]
+    alive_total_bytes: int
+
+
+def _merged_event_stream(events: HostAllocatorEvents):
+    """Yield (ts_ns, kind, payload) ordered by ts_ns, allocs before deallocs at ties."""
+    a_iter = iter(events.allocs)
+    d_iter = iter(events.deallocs)
+    a = next(a_iter, None)
+    d = next(d_iter, None)
+    while a is not None or d is not None:
+        if d is None or (a is not None and a.ts_ns <= d.ts_ns):
+            yield a.ts_ns, "A", a
+            a = next(a_iter, None)
+        else:
+            yield d.ts_ns, "D", d
+            d = next(d_iter, None)
+
+
+def sweep_first_pass(events: HostAllocatorEvents, *, time_samples_n: int) -> FirstPassResult:
+    live: dict[tuple[int, int], AllocEvent] = {}
+    bytes_now_by_pool: dict[int, int] = {}
+    pool_max_peak: dict[int, int] = dict(events.pool_capacity)
+    pool_max_peak.update({pid: 0 for pid in pool_max_peak})  # init counters
+    pool_max_peak_in_use: dict[int, int] = {}
+
+    global_peak_bytes = 0
+    global_peak_ts_ns = 0
+
+    last_fragmentation = 0.0
+    drift_max = 0.0
+    drift_seen = False
+
+    unmatched_dealloc_count = 0
+
+    # Linear scan of (ts_ns, bytes_allocated_total, fragmentation, live_count).
+    samples: list[tuple[int, int, float, int]] = []
+
+    for ts, kind, payload in _merged_event_stream(events):
+        if kind == "A":
+            a = payload
+            key = (a.pool_id, a.addr)
+            live[key] = a
+            bytes_now_by_pool[a.pool_id] = bytes_now_by_pool.get(a.pool_id, 0) + a.requested_bytes
+            last_fragmentation = a.fragmentation
+            if a.peak_bytes_in_use > pool_max_peak_in_use.get(a.pool_id, 0):
+                pool_max_peak_in_use[a.pool_id] = a.peak_bytes_in_use
+            # Drift between our running sum and allocator's report (single pool only).
+            if len(bytes_now_by_pool) == 1:
+                ours = bytes_now_by_pool[a.pool_id]
+                allocator = a.bytes_allocated
+                if allocator > 0:
+                    drift_seen = True
+                    rel = abs(ours - allocator) / allocator
+                    if rel > drift_max:
+                        drift_max = rel
+        else:  # "D"
+            d = payload
+            # Dealloc events do not carry pool_id; match by addr in any pool.
+            match_key = next((k for k in live if k[1] == d.addr), None)
+            if match_key is None:
+                unmatched_dealloc_count += 1
+                last_fragmentation = d.fragmentation
+            else:
+                a = live.pop(match_key)
+                bytes_now_by_pool[a.pool_id] = bytes_now_by_pool[a.pool_id] - a.requested_bytes
+                last_fragmentation = d.fragmentation
+                if d.peak_bytes_in_use > pool_max_peak_in_use.get(a.pool_id, 0):
+                    pool_max_peak_in_use[a.pool_id] = d.peak_bytes_in_use
+
+        total = sum(bytes_now_by_pool.values())
+        if total > global_peak_bytes:
+            global_peak_bytes = total
+            global_peak_ts_ns = ts
+        samples.append((ts, total, last_fragmentation, len(live)))
+
+    # Down-sample to time_samples_n equally-spaced wallclock points.
+    if not samples:
+        timeline_samples: list[TimelineSample] = []
+    else:
+        t0 = samples[0][0]
+        t1 = samples[-1][0]
+        if t1 == t0 or time_samples_n <= 1:
+            timeline_samples = [TimelineSample(ts_ns=samples[-1][0],
+                                               bytes_allocated=samples[-1][1],
+                                               fragmentation=samples[-1][2],
+                                               live_count=samples[-1][3])]
+        else:
+            step = (t1 - t0) / (time_samples_n - 1)
+            timeline_samples = []
+            i = 0
+            for k in range(time_samples_n):
+                target = t0 + step * k
+                while i + 1 < len(samples) and samples[i + 1][0] <= target:
+                    i += 1
+                ts_k, b_k, f_k, l_k = samples[i]
+                timeline_samples.append(TimelineSample(
+                    ts_ns=int(target), bytes_allocated=b_k,
+                    fragmentation=f_k, live_count=l_k,
+                ))
+
+    return FirstPassResult(
+        global_peak_ts_ns=global_peak_ts_ns,
+        global_peak_bytes=global_peak_bytes,
+        timeline_samples=timeline_samples,
+        alloc_accounting_drift_pct=(drift_max * 100.0) if drift_seen else 0.0,
+        unmatched_dealloc_count=unmatched_dealloc_count,
+        unmatched_alloc_count=len(live),
+        trace_end_live_bytes=sum(bytes_now_by_pool.values()),
+        pool_max_peak_in_use=pool_max_peak_in_use,
+        n_alloc=len(events.allocs),
+        n_dealloc=len(events.deallocs),
+    )
+
+
+def _count_step_boundaries_crossed(alloc_ts_ns: int, end_ts_ns: int,
+                                   boundaries_ns: list[tuple[int, int]]) -> int:
+    if not boundaries_ns:
+        return 0
+    n = 0
+    for _i, (s, _e) in enumerate(boundaries_ns):
+        if alloc_ts_ns <= s <= end_ts_ns:
+            n += 1
+    return n
+
+
+def snapshot_at_peak(events: HostAllocatorEvents, *, peak_ts_ns: int,
+                     step_range_ns: tuple[int, int],
+                     step_boundaries_ns: list[tuple[int, int]],
+                     persistent_threshold_steps: int) -> PeakSnapshot:
+    # Re-run the sweep but stop computing at peak_ts_ns to capture the live set.
+    live: dict[tuple[int, int], AllocEvent] = {}
+    bytes_now_by_pool: dict[int, int] = {}
+    last_fragmentation = 0.0
+
+    # Find addr → dealloc_ts_ns map for lifetime classification.
+    dealloc_ts_by_addr: dict[int, int] = {}
+    for d in events.deallocs:
+        dealloc_ts_by_addr.setdefault(d.addr, d.ts_ns)
+
+    for ts, kind, payload in _merged_event_stream(events):
+        if ts > peak_ts_ns:
+            break
+        if kind == "A":
+            a = payload
+            live[(a.pool_id, a.addr)] = a
+            bytes_now_by_pool[a.pool_id] = bytes_now_by_pool.get(a.pool_id, 0) + a.requested_bytes
+            last_fragmentation = a.fragmentation
+        else:
+            d = payload
+            match_key = next((k for k in live if k[1] == d.addr), None)
+            if match_key is not None:
+                a = live.pop(match_key)
+                bytes_now_by_pool[a.pool_id] = bytes_now_by_pool[a.pool_id] - a.requested_bytes
+                last_fragmentation = d.fragmentation
+
+    bytes_total = sum(bytes_now_by_pool.values())
+
+    # Trace end ts_ns is the max event ts in either stream — used to compute
+    # crossed boundaries when an alloc was never deallocated. We also take the
+    # max step-boundary end into account: a never-freed buffer is alive through
+    # the rest of the trace, which the Steps line bounds even if no allocator
+    # event landed past the last step.
+    last_event_ts = max(
+        (events.allocs[-1].ts_ns if events.allocs else 0),
+        (events.deallocs[-1].ts_ns if events.deallocs else 0),
+        max((e for _s, e in step_boundaries_ns), default=0),
+    )
+
+    alive_buffers: list[AliveBuffer] = []
+    for (_pool, addr), a in live.items():
+        dealloc_ts = dealloc_ts_by_addr.get(addr)
+        end_ts = dealloc_ts if dealloc_ts is not None else last_event_ts
+        crossed = _count_step_boundaries_crossed(a.ts_ns, end_ts, step_boundaries_ns)
+        deallocated = dealloc_ts is not None and dealloc_ts >= peak_ts_ns
+        # Lifetime classification.
+        same_step = False
+        if dealloc_ts is not None:
+            for s, e in step_boundaries_ns:
+                if s <= a.ts_ns <= e and s <= dealloc_ts <= e:
+                    same_step = True
+                    break
+        if not deallocated and crossed >= persistent_threshold_steps and dealloc_ts is None:
+            cls = "persistent"
+        elif same_step and dealloc_ts is not None:
+            cls = "transient"
+        else:
+            cls = "unknown"
+        alive_buffers.append(AliveBuffer(
+            addr=a.addr, pool_id=a.pool_id,
+            size_bytes=a.requested_bytes, alloc_bytes=a.allocation_bytes,
+            shape=a.shape or "<no shape>",
+            tf_op=a.tf_op or "<no tf_op>",
+            data_type=a.data_type,
+            alloc_ts_ns=a.ts_ns,
+            age_ns_at_peak=peak_ts_ns - a.ts_ns,
+            crossed_step_boundaries=crossed,
+            parent_chain=list(a.parent_chain),
+            lifetime_class=cls,
+            deallocated=deallocated,
+        ))
+
+    alive_buffers.sort(key=lambda b: b.size_bytes, reverse=True)
+    return PeakSnapshot(
+        peak_ts_ns=peak_ts_ns,
+        bytes_total=bytes_total,
+        bytes_by_pool=dict(bytes_now_by_pool),
+        fragmentation_at_peak=last_fragmentation,
+        is_global_peak=False,  # caller sets this against FirstPassResult.global_peak_ts_ns
+        alive=alive_buffers,
+        alive_total_bytes=sum(b.size_bytes for b in alive_buffers),
+    )
