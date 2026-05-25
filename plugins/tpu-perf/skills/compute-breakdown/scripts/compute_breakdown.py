@@ -782,6 +782,134 @@ def _run_non_compute_mode(records: list[EventRecord], *, ctx: dict,
     }
 
 
+def _run_roofline_mode(records: list[EventRecord], *, ctx: dict,
+                          peaks: dict) -> dict:
+    """Mode 4: dtype-aware roofline analysis on the resolved peaks table."""
+    step_dur = ctx["step_duration_ps"]
+
+    compute_recs = [r for r in records if r.kind == "compute"]
+    groups = _aggregate_by_key(compute_recs, dedupe_shapes_cap=8)
+
+    eligible_rows = []
+    skipped = {
+        "n_no_flops":               0,
+        "n_no_bytes":               0,
+        "n_dtype_other":            0,
+        "n_peak_unknown_for_dtype": 0,
+        "total_dur_ps_skipped":     0,
+    }
+
+    for g in groups.values():
+        dt = g.first_dtype
+
+        if g.flops_sum is None or g.flops_sum <= 0:
+            skipped["n_no_flops"] += 1
+            skipped["total_dur_ps_skipped"] += g.total_dur_ps
+            continue
+        if g.bytes_accessed_sum is None or g.bytes_accessed_sum <= 0:
+            skipped["n_no_bytes"] += 1
+            skipped["total_dur_ps_skipped"] += g.total_dur_ps
+            continue
+        if dt not in ("bf16", "fp8", "fp16", "fp32"):
+            skipped["n_dtype_other"] += 1
+            skipped["total_dur_ps_skipped"] += g.total_dur_ps
+            continue
+        peak_tflops = peaks.get(f"peak_tflops_{dt}")
+        peak_hbm = peaks.get("peak_hbm_gibps")
+        if peak_tflops is None or peak_hbm is None:
+            skipped["n_peak_unknown_for_dtype"] += 1
+            skipped["total_dur_ps_skipped"] += g.total_dur_ps
+            continue
+
+        t_compute_seconds = g.flops_sum / (peak_tflops * 1e12)
+        t_compute_theory_ps = t_compute_seconds * 1e12
+        t_hbm_seconds = g.bytes_accessed_sum / (peak_hbm * (1024 ** 3))
+        t_hbm_theory_ps = t_hbm_seconds * 1e12
+        t_roofline_theory_ps = max(t_compute_theory_ps, t_hbm_theory_ps)
+
+        arithmetic_intensity = g.flops_sum / g.bytes_accessed_sum
+        ridge_point = (peak_tflops * 1e12) / (peak_hbm * (1024 ** 3))
+        bound = "compute" if arithmetic_intensity >= ridge_point else "memory"
+
+        mfu = t_compute_theory_ps / g.total_dur_ps if g.total_dur_ps > 0 else 0.0
+        hbm_util = t_hbm_theory_ps / g.total_dur_ps if g.total_dur_ps > 0 else 0.0
+        roofline_util = (t_roofline_theory_ps / g.total_dur_ps
+                            if g.total_dur_ps > 0 else 0.0)
+        shortfall_ps = g.total_dur_ps - t_roofline_theory_ps
+        shortfall_pct = (1 - roofline_util) * 100
+
+        eligible_rows.append({
+            "agg_key":              g.agg_key,
+            "agg_key_kind":         g.agg_key_kind,
+            "source_inner":         g.source_inner,
+            "tf_op":                g.tf_op,
+            "hlo_categories":       dict(g.hlo_categories),
+            "n_executions":         g.n_executions,
+            "total_dur_ps":         g.total_dur_ps,
+            "flops_sum":            g.flops_sum,
+            "bytes_accessed_sum":   g.bytes_accessed_sum,
+            "dtype":                dt,
+            "dtype_uncertain":      g.dtype_uncertain,
+            "arithmetic_intensity": round(arithmetic_intensity, 4),
+            "ridge_point":          round(ridge_point, 2),
+            "bound":                bound,
+            "t_compute_theory_ps":  int(t_compute_theory_ps),
+            "t_hbm_theory_ps":      int(t_hbm_theory_ps),
+            "t_roofline_theory_ps": int(t_roofline_theory_ps),
+            "mfu":                  round(mfu, 4),
+            "hbm_util":             round(hbm_util, 4),
+            "roofline_util":        round(roofline_util, 4),
+            "shortfall_ps":         int(shortfall_ps),
+            "shortfall_pct":        round(shortfall_pct, 2),
+        })
+
+    total_eligible_dur = sum(r["total_dur_ps"] for r in eligible_rows)
+
+    def _weighted(field: str) -> float:
+        if total_eligible_dur <= 0:
+            return 0.0
+        return sum(r[field] * r["total_dur_ps"] for r in eligible_rows) / total_eligible_dur
+
+    top_shortfall = sorted(eligible_rows,
+                              key=lambda r: r["shortfall_ps"], reverse=True)[:10]
+    top_shortfall_short = [
+        {
+            "agg_key":      r["agg_key"],
+            "source_inner": r["source_inner"],
+            "tf_op":        r["tf_op"],
+            "total_dur_ps": r["total_dur_ps"],
+            "shortfall_ps": r["shortfall_ps"],
+            "bound":        r["bound"],
+        }
+        for r in top_shortfall
+    ]
+
+    step_summary = {
+        "step_compute_duration_ps":   total_eligible_dur,
+        "weighted_avg_mfu":           round(_weighted("mfu"), 4),
+        "weighted_avg_hbm_util":      round(_weighted("hbm_util"), 4),
+        "weighted_avg_roofline_util": round(_weighted("roofline_util"), 4),
+        "step_shortfall_ps":          int(sum(r["shortfall_ps"] for r in eligible_rows)),
+        "top_shortfall_groups":       top_shortfall_short,
+    }
+
+    return {
+        "status":           "ok",
+        "mode":             "roofline",
+        "profile_dir":      ctx["profile_dir"],
+        "device":           ctx["device"],
+        "step_id":          ctx["step_id"],
+        "step_window_ps":   ctx["step_window_ps"],
+        "step_duration_ps": step_dur,
+        "notes":            list(ctx["notes"]),
+        "chip":             ctx.get("chip", "v7x"),
+        "peaks_used":       peaks,
+        "step_summary":     step_summary,
+        "groups":           eligible_rows,
+        "skipped_groups":   skipped,
+    }
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="compute_breakdown.py",
