@@ -1,6 +1,6 @@
 {
   "name": "tpu-perf",
-  "description": "Systematic analysis of TPU pretraining efficiency. profile-anatomy: schema + reference scripts for xplane.pb / trace.json.gz. comm-analysis: per-axis NCCL bus BW, peak ICI utilization, and per-step compute/comm overlap.",
+  "description": "Systematic analysis of TPU pretraining efficiency. profile-anatomy: schema + reference scripts for xplane.pb / trace.json.gz. comm-analysis: per-axis NCCL bus BW, peak ICI utilization, and per-step compute/comm overlap. compute-breakdown: source-line aggregation, layer scoping, non-compute audit, v7x roofline shortfall.",
   "version": "0.2.0",
   "license": "Apache-2.0"
 }
