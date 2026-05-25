@@ -76,6 +76,29 @@ class TestBuildRollups(unittest.TestCase):
         keys = {r["key"] for r in ru["by_lifetime_class"]}
         self.assertEqual(keys, {"persistent", "transient", "unknown"})
 
+    def test_by_tf_op_collapses_empty_to_no_tf_op_marker(self):
+        # Two alive buffers with empty tf_op + one with tf_op="dot" should
+        # produce a single "<no tf_op>" row (n_buffers=2) plus the "dot" row.
+        alive = [
+            _ab(0x10, 700, shape="bf16[X]", tf_op="", dtype="bf16",
+                lifetime="persistent"),
+            _ab(0x11, 300, shape="bf16[Y]", tf_op="", dtype="bf16",
+                lifetime="transient"),
+            _ab(0x12, 500, shape="f32[Z]", tf_op="dot", dtype="f32",
+                lifetime="unknown"),
+        ]
+        total = sum(b.size_bytes for b in alive)
+        ru = build_rollups(alive, top_k=10, total_bytes=total)
+        rows_by_key = {r["key"]: r for r in ru["by_tf_op"]}
+        self.assertIn("<no tf_op>", rows_by_key)
+        self.assertIn("dot", rows_by_key)
+        # Exactly two keys: the collapsed empty bucket and "dot".
+        self.assertEqual(set(rows_by_key.keys()), {"<no tf_op>", "dot"})
+        self.assertEqual(rows_by_key["<no tf_op>"]["n_buffers"], 2)
+        self.assertEqual(rows_by_key["<no tf_op>"]["total_bytes"], 1000)
+        self.assertEqual(rows_by_key["dot"]["n_buffers"], 1)
+        self.assertEqual(rows_by_key["dot"]["total_bytes"], 500)
+
     def test_lifetime_mix_sums_to_row_total(self):
         ru = build_rollups(self.alive, top_k=10, total_bytes=3500)
         for row in ru["by_shape"] + ru["by_tf_op"] + ru["by_parent_jit"]:
