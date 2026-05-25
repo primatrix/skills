@@ -347,6 +347,7 @@ class FirstPassResult:
     timeline_samples: list[TimelineSample]
     alloc_accounting_drift_pct: float
     unmatched_dealloc_count: int
+    pretrace_dealloc_count: int
     unmatched_alloc_count: int
     trace_end_live_bytes: int
     pool_max_peak_in_use: dict[int, int]
@@ -395,6 +396,7 @@ def sweep_first_pass(events: HostAllocatorEvents, *, time_samples_n: int) -> Fir
     drift_seen = False
 
     unmatched_dealloc_count = 0
+    pretrace_dealloc_count = 0
 
     # Linear scan of (ts_ns, bytes_allocated_total, fragmentation, live_count).
     samples: list[tuple[int, int, float, int]] = []
@@ -403,6 +405,14 @@ def sweep_first_pass(events: HostAllocatorEvents, *, time_samples_n: int) -> Fir
         if kind == "A":
             a = payload
             key = (a.pool_id, a.addr)
+            # Address-reuse without an intervening MemoryDeallocation event:
+            # implicitly evict the prior buffer at this (pool, addr) so the
+            # running sum stays consistent with the actual live set.
+            prior = live.get(key)
+            if prior is not None:
+                bytes_now_by_pool[prior.pool_id] = (
+                    bytes_now_by_pool.get(prior.pool_id, 0) - prior.requested_bytes
+                )
             live[key] = a
             bytes_now_by_pool[a.pool_id] = bytes_now_by_pool.get(a.pool_id, 0) + a.requested_bytes
             last_fragmentation = a.fragmentation
@@ -422,7 +432,11 @@ def sweep_first_pass(events: HostAllocatorEvents, *, time_samples_n: int) -> Fir
             # Dealloc events do not carry pool_id; match by addr in any pool.
             match_key = next((k for k in live if k[1] == d.addr), None)
             if match_key is None:
-                unmatched_dealloc_count += 1
+                # Dealloc whose alloc isn't in the live set: the alloc happened
+                # before the trace started (trace truncation). This is normal,
+                # not a producer bug. Reserve unmatched_dealloc_count for
+                # genuinely anomalous cases.
+                pretrace_dealloc_count += 1
                 last_fragmentation = d.fragmentation
             else:
                 a = live.pop(match_key)
@@ -468,6 +482,7 @@ def sweep_first_pass(events: HostAllocatorEvents, *, time_samples_n: int) -> Fir
         timeline_samples=timeline_samples,
         alloc_accounting_drift_pct=(drift_max * 100.0) if drift_seen else 0.0,
         unmatched_dealloc_count=unmatched_dealloc_count,
+        pretrace_dealloc_count=pretrace_dealloc_count,
         unmatched_alloc_count=len(live),
         trace_end_live_bytes=sum(bytes_now_by_pool.values()),
         pool_max_peak_in_use=pool_max_peak_in_use,
@@ -506,7 +521,16 @@ def snapshot_at_peak(events: HostAllocatorEvents, *, peak_ts_ns: int,
             break
         if kind == "A":
             a = payload
-            live[(a.pool_id, a.addr)] = a
+            key = (a.pool_id, a.addr)
+            # Mirror sweep_first_pass: implicitly evict prior buffer at the
+            # same (pool, addr) when address-reuse happens with no intervening
+            # MemoryDeallocation event.
+            prior = live.get(key)
+            if prior is not None:
+                bytes_now_by_pool[prior.pool_id] = (
+                    bytes_now_by_pool.get(prior.pool_id, 0) - prior.requested_bytes
+                )
+            live[key] = a
             bytes_now_by_pool[a.pool_id] = bytes_now_by_pool.get(a.pool_id, 0) + a.requested_bytes
             last_fragmentation = a.fragmentation
         else:

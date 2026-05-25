@@ -62,7 +62,10 @@ class TestSweepFirstPass(unittest.TestCase):
             host_plane_present=True, n_planes=1,
         )
         result = sweep_first_pass(events, time_samples_n=4)
-        self.assertEqual(result.unmatched_dealloc_count, 1)
+        # A dealloc whose alloc is not in the live set is classified as a
+        # pre-trace dealloc (trace truncation), not an anomalous unmatched.
+        self.assertEqual(result.unmatched_dealloc_count, 0)
+        self.assertEqual(result.pretrace_dealloc_count, 1)
 
     def test_timeline_has_requested_sample_count(self):
         events = HostAllocatorEvents(

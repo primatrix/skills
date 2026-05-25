@@ -143,7 +143,15 @@ def main(argv: list[str] | None = None) -> int:
             break
         if kind == "A":
             a = payload
-            live[(a.pool_id, a.addr)] = a
+            key = (a.pool_id, a.addr)
+            # Address-reuse without an intervening MemoryDeallocation event:
+            # implicitly evict the prior buffer so the running sum is correct.
+            prior = live.get(key)
+            if prior is not None:
+                bytes_by_pool[prior.pool_id] = (
+                    bytes_by_pool.get(prior.pool_id, 0) - prior.requested_bytes
+                )
+            live[key] = a
             bytes_by_pool[a.pool_id] = bytes_by_pool.get(a.pool_id, 0) + a.requested_bytes
             last_fragmentation = a.fragmentation
         else:
@@ -213,6 +221,7 @@ def main(argv: list[str] | None = None) -> int:
     diagnostics = {
         "alloc_accounting_drift_pct": first.alloc_accounting_drift_pct,
         "unmatched_dealloc_count": first.unmatched_dealloc_count,
+        "pretrace_dealloc_count": first.pretrace_dealloc_count,
         "unmatched_alloc_count": first.unmatched_alloc_count,
         "trace_end_live_bytes": first.trace_end_live_bytes,
         "n_pools_seen": len(events.pool_capacity),
@@ -236,6 +245,11 @@ def main(argv: list[str] | None = None) -> int:
     if first.unmatched_dealloc_count > 0:
         diagnostics["warnings"].append(
             f"{first.unmatched_dealloc_count} MemoryDeallocation event(s) had no matching alloc"
+        )
+    if first.pretrace_dealloc_count > 0:
+        diagnostics["warnings"].append(
+            f"{first.pretrace_dealloc_count} MemoryDeallocation event(s) reference"
+            " pre-trace allocations (trace truncation; not a producer bug)"
         )
     if sw.source == "execute_event":
         diagnostics["warnings"].append(
