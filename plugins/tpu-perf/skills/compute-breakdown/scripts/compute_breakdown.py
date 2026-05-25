@@ -138,6 +138,18 @@ def _inner_frame(source_stack: str | None) -> str | None:
     return last
 
 
+_UNCERTAIN_CATS = frozenset({
+    "convolution fusion", "custom fusion", "output fusion", "custom-call",
+})
+_UNCERTAIN_DTYPES = frozenset({"bf16", "fp32"})
+
+
+def _is_dtype_uncertain(hlo_category: str, dtype: str | None) -> bool:
+    """Spec §4.3: True iff category ∈ {fusion family that wraps mixed-precision
+    compute} AND dtype ∈ {bf16, fp32}."""
+    return hlo_category in _UNCERTAIN_CATS and dtype in _UNCERTAIN_DTYPES
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="compute_breakdown.py",

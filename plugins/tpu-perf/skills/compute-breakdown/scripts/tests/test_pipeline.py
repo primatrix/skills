@@ -357,5 +357,31 @@ class TestInnerFrame(unittest.TestCase):
         self.assertIsNone(cb._inner_frame("\n\n"))
 
 
+class TestDtypeUncertain(unittest.TestCase):
+    _ALLOWED_CATS = ("convolution fusion", "custom fusion", "output fusion", "custom-call")
+    _ALLOWED_DTYPES = ("bf16", "fp32")
+
+    def test_true_only_when_both_conditions_hold(self):
+        for cat in self._ALLOWED_CATS:
+            for dtype in self._ALLOWED_DTYPES:
+                self.assertTrue(cb._is_dtype_uncertain(cat, dtype),
+                                msg=f"{cat}/{dtype}")
+
+    def test_false_when_loop_fusion(self):
+        for dtype in self._ALLOWED_DTYPES:
+            self.assertFalse(cb._is_dtype_uncertain("loop fusion", dtype))
+
+    def test_false_when_non_fusion_elementwise(self):
+        self.assertFalse(cb._is_dtype_uncertain("non-fusion elementwise", "bf16"))
+
+    def test_false_when_dtype_fp8(self):
+        for cat in self._ALLOWED_CATS:
+            self.assertFalse(cb._is_dtype_uncertain(cat, "fp8"))
+
+    def test_false_when_dtype_other_or_none(self):
+        self.assertFalse(cb._is_dtype_uncertain("convolution fusion", "other"))
+        self.assertFalse(cb._is_dtype_uncertain("convolution fusion", None))
+
+
 if __name__ == "__main__":
     unittest.main()
