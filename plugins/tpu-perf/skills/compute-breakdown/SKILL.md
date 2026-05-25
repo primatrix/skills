@@ -21,9 +21,22 @@ This skill is built on top of `profile-anatomy`, which documents the XSpace/XPla
 | "How much time goes to padding/cast/copy/transpose" | `non_compute` |
 | "Are we compute- or memory-bound; what's MFU on v7x" | `roofline` |
 
+## Units — read this first
+
+**Every duration field ends in `_ps` and is picoseconds.** Convert before printing:
+
+| Want | Divisor |
+|---|---|
+| Microseconds | `/ 1e6` |
+| Milliseconds | `/ 1e9` |
+| **Seconds** | `/ 1e12` |
+
+A 6-second step is `6_000_000_000_000` ps. Dividing a ps value by `1e9` gives milliseconds, not seconds — easy 1000× error. Other unit-bearing fields: `*_pct`/`pct_of_*` are already in percent (multiply by 100 already applied); `*_util` (`mfu`, `hbm_util`, `roofline_util`) are fractions in [0, 1] — multiply by 100 for percent display.
+
 ## Concepts you need first
 
 - **`agg_key`**: groups events by source location with a 3-tier fallback. Tier 1: SHA-256 hash of `source_stack` (`stack:<8-hex>`). Tier 2: `tf_op` string (`tfop:<value>`). Tier 3: `<no source>:<hlo_category>`. The group's `agg_key_kind` field reports which tier was used.
+- **`tf_op` is a CALL HIERARCHY, not a leaf identifier** — see "Layer-scoping recipe" below before substring-matching on it. Outer scopes (jit → vmap → shard_map → layer-block-name → kernel) all appear in the path of every nested op. A naive `'kda' in tf_op` against a layer named `moe_layers_kda_cycle_5` matches **everything inside that block**, including the MoE FFN's GMM kernel. This single mistake can shift attribution by 2–3×.
 - **`while` HLO is a container**, not a leaf op. Its events are excluded from per-event tables; their total duration is reported separately as `while_container_duration_ps`. Do **not** double-count it against `compute_duration_ps`.
 - **TPU concurrency**: events on the device plane can overlap (Scalar Unit, vector core, async scheduler). Per-kind sums therefore can exceed wall-clock step duration. Treat the durations as throughput proxies, not exclusive time.
 - **v7x peaks are per-device** (= per-TensorCore). The v7x chip has 2 TensorCores; `/device:TPU:N` is one of them. Per-chip values are divided by 2: BF16 peak 1153.5 TFLOPS/device, FP8 peak 2307.0 TFLOPS/device, HBM 3690 GiB/s/device.
@@ -50,11 +63,26 @@ python3 .../compute_breakdown.py <profile_dir> --mode by_source [--step N] [--in
 Full per-`agg_key` table — not sorted, not truncated. Each group carries its `source_stack`, `tf_op`, `kind`, `hlo_categories`, durations, sums (flops/model_flops/bytes_accessed), `shapes` (cap 8), `dtypes` histogram, `dtype_uncertain`, `example_hlo_op`.
 
 **Layer-scoping recipe** (the canonical use):
-1. Read the user's code (e.g. `attention.py`) — note the file path and function names.
+
+The trap: `tf_op` is the JAX call hierarchy from outermost jit to the leaf op (e.g. `jit(train_step)/jvp/.../moe_layers_kda_cycle_5/shard_map/jit(gmm)/select_n`). Outer scope names appear in every nested op. Substring-matching keywords like `kda`, `mla`, or `expert` against the full `tf_op` will overcount whenever those names also appear in **block / layer-cycle names** that wrap unrelated math.
+
+**Real example from this skill's RED data:** a layer named `moe_layers_kda_cycle_N` is a transformer block that contains *both* KDA attention *and* MoE FFN. A naive `'kda' in tf_op.lower()` filter attributed 79% of compute to "KDA"; the actual KDA-kernel math was 27.5%. The 51-point gap was MoE GMM (FFN expert math) inside KDA-style layer blocks.
+
+**Use these signals, in order of reliability:**
+1. **`source_stack` (file:line)** — points to the *source code that emitted the op*, not the call hierarchy. Filter on the file path of the kernel/module you care about (`kernels/kda/pallas.py`, `layers/attention.py`). This is the strongest signal.
+2. **`source_inner`** — the innermost frame of `source_stack`, already extracted. Use when you want the exact emitting site.
+3. **Leaf segment of `tf_op`** — split `tf_op` on `/` and look at the **last 2-3 segments only** (the actual op name + its immediate JAX wrapper, e.g. `jit(gmm)/pallas_call`). Use this to classify *what kind of op* a group is.
+4. **`hlo_categories`** — for op-kind classification (`custom-call`, `loop fusion`, `dot`, `convolution`, etc).
+
+**Avoid** matching layer-block names (`moe_layers_*_cycle_N`, `decoder.body`, etc) against the full `tf_op` for layer attribution — those are scopes, not leaf identifiers. If you must match a block-name, anchor it: split on `/` first and check that the matched name is *not* followed by deeper scopes that re-classify the op (e.g. `.../moe_layers_kda_cycle_5/shard_map/jit(gmm)/...` is GMM math, not KDA math, despite "kda" in the path).
+
+**Procedure:**
+1. Read the user's code (e.g. `attention.py`, `moe.py`) — note the file path and the leaf function/kernel names.
 2. Run `--mode by_source`.
-3. In the JSON, filter `groups` where `source_stack` contains the file path OR `tf_op` contains the function name (be permissive — JAX adds wrapper prefixes).
+3. Filter `groups` where `source_stack` contains the file path. Cross-check by inspecting the leaf segment of `tf_op` (`tf_op.split('/')[-1]`) — it should look like the op kind you expect.
 4. Sum `total_dur_ps` over the filtered set.
 5. Report: layer total / `step_duration_ps` (% of step), and layer total / `totals.compute_duration_ps` (% of compute).
+6. **Sanity check:** the buckets must sum to ≤ `compute_duration_ps`. If your buckets sum to >100% of compute, you are double-counting via overlapping substring matches.
 
 ## Mode 3 — `non_compute`
 
@@ -87,7 +115,11 @@ v7x peaks are built in (per-device: BF16=1153.5, FP8=2307.0, HBM=3690 GiB/s). FP
 
 Per-group output: `arithmetic_intensity` (FLOPs/byte), `ridge_point` (where compute and memory roofs meet), `bound` ∈ `{compute, memory}`, `t_compute_theory_ps`, `t_hbm_theory_ps`, `t_roofline_theory_ps`, `mfu`, `hbm_util`, `roofline_util`, `shortfall_ps`, `shortfall_pct`.
 
-Step summary: `weighted_avg_mfu`, `weighted_avg_hbm_util`, `weighted_avg_roofline_util` (weighted by `total_dur_ps`); `top_shortfall_groups` (top 10 by absolute `shortfall_ps`).
+Step summary: `weighted_avg_mfu`, `weighted_avg_hbm_util`, `weighted_avg_roofline_util` (weighted by `total_dur_ps`, fractions in [0, 1]); `top_shortfall_groups` (top 10 by absolute `shortfall_ps`); coverage fields `rooflined_dur_ps`, `step_compute_dur_ps_total`, `rooflined_pct_of_compute`, `skipped_pct_of_compute`.
+
+**`top_shortfall_groups` has a slim schema** — only `agg_key`, `source_inner`, `tf_op`, `total_dur_ps`, `shortfall_ps`, `bound`. To access the full per-group fields (`mfu`, `arithmetic_intensity`, `dtype_uncertain`, etc.) for a top-shortfall group, look up its `agg_key` in the full `groups` array.
+
+**Roofline coverage** — `weighted_avg_mfu` is computed only over rooflined-eligible groups, not the full step compute. When `rooflined_pct_of_compute` is well below 100%, the averages reflect only that subset; the rest is binned into `skipped_groups` (`n_no_flops`, `n_no_bytes`, `n_dtype_other`, `n_peak_unknown_for_dtype`). Always report `rooflined_pct_of_compute` alongside the MFU number — a 22% MFU over 28% coverage tells a different story than the same MFU over 95% coverage.
 
 **Reading guide:**
 - High `weighted_avg_mfu` → workload is using compute; gains come from reducing wall-clock (kernel fusion, less padding) not from algorithmic changes.
@@ -95,8 +127,27 @@ Step summary: `weighted_avg_mfu`, `weighted_avg_hbm_util`, `weighted_avg_rooflin
 - Both low → other bottleneck (scheduling, dependencies, control flow). Look at `summary.totals.while_pct_of_step` and the `non_compute` audit.
 - When a group has `dtype_uncertain=true`, present both the bf16-peak MFU **and a note** that the true peak may be fp8 (~2× higher), making the MFU number an upper bound on under-utilization, not a definitive figure.
 
+## JSON schema cheat-sheet
+
+Field names are stable; consult before writing inspectors so you don't guess. Common cross-mode fields: `status`, `mode`, `profile_dir`, `device`, `step_id`, `step_window_ps` (`[start_ps, end_ps]`), `step_duration_ps`, `notes` (list — includes the auto-step-pick reason), `totals`.
+
+**`totals` block (all modes):** `n_events_{total,compute,data_move,comm,other,unresolved}`, `{compute,data_move,comm,other}_duration_ps`, `while_container_duration_ps`, `non_while_duration_ps_sum`, `while_pct_of_step`, `unknown_categories`. Mode 3 also adds `non_compute_pct_of_{step,compute}`.
+
+**Group records — note `n_executions`, NOT `n_events`.** Per-mode group schemas:
+
+| Mode | Array | Per-row fields |
+|---|---|---|
+| `summary` | `top_compute_groups`, `tail_compute` | `rank`, `agg_key`, `agg_key_kind`, `source_inner`, `tf_op`, `source_stack`, `n_executions`, `total_dur_ps`, `min/max/avg_dur_ps`, `pct_of_compute`, `pct_of_step`, `hlo_categories`, `flops_sum`, `bytes_accessed_sum`, `example_hlo_op` |
+| `by_source` | `groups` | above + `dtypes` (histogram), `dtype_uncertain`, `shapes`, `kind` |
+| `non_compute` | `by_category` | `hlo_category`, `n_executions`, `total_dur_ps`, `min/max/avg_dur_ps`, `n_groups`, `agg_key_coverage` |
+| `non_compute` | `by_source_within_category` | `hlo_category`, `agg_key`, `agg_key_kind`, `source_inner`, `source_stack`, `tf_op`, `n_executions`, `total_dur_ps`, `min/max/avg_dur_ps`, `shapes_in`, `shapes_out`, `dtype_change`, `layout_change`, `example_hlo_op` |
+| `roofline` | `groups` | `agg_key`, `agg_key_kind`, `source_inner`, `tf_op`, `hlo_categories`, `n_executions`, `total_dur_ps`, `flops_sum`, `bytes_accessed_sum`, `dtype`, `dtype_uncertain`, `arithmetic_intensity`, `ridge_point`, `bound`, `t_compute_theory_ps`, `t_hbm_theory_ps`, `t_roofline_theory_ps`, `mfu`, `hbm_util`, `roofline_util`, `shortfall_ps`, `shortfall_pct` |
+| `roofline` | `step_summary.top_shortfall_groups` | **slim**: `agg_key`, `source_inner`, `tf_op`, `total_dur_ps`, `shortfall_ps`, `bound` only |
+
 ## Common gotchas
 
+- **Auto step-picking** — when `--step` and `--step-id` are both omitted, the script picks the step with the most XLA Ops events (busiest), falling back to middle when the ops line is empty. The picked step is reported in `step_id` and the reason appears in `notes` (e.g. `"auto-picked busiest step (idx=7, n_xla_ops_events=...)"`). If the auto-pick disagrees with what you expected, override with `--step N`. Earlier versions of this skill picked the middle step unconditionally, which landed in idle warmup windows on profiles with long compile/warmup tails.
+- **`while_pct_of_step` can exceed 100%.** Events are admitted to the step window when their *start* falls in `[step_start, step_end)`, but their full duration is summed. A `while` event that begins inside the step but extends past `step_end` contributes its entire duration. This is expected — the field is a coarse "how dominated by control flow is this step" indicator, not an exclusive percentage. Don't try to subtract it from 100%.
 - **`XEvent.stats` vs `XEventMetadata.stats`**: see profile-anatomy. Op-level fields (`flops`, `bytes_accessed`, `hlo_category`, `shape_with_layout`) live on `XEventMetadata.stats`, not `XEvent.stats`.
 - **`while` HLO is a container**: `while_container_duration_ps` is reported separately. Don't add it to `compute_duration_ps`.
 - **Concurrency caveat**: per-kind durations can sum > step duration. The field is named `non_while_duration_ps_sum` (not `total`) for this reason.

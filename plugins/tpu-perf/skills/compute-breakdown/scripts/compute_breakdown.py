@@ -233,7 +233,37 @@ def _pick_step_window(plane, *, step_idx: int | None, step_id: str | None):
                 f"--step {step_idx} out of range [0, {len(sorted_steps)})")
         idx, ev = step_idx, sorted_steps[step_idx]
     else:
-        idx = len(sorted_steps) // 2
+        # Auto-pick: busiest step by XLA Ops event count. Falls back to middle
+        # when the XLA Ops line is missing/empty or no step window has any
+        # events (e.g. all steps are warmup/compile or events landed outside
+        # step windows). The middle-step heuristic alone is brittle: profiles
+        # with long warmup tails can place the middle index inside an idle
+        # window that has near-zero compute events, leading to empty/garbage
+        # output. Counting events per step is O(n_events * log n_steps) and
+        # robustly picks the actual training step.
+        ops_line = next((l for l in plane.lines if l.name == "XLA Ops"), None)
+        idx = None
+        if ops_line is not None and len(ops_line.events) > 0:
+            import bisect
+            starts = [s.offset_ps for s in sorted_steps]
+            ends = [s.offset_ps + s.duration_ps for s in sorted_steps]
+            counts = [0] * len(sorted_steps)
+            for ev2 in ops_line.events:
+                i = bisect.bisect_right(starts, ev2.offset_ps) - 1
+                if 0 <= i < len(sorted_steps) and ev2.offset_ps < ends[i]:
+                    counts[i] += 1
+            best = max(range(len(counts)), key=lambda i: counts[i])
+            if counts[best] > 0:
+                idx = best
+                notes.append(
+                    f"auto-picked busiest step (idx={idx}, "
+                    f"n_xla_ops_events={counts[idx]} of {sum(counts)} total "
+                    f"across {len(sorted_steps)} steps)")
+        if idx is None:
+            idx = len(sorted_steps) // 2
+            notes.append(
+                f"auto-picked middle step (idx={idx}); "
+                "no XLA Ops events to score steps by")
         ev = sorted_steps[idx]
 
     return ev, idx, ev.offset_ps, ev.offset_ps + ev.duration_ps, notes
@@ -886,8 +916,25 @@ def _run_roofline_mode(records: list[EventRecord], *, ctx: dict,
         for r in top_shortfall
     ]
 
+    # Coverage transparency: weighted_avg_mfu is computed only over the
+    # rooflined (eligible) groups. The weighted_avg_* numbers are
+    # representative of the *full* compute only when rooflined_pct_of_compute
+    # is high. When much compute is skipped (no FLOPs metadata, dtype=other,
+    # no peak for dtype), the averages become a partial picture and the
+    # caveat must be surfaced. See SKILL.md "Roofline coverage".
+    step_compute_total = sum(r.duration_ps for r in records if r.kind == "compute")
+    rooflined_pct = (round(100.0 * total_eligible_dur / step_compute_total, 2)
+                     if step_compute_total > 0 else 0.0)
+    skipped_pct = (round(100.0 * skipped["total_dur_ps_skipped"] / step_compute_total, 2)
+                   if step_compute_total > 0 else 0.0)
+
     step_summary = {
         "step_compute_duration_ps":   total_eligible_dur,
+        # Renamed-for-clarity aliases — emit alongside the legacy field.
+        "rooflined_dur_ps":           total_eligible_dur,
+        "step_compute_dur_ps_total":  step_compute_total,
+        "rooflined_pct_of_compute":   rooflined_pct,
+        "skipped_pct_of_compute":     skipped_pct,
         "weighted_avg_mfu":           round(_weighted("mfu"), 4),
         "weighted_avg_hbm_util":      round(_weighted("hbm_util"), 4),
         "weighted_avg_roofline_util": round(_weighted("roofline_util"), 4),
