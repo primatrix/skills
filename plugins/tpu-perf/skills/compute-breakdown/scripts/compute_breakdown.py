@@ -259,6 +259,55 @@ def _iter_event_records(plane, *, start_ps: int, end_ps: int, step_id: int,
         )
 
 
+def _load_and_normalize(*, profile_dir: str, device: str,
+                          step_idx: int | None, step_id: str | None):
+    """Stages 1+2+3. Returns (records, ctx).
+
+    `records` is a list[EventRecord] when status is ok; None when absent.
+    `ctx` always carries `status` ('ok' | 'absent'); on absent it also has
+    `reason` and `notes`. On ok it carries: step_id, step_window_ps,
+    step_duration_ps, notes (list), pipeline_stats (_PipelineStats),
+    profile_dir (str), device (str), xspace_pb_path (str).
+    """
+    pdir = pathlib.Path(profile_dir)
+    pbs = sorted(pdir.glob("*.xplane.pb")) if pdir.is_dir() else []
+    if not pbs:
+        return None, {"status": "absent", "reason": "no_xplane_pb", "notes": []}
+
+    xs = xplane_pb2.XSpace()
+    with open(pbs[0], "rb") as f:
+        xs.ParseFromString(f.read())
+
+    plane = next((p for p in xs.planes if p.name == device), None)
+    if plane is None:
+        have = [p.name for p in xs.planes]
+        return None, {"status": "absent", "reason": "device_not_found",
+                      "notes": [f"have: {have}"]}
+
+    if not any(l.name == "XLA Ops" for l in plane.lines):
+        have = [l.name for l in plane.lines]
+        return None, {"status": "absent", "reason": "no_xla_ops_line",
+                      "notes": [f"have: {have}"]}
+
+    step_event, sid, s_ps, e_ps, notes = _pick_step_window(
+        plane, step_idx=step_idx, step_id=step_id)
+    pstats = _PipelineStats()
+    records = list(_iter_event_records(
+        plane, start_ps=s_ps, end_ps=e_ps, step_id=sid, stats=pstats))
+
+    return records, {
+        "status": "ok",
+        "step_id": sid,
+        "step_window_ps": [s_ps, e_ps],
+        "step_duration_ps": e_ps - s_ps,
+        "notes": notes,
+        "pipeline_stats": pstats,
+        "profile_dir": str(pdir),
+        "device": device,
+        "xspace_pb_path": str(pbs[0]),
+    }
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="compute_breakdown.py",

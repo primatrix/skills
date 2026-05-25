@@ -591,5 +591,65 @@ class TestIterEventRecords(unittest.TestCase):
         self.assertEqual(r.deduplicated_name, "dedup.0")
 
 
+class TestLoadAndNormalize(unittest.TestCase):
+    def _write_xspace(self, xs, tmpdir):
+        path = pathlib.Path(tmpdir) / "synthetic.xplane.pb"
+        path.write_bytes(xs.SerializeToString())
+        return path
+
+    def test_loads_picks_step_yields_records(self):
+        import tempfile
+        xs = make_minimal_xspace(steps=[(1, 0, 1_000_000_000),
+                                         (2, 1_000_000_000, 1_000_000_000)])
+        add_hlo_event(xs, em_id=10, hlo_op_text="x", offset_ps=500,
+                      duration_ps=100, hlo_category="loop fusion",
+                      tf_op="jit/Foo", flops=10, bytes_accessed=2,
+                      shape_with_layout="bf16[1]{0}")
+        add_hlo_event(xs, em_id=11, hlo_op_text="y",
+                      offset_ps=1_000_000_500, duration_ps=200,
+                      hlo_category="loop fusion")
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write_xspace(xs, tmp)
+            records, ctx = cb._load_and_normalize(
+                profile_dir=tmp, device="/device:TPU:0",
+                step_idx=None, step_id=None)
+        # default = middle step (idx 1) -> window [1e9, 2e9)
+        self.assertEqual(ctx["step_id"], 1)
+        self.assertEqual(ctx["step_window_ps"], [1_000_000_000, 2_000_000_000])
+        self.assertEqual(ctx["step_duration_ps"], 1_000_000_000)
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0].hlo_op, "y")
+
+    def test_device_not_found_returns_none(self):
+        import tempfile
+        xs = make_minimal_xspace(steps=[(1, 0, 1_000_000_000)])
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write_xspace(xs, tmp)
+            records, ctx = cb._load_and_normalize(
+                profile_dir=tmp, device="/device:TPU:99",
+                step_idx=None, step_id=None)
+        self.assertIsNone(records)
+        self.assertEqual(ctx["status"], "absent")
+        self.assertEqual(ctx["reason"], "device_not_found")
+
+    def test_no_xla_ops_line_returns_absent(self):
+        import tempfile
+        xs = make_minimal_xspace(steps=[(1, 0, 1_000_000_000)])
+        # Remove the XLA Ops line
+        plane = xs.planes[0]
+        for i, l in enumerate(list(plane.lines)):
+            if l.name == "XLA Ops":
+                del plane.lines[i]
+                break
+        with tempfile.TemporaryDirectory() as tmp:
+            self._write_xspace(xs, tmp)
+            records, ctx = cb._load_and_normalize(
+                profile_dir=tmp, device="/device:TPU:0",
+                step_idx=None, step_id=None)
+        self.assertIsNone(records)
+        self.assertEqual(ctx["status"], "absent")
+        self.assertEqual(ctx["reason"], "no_xla_ops_line")
+
+
 if __name__ == "__main__":
     unittest.main()
