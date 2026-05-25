@@ -1,0 +1,143 @@
+// Vendored subset of xla.HloModuleProto and friends from openxla/xla.
+//
+// Source: https://github.com/openxla/xla
+//   - xla/service/hlo.proto       (HloModuleProto, HloComputationProto, HloInstructionProto)
+//   - xla/xla_data.proto          (ShapeProto, OpMetadata, ChannelHandle,
+//                                  FrontendAttributes, ReplicaGroup, OpSharding)
+//
+// IMPORTANT: Field numbers MUST match upstream so the binary wire format of
+// `*.hlo_proto.pb` files deserializes correctly. If upstream renumbers a
+// field this vendored copy must be updated in lockstep.
+//
+// Only fields needed by the comm-analysis skill are vendored. Unknown fields
+// are preserved by proto3 by default (google.protobuf >= 3.5), so the subtree
+// for `sharding` round-trips bit-for-bit even though most of OpSharding is
+// elided here.
+//
+// To regenerate the python bindings:
+//   protoc --python_out=. hlo.proto
+// from this directory.
+
+syntax = "proto3";
+
+package xla;
+
+// ---- xla_data.proto ---------------------------------------------------------
+
+// xla_data.proto: ShapeProto
+message ShapeProto {
+  reserved 1;
+  int32 element_type = 2;
+  repeated int64 dimensions = 3;
+  repeated ShapeProto tuple_shapes = 4;
+}
+
+// xla_data.proto: OpMetadata
+message OpMetadata {
+  string op_type = 1;
+  string op_name = 2;
+  string source_file = 3;
+  int32 source_line = 4;
+}
+
+// xla_data.proto: ChannelHandle
+message ChannelHandle {
+  int64 handle = 1;
+  enum ChannelType {
+    CHANNEL_TYPE_INVALID = 0;
+    DEVICE_TO_DEVICE = 1;
+    DEVICE_TO_HOST = 2;
+    HOST_TO_DEVICE = 3;
+  }
+  ChannelType type = 2;
+}
+
+// xla_data.proto: FrontendAttributes
+message FrontendAttributes {
+  map<string, string> map = 1;
+}
+
+// xla_data.proto: ReplicaGroup
+message ReplicaGroup {
+  repeated int64 replica_ids = 1;
+}
+
+// xla_data.proto: IotaReplicaGroupListProto
+message IotaReplicaGroupListProto {
+  int64 num_replica_groups = 1;
+  int64 num_devices_per_group = 2;
+  repeated int64 iota_reshape_dims = 3;
+  repeated int32 iota_transpose_perm = 4;
+}
+
+// xla_data.proto: CollectiveDeviceListProto
+message CollectiveDeviceListProto {
+  repeated ReplicaGroup replica_groups = 1;
+  reserved 2;
+}
+
+// xla_data.proto: OpSharding (minimal — keeps the top-level message on
+// HloInstructionProto.sharding=40 with the correct shape so wire-level
+// round-trip works. Unknown fields are preserved by proto3 by default.)
+message OpSharding {
+  enum Type {
+    REPLICATED = 0;
+    MAXIMAL = 1;
+    TUPLE = 2;
+    OTHER = 3;
+    MANUAL = 4;
+    UNKNOWN = 5;
+    UNREDUCED = 6;
+  }
+  Type type = 1;
+}
+
+// ---- hlo.proto --------------------------------------------------------------
+
+// hlo.proto: HloInstructionProto
+message HloInstructionProto {
+  string name = 1;
+  string opcode = 2;
+  ShapeProto shape = 3;
+  OpMetadata metadata = 7;
+  int64 id = 35;
+  OpSharding sharding = 40;
+  // Deprecated upstream — still populated for backward-compat in some HLOs.
+  repeated ReplicaGroup replica_groups = 49;
+  int64 channel_id = 26;
+  FrontendAttributes frontend_attributes = 68;
+  // Modern collective device list. Upstream uses a oneof
+  // `replica_group_list { collective_device_list=87; iota=92; mesh_axes=93; }`.
+  // We expose the two we care about as plain fields. mesh_axes (93) is left
+  // unparsed (proto3 unknown fields preserve it on round-trip).
+  CollectiveDeviceListProto collective_device_list = 87;
+  IotaReplicaGroupListProto iota_collective_device_list = 92;
+}
+
+// hlo.proto: HloComputationProto
+message HloComputationProto {
+  string name = 1;
+  repeated HloInstructionProto instructions = 2;
+  int64 id = 5;
+}
+
+// hlo.proto: HloProto (outer wrapper used by *.hlo_proto.pb files)
+message HloProto {
+  reserved 2;
+  HloModuleProto hlo_module = 1;
+  // BufferAssignmentProto upstream; declared as bytes here (we don't use it).
+  bytes buffer_assignment = 3;
+}
+
+// hlo.proto: HloModuleProto
+message HloModuleProto {
+  string name = 1;
+  string entry_computation_name = 2;
+  repeated HloComputationProto computations = 3;
+  // Upstream type is xla.ProgramShapeProto. We do not need to introspect it;
+  // declared as bytes so the field is preserved on round-trip without
+  // requiring us to vendor ProgramShapeProto/LayoutProto/etc.
+  bytes host_program_shape = 4;
+  int64 id = 5;
+  int64 entry_computation_id = 6;
+}
