@@ -19,7 +19,9 @@ import sys
 # helpers (added in chunk 2) call xplane_pb2.XSpace().ParseFromString(...).
 _PROTO_DIR = pathlib.Path(__file__).parent / "_proto"
 sys.path.insert(0, str(_PROTO_DIR))
+sys.path.insert(0, str(pathlib.Path(__file__).parent))
 import xplane_pb2  # noqa: E402  (after sys.path insert, by design)
+import _peaks  # noqa: E402
 
 
 # ----------------------------------------------------------------------
@@ -1002,6 +1004,20 @@ def main(argv=None) -> int:
         _emit(_run_non_compute_mode(records, ctx=ctx,
                                        include_comm=args.include_comm,
                                        include_comm_stalls=args.include_comm_stalls))
+        return 0
+
+    if args.mode == "roofline":
+        peaks = _peaks.resolve_peaks(
+            args.chip,
+            override_tflops_bf16=args.peak_tflops_bf16,
+            override_tflops_fp8=args.peak_tflops_fp8,
+            override_tflops_fp32=args.peak_tflops_fp32,
+            override_tflops_fp16=args.peak_tflops_fp16,
+            override_hbm_gibps=args.peak_hbm_gibps,
+        )
+        ctx_with_chip = dict(ctx)
+        ctx_with_chip["chip"] = args.chip
+        _emit(_run_roofline_mode(records, ctx=ctx_with_chip, peaks=peaks))
         return 0
 
     # Other modes wired up in later chunks.

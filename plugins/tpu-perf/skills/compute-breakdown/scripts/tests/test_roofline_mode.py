@@ -212,5 +212,28 @@ class TestRooflineEndToEnd(unittest.TestCase):
         self.assertEqual(doc["peaks_used"]["source"], "cli override")
 
 
+class TestRooflineCLIWiring(unittest.TestCase):
+    def test_chip_default_is_v7x(self):
+        ns = cb.build_parser().parse_args(["/x", "--mode", "roofline"])
+        self.assertEqual(ns.chip, "v7x")
+
+    def test_peak_overrides_default_none(self):
+        ns = cb.build_parser().parse_args(["/x", "--mode", "roofline"])
+        self.assertIsNone(ns.peak_tflops_bf16)
+        self.assertIsNone(ns.peak_tflops_fp8)
+        self.assertIsNone(ns.peak_tflops_fp32)
+        self.assertIsNone(ns.peak_tflops_fp16)
+        self.assertIsNone(ns.peak_hbm_gibps)
+
+    def test_peak_override_parses_float(self):
+        ns = cb.build_parser().parse_args(
+            ["/x", "--mode", "roofline",
+             "--peak-tflops-bf16", "1500.0",
+             "--peak-hbm-gibps", "4000.0"]
+        )
+        self.assertEqual(ns.peak_tflops_bf16, 1500.0)
+        self.assertEqual(ns.peak_hbm_gibps, 4000.0)
+
+
 if __name__ == "__main__":
     unittest.main()
