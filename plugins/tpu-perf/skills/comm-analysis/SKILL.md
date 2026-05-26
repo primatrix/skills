@@ -1,6 +1,6 @@
 ---
 name: comm-analysis
-description: Use when analyzing communication on a TPU pretraining profile — extracts every comm primitive (async + sync, TC + SparseCore), attributes axes via HLO replica_groups, computes per-axis NCCL bus BW vs peak ICI link BW, and reports per-step compute/comm overlap. Builds on profile-anatomy.
+description: Use when analyzing communication on a TPU pretraining profile — extracts every comm primitive (async + sync, TC + SparseCore), attributes axes via HLO replica_groups, computes per-row NCCL bus BW vs per-axis peak ICI BW (peak_link × k_torus_dims × directions; TPUv7x: 200 GB/s bidir per link on a 3D torus), and reports per-step compute/comm overlap. Builds on profile-anatomy.
 ---
 
 # Communication Analysis
@@ -45,6 +45,9 @@ payload):
 | `hidden_ps` | `wall_ps − stall_ps` |
 | `bus_bw_gbps` | NCCL bus BW for this row's `kind` and `group_size`, computed by `axis_bandwidth.py` |
 | `effective_bus_bw_gbps` | `2 × bus_bw_gbps` when `bidir == yes` (both ICI directions carry traffic), else `bus_bw_gbps` |
+| `phys_dims` | Physical torus dims this collective contracts over (subset of `XYZ`), computed from replica_ids vs `topology` |
+| `k_dims` | `len(phys_dims)` — number of physical torus dims contracted (1 for X-only, 2 for XY, 3 for XYZ) |
+| `peak_axis_gbps` | Per-row theoretical peak: `peak_link × k_dims × directions` |
 | `source` | `XEventMetadata.stats.source` / `source_stack`; falls back to HLO `OpMetadata.source_file:line` |
 | `flow` | the `flow` XStat used to pair async events |
 | `program_id` | `XEventMetadata.stats.program_id` |
@@ -68,17 +71,36 @@ payload):
 | AllToAll | `(N−1)/N × message_bytes / time` |
 | CollectivePermute / P2P | `message_bytes / time` |
 
-`N = group_size`; `time = wall_ps` (in-flight, not stall). Peak axis BW =
-`peak_link_gbps × links_per_axis` (default 2). When `bidir == yes`, the
-displayed `util%` doubles the single-direction bus BW because both ICI
-directions carry traffic simultaneously.
+`N = group_size`; `time = wall_ps` (in-flight, not stall). Per-axis peak
+is computed PER ROW from the physical torus dims the collective contracts
+over:
+
+```
+peak_axis = peak_link_unidir × k_dims × directions
+```
+
+- `peak_link_unidir` is the single-direction per-link peak (e.g. 100 GB/s
+  on TPUv7x, since 200 GB/s bidirectional ÷ 2 directions = 100 GB/s/dir).
+- `k_dims` ∈ {1,2,3} is the number of physical torus dims the collective's
+  replica group spans (derived from replica_ids vs `topology`). A
+  collective on `X` only has `k_dims=1`; one spanning `XY` has `k_dims=2`.
+- `directions` = 2 when `bidir == yes` (both ring directions carry
+  traffic), else 1.
+
+Equivalently on TPUv7x: peak ≈ 200 GB/s × `k_dims` for bidir collectives.
+
+When `bidir == yes`, the displayed `util%` doubles the single-direction
+bus BW (because both ICI directions carry traffic simultaneously) and
+compares against the bidir peak.
 
 ## 5. Peak-BW resolution order
 
 1. xprof XStat (`peak_ici_*` / `peak_link_*` scanned across device, host, and Task Environment planes via `cc.peak_ici_link_gbps_from_xprof`).
 2. `--mesh-spec` YAML `peak_link_gbps:`.
-3. `--peak-ici-link-gbps N` flag.
-4. None ⇒ utilization column omitted, `[warn]` printed.
+3. `--peak-ici-link-gbps N` flag (unidirectional GB/s per link).
+4. `--tpu-version v7x` flag or `tpu_version: v7x` in mesh-spec ⇒ defaults
+   `peak_link_gbps = 100` (unidir, = 200 GB/s bidir per link).
+5. None ⇒ utilization column omitted, `[warn]` printed.
 
 `*op_stats.pb` does NOT carry ICI peak BW: its
 `PerfEnv.peak_bws_giga_bytes_per_second` list is keyed by upstream
@@ -87,16 +109,28 @@ directions carry traffic simultaneously.
 ## 6. Optional mesh-spec YAML
 
 ```yaml
-topology: [4, 4, 8]              # physical chip dims (X, Y, Z)
+tpu_version: v7x                 # ⇒ peak_link defaults to 100 GB/s unidir
+topology: [4, 4, 8]              # physical chip dims (X, Y, Z) — required
+                                 # for k_dims attribution. TPUv7x is 3D torus.
 axes:
   fsdp:  {dims: [Y, Z], size: 32}
   dp:    {dims: [X],    size: 4}
-peak_link_gbps: 90
-links_per_axis: 2
+peak_link_gbps: 100              # unidirectional; overrides tpu_version default
+links_per_axis: 2                # = directions per torus dim (2 for any torus)
 ```
 
-All fields optional. Without a mesh-spec, axes are reported as physical
-`X`/`Y`/`Z` (or `stride-N group` if topology is unknown).
+All fields optional. Without a `topology`, `k_dims` falls back to 1 and
+multi-dim collectives will be undercounted in peak BW. Without a
+mesh-spec, axes are reported as physical `X`/`Y`/`Z` / `XY` / `XYZ`
+(or `stride-N group` if topology is unknown).
+
+### TPUv7x specifics
+
+- 3D torus interconnect.
+- 200 GB/s **bidirectional** per ICI link (= 100 GB/s per direction).
+- 2 directions per torus dim ⇒ `links_per_axis = 2` (the default).
+- A collective contracting over `k` of the 3 torus dims gets a
+  per-axis peak of `100 × k × 2 = 200 × k` GB/s when bidir.
 
 ## 7. Sample invocations
 
@@ -109,6 +143,10 @@ python3 plugins/tpu-perf/skills/comm-analysis/scripts/list_comm_primitives.py \
 
 python3 plugins/tpu-perf/skills/comm-analysis/scripts/axis_bandwidth.py \
   /tmp/tensorboard/tensorboard/plugins/profile/dp8_fsdp128 --mesh-spec mesh.yaml
+
+# Quick TPUv7x run without a mesh-spec (peak_link defaults to 100 GB/s unidir):
+python3 plugins/tpu-perf/skills/comm-analysis/scripts/axis_bandwidth.py \
+  /tmp/tensorboard/tensorboard/plugins/profile/run --tpu-version v7x
 
 python3 plugins/tpu-perf/skills/comm-analysis/scripts/overlap_report.py \
   /tmp/tensorboard/tensorboard/plugins/profile/dp8_fsdp128
