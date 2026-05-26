@@ -101,6 +101,49 @@ def attribute_axis(replica_ids: list[int],
 
 
 # ---------------------------------------------------------------------------
+# Mesh-axes label (from mesh_axes_replica_group_list)
+# ---------------------------------------------------------------------------
+#
+# IMPORTANT: in Shardy / SDY HLO, the mesh embedded in
+# mesh_axes_replica_group_list is per-collective and Shardy frequently
+# renumbers/reorders the axes between instructions. Two collectives may
+# both contract over what users call "the FSDP axis" but report it as
+# `axis_0` in one HLO instruction and `axis_2` in another. The size of
+# the contracted axis (or the multiset of sizes when several axes are
+# contracted) is the only reliable identifier.
+#
+# So we match on SIZES, not on axis indices:
+#
+#   mesh-spec.yaml:
+#     axes:
+#       fsdp: { size: 128 }
+#       dp:   { size: 8 }
+#       fsdp_dp: { sizes: [128, 8] }
+#
+# 1. If the mesh-spec defines an axis whose `size` (single contracted axis)
+#    or `sizes` (multi-axis collective) matches the row, return that name.
+# 2. Otherwise, return "axis_<i>=<size>" or "axis_<i>=<size>+axis_<j>=<size>".
+
+def _label_for_mesh_axes(indices: tuple[int, ...],
+                         sizes: tuple[int, ...],
+                         logical_axes: dict | None) -> str:
+    if not indices:
+        return "—"
+    if logical_axes:
+        # Match by sizes-tuple (canonical: sorted ascending, descending fall back)
+        size_set = sorted(sizes)
+        for name, info in logical_axes.items():
+            wanted_sizes = info.get("sizes")
+            if wanted_sizes is not None and sorted(wanted_sizes) == size_set:
+                return name
+            wanted_size = info.get("size")
+            if wanted_size is not None and len(sizes) == 1 and sizes[0] == wanted_size:
+                return name
+    parts = [f"axis_{i}={s}" for i, s in zip(indices, sizes)]
+    return "+".join(parts)
+
+
+# ---------------------------------------------------------------------------
 # Bidirectional dual-issue heuristic
 # ---------------------------------------------------------------------------
 
@@ -231,23 +274,50 @@ def main():
     # Annotate rows in place: axis (with mesh-spec join) and bidir.
     unattributed_cloned = 0   # HLO entry exists but has no replica info
     unattributed_no_hlo = 0   # No HLO entry at all
+    by_comp_id = cc.computations_by_id(hlo_module) if hlo_module else {}
     for r in rows:
-        instr = hlo_instrs.get(r["op_name"])
-        if instr is not None:
-            replica_ids = _replica_ids(instr)
-            if replica_ids:
-                axis, gs = attribute_axis(replica_ids, topology, logical_axes)
-                r["axis"] = axis
-                if r["group_size"] == 0:
-                    r["group_size"] = gs
+        # If list_comm_primitives already populated mesh_axis_indices from
+        # mesh_axes_replica_group_list, that's the most precise attribution
+        # we can produce. Otherwise fall back to topology-coord attribution
+        # from the explicit replica IDs (collective_device_list / iota /
+        # legacy replica_groups path).
+        if r.get("mesh_axis_indices"):
+            r["axis"] = _label_for_mesh_axes(
+                r["mesh_axis_indices"], r["mesh_axis_sizes"], logical_axes
+            )
+        else:
+            instr = hlo_instrs.get(r["op_name"])
+            if instr is not None and instr.opcode == "call":
+                resolved = cc.resolve_collective_via_call(instr, by_comp_id)
+                if resolved is not None:
+                    instr = resolved
+            if instr is not None:
+                replica_ids = _replica_ids(instr)
+                if replica_ids:
+                    axis, gs = attribute_axis(replica_ids, topology, logical_axes)
+                    # If topology is unknown, attribute_axis returns
+                    # "stride-N group". list_comm_primitives may already
+                    # have set "<N>-way" — only overwrite if mesh-spec gave
+                    # a real label.
+                    if topology != (0, 0, 0) or not r["axis"] or r["axis"] == "—":
+                        r["axis"] = axis
+                    if r["group_size"] == 0:
+                        r["group_size"] = gs
+                elif r["kind"] in _COLLECTIVE_KINDS:
+                    unattributed_cloned += 1
             elif r["kind"] in _COLLECTIVE_KINDS:
-                # KNOWN LIMITATION: cloned-wrapper join failure.
-                # The HLO entry exists but has no replica info (likely a
-                # `call` wrapper around the actual collective).
-                unattributed_cloned += 1
-        elif r["kind"] in _COLLECTIVE_KINDS:
-            # No HLO entry at all for this collective op_name.
-            unattributed_no_hlo += 1
+                unattributed_no_hlo += 1
+            # Last-chance logical-name lookup for "{N}-way" fallback labels:
+            # rows that came via legacy CDL / iota only know group_size, not
+            # mesh-axis names. If the user's mesh-spec defines a single-axis
+            # entry whose size matches, use that name.
+            if logical_axes and r["group_size"] > 0 and (
+                r["axis"] == f"{r['group_size']}-way" or r["axis"] == "—"
+            ):
+                for name, info in logical_axes.items():
+                    if info.get("size") == r["group_size"]:
+                        r["axis"] = name
+                        break
         r["bidir"] = "yes" if bidir_map.get(r["op_name"]) else "no"
         r["bus_bw_gbps"] = bus_bw_gbps(r["kind"], r["group_size"],
                                        r["bytes"], r["wall_ps"])
@@ -270,7 +340,7 @@ def main():
     for r in rows:
         by_axis[(r["axis"], r["core"])].append(r)
 
-    print(f"\n{'axis':<14}{'core':<6}{'count':>7}"
+    print(f"\n{'axis':<24}{'core':<6}{'count':>7}"
           f"{'Σbytes(MB)':>14}{'Σwall(us)':>13}{'bus_BW(GB/s)':>16}"
           f"{'util%':>8}")
     for (axis, core), grp in sorted(by_axis.items(),
@@ -285,20 +355,20 @@ def main():
             dom_gs = max((r["group_size"] for r in grp), default=0)
             bw = bus_bw_gbps(dom_kind, dom_gs, sb, sw)
         util = (bw / peak_axis_gbps * 100.0) if (bw and peak_axis_gbps) else None
-        print(f"{axis:<14}{core:<6}{len(grp):>7}"
+        print(f"{axis[:23]:<24}{core:<6}{len(grp):>7}"
               f"{sb/1e6:>14.2f}{sw/1e6:>13.3f}"
               f"{(f'{bw:.2f}' if bw else '—'):>16}"
               f"{(f'{util:.1f}' if util is not None else '—'):>8}")
 
     # Top-N per-collective table
     print(f"\nTop-{args.limit} per-collective by Σstall:")
-    print(f"{'op_name':<48}{'kind':<16}{'axis':<10}{'core':<6}"
+    print(f"{'op_name':<48}{'kind':<16}{'axis':<24}{'core':<6}"
           f"{'bidir':<6}{'wall(us)':>11}{'stall(us)':>11}{'bus_BW(GB/s)':>14}{'util%':>7}")
     for r in sorted(rows, key=lambda r: -r["stall_ps"])[:args.limit]:
         bw = r.get("bus_bw_gbps")
         eff_bw = r.get("effective_bus_bw_gbps")
         util = (eff_bw / peak_axis_gbps * 100.0) if (eff_bw and peak_axis_gbps) else None
-        print(f"{r['op_name'][:46]:<48}{r['kind']:<16}{r['axis']:<10}{r['core']:<6}"
+        print(f"{r['op_name'][:46]:<48}{r['kind']:<16}{r['axis'][:23]:<24}{r['core']:<6}"
               f"{r['bidir']:<6}{r['wall_ps']/1e6:>11.3f}{r['stall_ps']/1e6:>11.3f}"
               f"{(f'{bw:.2f}' if bw else '—'):>14}"
               f"{(f'{util:.1f}' if util is not None else '—'):>7}")

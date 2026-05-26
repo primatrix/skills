@@ -160,10 +160,23 @@ def pair_async_events(
 import re
 
 _CALL_SUFFIX = re.compile(r"\.(call-start|call-done|start|done)$")
+# When xprof's hlo_op XStat carries the FULL formatted HLO instruction
+# (e.g. "%all-reduce.2787 = (...) all-reduce(...) channel_id=56, ..."),
+# this matches the leading %<name> token so we can join on the name alone.
+_LEADING_HLO_NAME = re.compile(r"^%([A-Za-z_][\w.-]*)")
 
 
 def canonical_op_name(name: str) -> str:
-    """Strip async-pairing suffixes so start/done events join to one HLO instr."""
+    """Strip async-pairing suffixes so start/done events join to one HLO instr.
+
+    Also handles the case where xprof's `hlo_op` XStat stores the full HLO
+    text (`%name = shape opcode(...), channel_id=…`) instead of just the
+    instruction name. We extract the leading `%name` token, fall back to
+    the original string if no match.
+    """
+    m = _LEADING_HLO_NAME.match(name)
+    if m is not None:
+        name = m.group(1)
     return _CALL_SUFFIX.sub("", name)
 
 
@@ -211,21 +224,103 @@ def load_hlo_module(
     return parsed[0][1]
 
 
+_COLLECTIVE_OPCODES = frozenset({
+    "all-reduce", "all-gather", "reduce-scatter",
+    "all-to-all", "collective-permute", "send", "recv",
+})
+
+
 def hlo_instructions(
     module: hlo_pb2.HloModuleProto,
 ) -> dict[str, hlo_pb2.HloInstructionProto]:
     """Flatten every (computation, instruction) into a {canonical_name: instr} map.
 
-    Note: the legacy `instruction.replica_groups` (field 49) is empty in
-    modern HLO. Callers extracting replica info should walk
-    `instruction.collective_device_list.replica_groups` or
-    `instruction.iota_collective_device_list` instead.
+    Multiple HLO instructions can share the same canonical name (e.g. an
+    `async_computation` `call` wrapper and the surrounding `async-start` /
+    `async-done` pair all canonicalize to `op.cloned.1`). When that happens
+    we KEEP the candidate whose opcode is the actual collective if any, then
+    fall back to a `call` wrapper, then anything else. This ensures
+    `replica_ids_for_op_name()` finds replica info on the first try.
+
+    Replica-info fields callers should walk (in priority order):
+      1. `instruction.mesh_axes_replica_group_list`  (field 93, modern Shardy)
+      2. `instruction.collective_device_list.replica_groups`  (field 87)
+      3. `instruction.iota_collective_device_list`  (field 92)
+      4. `instruction.replica_groups`  (field 49, legacy, usually empty)
+
+    For `call` wrappers (opcode='call' inside async_computation), the wrapper
+    itself has none of the above; the real collective lives in the called
+    computation. Use `resolve_collective_via_call(instr, by_id)` to follow
+    `called_computation_ids` to the underlying instruction.
     """
-    out: dict[str, hlo_pb2.HloInstructionProto] = {}
+    # Priority: collective opcode (incl. async-start/done that themselves
+    # carry the collective opcode) > call wrapper > anything else. Within a
+    # tier, last write wins (preserves prior behavior for stable cases).
+    def _tier(opcode: str) -> int:
+        if opcode in _COLLECTIVE_OPCODES:
+            return 0
+        if opcode == "call":
+            return 1
+        return 2
+
+    best: dict[str, tuple[int, hlo_pb2.HloInstructionProto]] = {}
     for c in module.computations:
         for i in c.instructions:
-            out[canonical_op_name(i.name)] = i
-    return out
+            key = canonical_op_name(i.name)
+            t = _tier(i.opcode)
+            cur = best.get(key)
+            if cur is None or t < cur[0]:
+                best[key] = (t, i)
+    return {k: v[1] for k, v in best.items()}
+
+
+def computations_by_id(
+    module: hlo_pb2.HloModuleProto,
+) -> dict[int, hlo_pb2.HloComputationProto]:
+    """Return {computation.id: computation} for call-chain following."""
+    return {c.id: c for c in module.computations}
+
+
+def resolve_collective_via_call(
+    instr: hlo_pb2.HloInstructionProto,
+    by_id: dict[int, hlo_pb2.HloComputationProto],
+    *,
+    max_depth: int = 4,
+) -> Optional[hlo_pb2.HloInstructionProto]:
+    """If `instr` is a `call` wrapper around a collective (the standard
+    XLA async_computation lowering), walk `called_computation_ids` to find
+    and return the real collective instruction. Returns `instr` unchanged
+    if it's already a collective opcode. Returns None if no collective is
+    reachable within `max_depth`.
+
+    The wrapper layout XLA emits looks like:
+        async_computation.N: { call called_computation_ids=[K] }
+        called_computation.N (id=K): { all-gather/all-reduce/... }
+    """
+    if instr.opcode in _COLLECTIVE_OPCODES:
+        return instr
+    cur = instr
+    for _ in range(max_depth):
+        if cur.opcode != "call":
+            return None
+        called = list(cur.called_computation_ids)
+        if not called:
+            return None
+        comp = by_id.get(called[0])
+        if comp is None:
+            return None
+        # Find the first collective in the called computation; otherwise
+        # follow the next `call` (rare, but cheap to support).
+        next_call = None
+        for ins in comp.instructions:
+            if ins.opcode in _COLLECTIVE_OPCODES:
+                return ins
+            if ins.opcode == "call" and next_call is None:
+                next_call = ins
+        if next_call is None:
+            return None
+        cur = next_call
+    return None
 
 
 # ---------------------------------------------------------------------------

@@ -27,26 +27,99 @@ import _comm_common as cc
 
 
 # ---------------------------------------------------------------------------
-# Replica-group extraction (walks all three proto locations)
+# Replica-group extraction (walks all four proto locations)
 # ---------------------------------------------------------------------------
 
 def _replica_ids(instr) -> list[int]:
-    """Extract replica_ids of the first replica group, walking the three
-    proto locations. Modern HLO empties the legacy `replica_groups` field
-    (49) and stores replica IDs in `collective_device_list.replica_groups`
-    (87) or `iota_collective_device_list` (92, an Iota expansion).
-    Returns [] if no group info is present.
+    """Extract replica_ids of the first replica group.
+
+    Walks the four proto locations in priority order, matching how XLA
+    emits collectives across versions / lowering paths:
+
+      1. `mesh_axes_replica_group_list` (field 93, Shardy / SDY) — synthesize
+         the first group from the mesh axes the collective spans.
+      2. `collective_device_list.replica_groups` (field 87, modern enumerated)
+      3. `iota_collective_device_list` (field 92, Iota expansion)
+      4. `replica_groups` (field 49, legacy, usually empty in modern HLO)
+
+    Returns [] if no group info is present anywhere — this can happen for
+    `call` wrappers around real collectives; resolve those via
+    `cc.resolve_collective_via_call` before calling `_replica_ids`.
     """
-    if instr.replica_groups:
-        return list(instr.replica_groups[0].replica_ids)
+    mesh = getattr(instr, "mesh_axes_replica_group_list", None)
+    if mesh is not None and mesh.HasField("mesh") and mesh.mesh.axes and mesh.axes:
+        return _replica_ids_from_mesh_axes(mesh)
     cdl = getattr(instr, "collective_device_list", None)
     if cdl is not None and cdl.replica_groups:
         return list(cdl.replica_groups[0].replica_ids)
     iota = getattr(instr, "iota_collective_device_list", None)
     if iota is not None and iota.num_replica_groups > 0 and iota.num_devices_per_group > 0:
-        # Synthesize the first group: ids 0..num_devices_per_group-1
         return list(range(iota.num_devices_per_group))
+    if instr.replica_groups:
+        return list(instr.replica_groups[0].replica_ids)
     return []
+
+
+def _replica_ids_from_mesh_axes(mesh) -> list[int]:
+    """Synthesize the first replica group from a MeshAxesReplicaGroupListProto.
+
+    The collective contracts over the mesh axes listed in `mesh.axes` (each
+    pointing at a `mesh.mesh.axes[idx]` of size `S_idx`). The first replica
+    group is the set of devices that share the same coordinates on all OTHER
+    mesh axes — i.e. the cartesian product of the contracted axes anchored
+    at the origin of every other axis.
+
+    `mesh.mesh.device_ids` is a row-major flattening of the full mesh; we
+    return the first |group_size|-many devices that belong to the same group
+    as device 0. If `device_ids` is unset, fall back to row-major default
+    (id = sum of coord_i * stride_i).
+    """
+    sizes = [a.size for a in mesh.mesh.axes]
+    contracted_idx = {ar.mesh_axis_index for ar in mesh.axes}
+    # Group size = product of sizes of contracted axes (assuming no SubAxis).
+    gs = 1
+    for ai in contracted_idx:
+        if 0 <= ai < len(sizes):
+            gs *= sizes[ai]
+    # Row-major strides
+    n = len(sizes)
+    strides = [1] * n
+    for k in range(n - 2, -1, -1):
+        strides[k] = strides[k + 1] * sizes[k + 1]
+
+    # Walk the contracted axes (varying), keeping non-contracted at 0.
+    contracted_ordered = sorted(contracted_idx)
+    contracted_sizes = [sizes[ai] for ai in contracted_ordered]
+
+    def _coords_iter():
+        # Yield every combination of the contracted axes' coordinates.
+        idx = [0] * len(contracted_ordered)
+        while True:
+            yield tuple(idx)
+            # increment
+            for k in range(len(idx) - 1, -1, -1):
+                idx[k] += 1
+                if idx[k] < contracted_sizes[k]:
+                    break
+                idx[k] = 0
+            else:
+                return
+
+    device_ids = list(mesh.mesh.device_ids)
+    has_device_ids = len(device_ids) > 0
+    out: list[int] = []
+    for combo in _coords_iter():
+        coord = [0] * n
+        for j, ai in enumerate(contracted_ordered):
+            coord[ai] = combo[j]
+        flat = sum(c * s for c, s in zip(coord, strides))
+        if has_device_ids and 0 <= flat < len(device_ids):
+            out.append(device_ids[flat])
+        else:
+            out.append(flat)
+        if len(out) >= gs:
+            break
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -85,14 +158,31 @@ def classify(hlo_op: str | None, hlo_category: str | None) -> str:
 # Row construction
 # ---------------------------------------------------------------------------
 
-def _row_from_async_pair(plane, start_ev, done_ev, hlo_instrs):
+def _resolve_instr(hlo_instrs, by_comp_id, op_name):
+    """Look up an HLO instruction by canonical name, then follow any `call`
+    wrapper to the real collective. Returns the instruction to read replica
+    info from, or None.
+    """
+    if not hlo_instrs:
+        return None
+    instr = hlo_instrs.get(op_name)
+    if instr is None:
+        return None
+    if instr.opcode == "call" and by_comp_id is not None:
+        resolved = cc.resolve_collective_via_call(instr, by_comp_id)
+        if resolved is not None:
+            return resolved
+    return instr
+
+
+def _row_from_async_pair(plane, start_ev, done_ev, hlo_instrs, by_comp_id):
     """start_ev may be None (unpaired). done_ev is always set."""
     s_done = cc.event_stats(plane, done_ev)
     md_done = cc.event_metadata_stats(plane, done_ev)
 
     hlo_op_raw = s_done.get("hlo_op") or cc.event_name(plane, done_ev)
     op_name = cc.canonical_op_name(str(hlo_op_raw))
-    instr = hlo_instrs.get(op_name) if hlo_instrs else None
+    instr = _resolve_instr(hlo_instrs, by_comp_id, op_name)
 
     if start_ev is not None:
         wall_ps = (done_ev.offset_ps + done_ev.duration_ps) - start_ev.offset_ps
@@ -111,12 +201,12 @@ def _row_from_async_pair(plane, start_ev, done_ev, hlo_instrs):
     )
 
 
-def _row_from_sync(plane, ev, hlo_instrs):
+def _row_from_sync(plane, ev, hlo_instrs, by_comp_id):
     s = cc.event_stats(plane, ev)
     md = cc.event_metadata_stats(plane, ev)
     hlo_op_raw = s.get("hlo_op") or cc.event_name(plane, ev)
     op_name = cc.canonical_op_name(str(hlo_op_raw))
-    instr = hlo_instrs.get(op_name) if hlo_instrs else None
+    instr = _resolve_instr(hlo_instrs, by_comp_id, op_name)
 
     wall_ps = ev.duration_ps
     stall_ps = ev.duration_ps   # sync collectives are always exposed
@@ -144,10 +234,51 @@ def _build_row(*, plane, ev, op_name, mode, wall_ps, stall_ps, hidden_ps,
     axis = "—"
     group_size = 0
     channel_id = None
+    mesh_axis_indices: tuple[int, ...] = ()
+    mesh_axis_sizes: tuple[int, ...] = ()
     if instr is not None:
         ids = _replica_ids(instr)
         group_size = len(ids)
-        # axis stays "—" here; full attribution happens in axis_bandwidth.
+        mesh = getattr(instr, "mesh_axes_replica_group_list", None)
+        if mesh is not None and mesh.HasField("mesh") and mesh.mesh.axes and mesh.axes:
+            # Modern Shardy form. The mesh is per-collective and Shardy may
+            # rename / reorder axes between instructions, so a raw `axis_2`
+            # from one collective is NOT the same logical axis as `axis_2`
+            # from another. The reliable invariant is the (name, size) pair
+            # of each contracted axis.
+            ax_meta = list(mesh.mesh.axes)  # [(name, size), ...]
+            all_idx = sorted({ar.mesh_axis_index for ar in mesh.axes})
+            # Drop size-1 axes from the label and from the stored indices —
+            # they're degenerate (a 1-way contraction is a no-op) and they
+            # add visual noise to labels like axis_0=1024+axis_1=1.
+            idx = tuple(
+                i for i in all_idx
+                if 0 <= i < len(ax_meta) and ax_meta[i].size > 1
+            )
+            if not idx and all_idx:
+                # All contracted axes are size-1: this is effectively a
+                # local op (group_size=1). Keep the original (non-empty)
+                # tuple so debugging info is preserved.
+                idx = tuple(all_idx)
+            mesh_axis_indices = idx
+            mesh_axis_sizes = tuple(
+                ax_meta[i].size if 0 <= i < len(ax_meta) else 0 for i in idx
+            )
+            # First-pass label. Logical-name join happens in axis_bandwidth.py.
+            parts = []
+            for i in idx:
+                if 0 <= i < len(ax_meta):
+                    parts.append(f"{ax_meta[i].name}={ax_meta[i].size}")
+                else:
+                    parts.append(f"axis_{i}=?")
+            axis = "+".join(parts) if parts else "—"
+        elif group_size > 1:
+            # Replica info came from the legacy collective_device_list /
+            # iota / replica_groups path, not from a Shardy mesh. We have
+            # no axis names — record group size so the user sees something
+            # useful. axis_bandwidth.py can still do topology-coord
+            # attribution if a mesh-spec is provided.
+            axis = f"{group_size}-way"
         # channel_id is an int64 scalar in this vendored proto (not a message).
         if hasattr(instr, "channel_id") and instr.channel_id:
             channel_id = int(instr.channel_id)
@@ -169,6 +300,8 @@ def _build_row(*, plane, ev, op_name, mode, wall_ps, stall_ps, hidden_ps,
         "program_id": md_stats.get("program_id"),
         "channel_id": channel_id,
         "unpaired": unpaired,
+        "mesh_axis_indices": mesh_axis_indices,
+        "mesh_axis_sizes": mesh_axis_sizes,
     }
 
 
@@ -182,13 +315,14 @@ def build_rows(profile_dir, *, include_copies=False) -> list[dict[str, Any]]:
         return []
     hlo_module = cc.load_hlo_module(profile_dir)
     hlo_instrs = cc.hlo_instructions(hlo_module) if hlo_module else {}
+    by_comp_id = cc.computations_by_id(hlo_module) if hlo_module else {}
 
     rows: list[dict[str, Any]] = []
     for plane in cc.iter_device_planes(xs):
         async_ln = cc.async_xla_line(plane)
         if async_ln is not None:
             for s, d in cc.pair_async_events(plane, async_ln):
-                rows.append(_row_from_async_pair(plane, s, d, hlo_instrs))
+                rows.append(_row_from_async_pair(plane, s, d, hlo_instrs, by_comp_id))
         xla_ln = cc.xla_ops_line(plane)
         if xla_ln is not None:
             for ev in xla_ln.events:
@@ -198,7 +332,7 @@ def build_rows(profile_dir, *, include_copies=False) -> list[dict[str, Any]]:
                 kind = classify(hlo_op, md.get("hlo_category"))
                 if kind in {"AllReduce", "AllGather", "ReduceScatter",
                             "AllToAll", "CollectivePermute", "P2P"}:
-                    rows.append(_row_from_sync(plane, ev, hlo_instrs))
+                    rows.append(_row_from_sync(plane, ev, hlo_instrs, by_comp_id))
                 # XLA Ops Copy events are uncommon and not collected here.
 
     if not include_copies:
@@ -276,10 +410,10 @@ def _fmt_us(ps): return f"{ps/1e6:.3f}" if ps else "0.000"
 
 
 def _print_by_kind(agg, limit):
-    print(f"{'kind':<20}{'axis':<10}{'core':<6}{'count':>7}"
+    print(f"{'kind':<20}{'axis':<24}{'core':<6}{'count':>7}"
           f"{'Σwall(us)':>13}{'Σstall(us)':>14}{'p50_stall(us)':>16}{'p99_stall(us)':>16}")
     for row in agg[:limit]:
-        print(f"{row['kind']:<20}{row['axis']:<10}{row['core']:<6}"
+        print(f"{row['kind']:<20}{row['axis'][:23]:<24}{row['core']:<6}"
               f"{row['count']:>7}{_fmt_us(row['sum_wall_ps']):>13}"
               f"{_fmt_us(row['sum_stall_ps']):>14}"
               f"{_fmt_us(row['p50_stall_ps']):>16}"
@@ -295,10 +429,10 @@ def _print_by_source(agg, limit):
 
 
 def _print_by_op(agg, limit):
-    print(f"{'op_name':<50}{'kind':<18}{'axis':<10}{'core':<6}"
+    print(f"{'op_name':<50}{'kind':<18}{'axis':<24}{'core':<6}"
           f"{'count':>7}{'Σwall(us)':>13}{'Σstall(us)':>14}")
     for row in agg[:limit]:
-        print(f"{row['op_name'][:48]:<50}{row['kind']:<18}{row['axis']:<10}"
+        print(f"{row['op_name'][:48]:<50}{row['kind']:<18}{row['axis'][:23]:<24}"
               f"{row['core']:<6}{row['count']:>7}"
               f"{_fmt_us(row['sum_wall_ps']):>13}{_fmt_us(row['sum_stall_ps']):>14}")
 
