@@ -76,6 +76,35 @@ message CollectiveDeviceListProto {
   reserved 2;
 }
 
+// xla_data.proto: MeshProto (used by MeshAxesReplicaGroupListProto)
+message MeshProto {
+  message MeshAxis {
+    string name = 1;
+    int64 size = 2;
+  }
+  repeated MeshAxis axes = 1;
+  repeated int64 device_ids = 2;
+}
+
+// xla_data.proto: AxisRefProto
+message AxisRefProto {
+  message SubAxis {
+    int64 pre_size = 1;
+    int64 size = 2;
+  }
+  int64 mesh_axis_index = 1;
+  SubAxis sub_axis_info = 2;
+}
+
+// xla_data.proto: MeshAxesReplicaGroupListProto
+//   Modern collective device list flavor where replica groups are described
+//   by which mesh axes the collective contracts over, not as an enumerated
+//   list of replica IDs. Used heavily by Shardy / SDY-lowered HLO.
+message MeshAxesReplicaGroupListProto {
+  MeshProto mesh = 1;
+  repeated AxisRefProto axes = 2;
+}
+
 // xla_data.proto: OpSharding (minimal — keeps the top-level message on
 // HloInstructionProto.sharding=40 with the correct shape so wire-level
 // round-trip works. Unknown fields are preserved by proto3 by default.)
@@ -106,12 +135,20 @@ message HloInstructionProto {
   repeated ReplicaGroup replica_groups = 49;
   int64 channel_id = 26;
   FrontendAttributes frontend_attributes = 68;
-  // Modern collective device list. Upstream uses a oneof
-  // `replica_group_list { collective_device_list=87; iota=92; mesh_axes=93; }`.
-  // We expose the two we care about as plain fields. mesh_axes (93) is left
-  // unparsed (proto3 unknown fields preserve it on round-trip).
+  // Upstream-call wrapper: when XLA emits a `call` instruction wrapping the
+  // real collective inside an `async_computation`, this is how we walk back
+  // to the underlying collective. Repeated int64, packed.
+  repeated int64 called_computation_ids = 38;
+  // Modern collective device list. Upstream uses three SIBLING fields on
+  // HloInstructionProto (NOT a single `oneof`):
+  //   collective_device_list           = 87  (legacy enumerated groups)
+  //   iota_collective_device_list      = 92  (Iota expansion)
+  //   mesh_axes_replica_group_list     = 93  (Shardy mesh-axis form)
+  // All three are plain fields; only one is populated per instruction in
+  // current XLA, but readers must check all three.
   CollectiveDeviceListProto collective_device_list = 87;
   IotaReplicaGroupListProto iota_collective_device_list = 92;
+  MeshAxesReplicaGroupListProto mesh_axes_replica_group_list = 93;
 }
 
 // hlo.proto: HloComputationProto
