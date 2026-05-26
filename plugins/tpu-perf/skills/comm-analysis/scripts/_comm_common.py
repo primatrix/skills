@@ -401,3 +401,136 @@ def peak_ici_link_gbps_from_xprof(xs: xplane_pb2.XSpace) -> Optional[float]:
             if v is not None:
                 return v
     return None
+
+
+# ---------------------------------------------------------------------------
+# Per-core compute / comm intervals + critical-path NOT_cov computation
+# ---------------------------------------------------------------------------
+#
+# These helpers exist because TC and SC comm primitives must be evaluated
+# against DIFFERENT compute timelines:
+#
+#   - TC comm overlap → must be measured against TC compute intervals only
+#   - SC comm overlap → must be measured against SC compute intervals only
+#                       (TC compute and SC compute do NOT compete for
+#                        resources; mixing them inflates "overlap" and hides
+#                        real exposure on either side)
+#
+# Callers that need per-op critical-path attribution should:
+#   1. Build per-core merged compute intervals via `merged_compute_by_core`.
+#   2. For each comm row, look up the merged intervals matching `row["core"]`
+#      and call `not_covered_by_compute(start_ps, end_ps, merged)`.
+#
+# This is the ONLY authoritative way to compute per-op exposed time on
+# unpaired-dominated captures (where stall_ps/hidden_ps are sentinel).
+
+_COMM_HLO_CATEGORIES_FOR_COMPUTE_FILTER = frozenset({
+    "all-reduce", "all-gather", "reduce-scatter",
+    "all-to-all", "collective-permute", "send", "recv",
+})
+
+_WRAPPER_HLO_CATEGORIES_FOR_COMPUTE_FILTER = frozenset({
+    "while", "call", "conditional",
+    "async-start", "async-done",
+    "copy-start", "copy-done",
+    "send-done", "recv-done",
+    "collective-permute-start", "collective-permute-done",
+})
+
+
+def _union_intervals(intervals: list[tuple[int, int]]) -> list[tuple[int, int]]:
+    """Merge overlapping intervals into a sorted, disjoint list."""
+    if not intervals:
+        return []
+    intervals = sorted(intervals)
+    out = [intervals[0]]
+    for a, b in intervals[1:]:
+        ca, cb = out[-1]
+        if a <= cb:
+            out[-1] = (ca, max(cb, b))
+        else:
+            out.append((a, b))
+    return out
+
+
+def compute_intervals_for_plane(plane) -> list[tuple[int, int]]:
+    """Return raw (un-merged) compute intervals for a single device plane.
+
+    Excludes comm and wrapper/control-flow categories (see overlap_report.py
+    docstring for why). Works for both TC and SC planes — SC planes typically
+    have very few or no XLA Ops events, in which case this returns [].
+    """
+    ln = xla_ops_line(plane)
+    if ln is None:
+        return []
+    out: list[tuple[int, int]] = []
+    for ev in ln.events:
+        md = event_metadata_stats(plane, ev)
+        cat = md.get("hlo_category")
+        if cat in _COMM_HLO_CATEGORIES_FOR_COMPUTE_FILTER:
+            continue
+        if cat in _WRAPPER_HLO_CATEGORIES_FOR_COMPUTE_FILTER:
+            continue
+        out.append((ev.offset_ps, ev.offset_ps + ev.duration_ps))
+    return out
+
+
+def merged_compute_by_core(xs) -> dict[str, list[tuple[int, int]]]:
+    """Build merged (sorted, disjoint) compute intervals per core kind.
+
+    Returns a dict keyed by 'TC' / 'SC0' / 'SC1' — only kinds that have at
+    least one device plane in this XSpace appear. The values are ready to
+    pass to `not_covered_by_compute`.
+
+    A capture with multiple TC planes (rare, but possible on multi-host or
+    multi-device traces in a single XSpace) merges all their compute into a
+    single TC timeline; a comm row with `core == "TC"` is checked against
+    that merged timeline.
+    """
+    raw_by_core: dict[str, list[tuple[int, int]]] = {}
+    for plane in iter_device_planes(xs):
+        ck = core_kind(plane)
+        raw_by_core.setdefault(ck, []).extend(compute_intervals_for_plane(plane))
+    return {k: _union_intervals(v) for k, v in raw_by_core.items()}
+
+
+def not_covered_by_compute(
+    start_ps: int,
+    end_ps: int,
+    merged_compute: list[tuple[int, int]],
+) -> int:
+    """Return the portion of [start_ps, end_ps) NOT overlapped by any compute
+    interval in `merged_compute`.
+
+    `merged_compute` MUST be sorted, disjoint (output of `merged_compute_by_core`).
+    Uses bisect for O(log N) lookup; safe to call on every comm row.
+
+    This is the per-op equivalent of the sweep-derived `exposed_comm_ps` in
+    `overlap_report.py`'s step table — it's the ONE number that survives the
+    unpaired-async sentinel issue.
+    """
+    if end_ps <= start_ps:
+        return 0
+    if not merged_compute:
+        return end_ps - start_ps
+
+    import bisect
+    # Find the first interval whose end > start_ps.
+    # `merged_compute` is sorted; bisect on the end-coordinate.
+    ends = [b for _, b in merged_compute]
+    idx = bisect.bisect_right(ends, start_ps)
+
+    overlap = 0
+    cursor = start_ps
+    while idx < len(merged_compute) and cursor < end_ps:
+        a, b = merged_compute[idx]
+        if a >= end_ps:
+            break
+        lo = max(a, cursor)
+        hi = min(b, end_ps)
+        if hi > lo:
+            overlap += hi - lo
+        cursor = max(cursor, b)
+        idx += 1
+
+    return max(0, (end_ps - start_ps) - overlap)
