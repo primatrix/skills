@@ -15,6 +15,32 @@ optional `pyyaml` (only for `--mesh-spec`).
 This skill builds on [`profile-anatomy`](../profile-anatomy/SKILL.md);
 read that first for the xplane.pb / xplane.proto schema.
 
+## 0. Reading rules (do these BEFORE quoting any number)
+
+These are anti-foot-gun rules. They are NOT optional — every previous
+analysis that ignored them produced a wrong attribution.
+
+1. **First, check `unpaired_ratio` in the script header.** It's printed by
+   `list_comm_primitives.py` and embedded in `overlap_report.py` table
+   titles. If `unpaired_ratio > 50%`, the capture is "unpaired-dominated"
+   and per-row `stall_ps` / `hidden_ps` are SENTINEL values (stall ≈ wall,
+   hidden = 0). They are not data.
+2. **Never quote a per-op `hidden%` or `exposed%` in unpaired-dominated
+   captures.** The only authoritative per-op critical-path metric there is
+   `NOT_cov_by_compute` (sweep-derived; in the new column on every table,
+   and the sole sort key in `critical_path_comm.py`).
+3. **Before recommending an optimization off a top-N list, check the same
+   op's `cov%`** (= `1 − NOT_cov / wall`). If `cov% > 90%`, the op is NOT
+   on the critical path regardless of how big its `wall_ps` looks.
+4. **§8's "stall is degenerate" warning applies to EVERY stall-based
+   table**, not just step totals. If §8 says stall is sentinel, every
+   per-row stall column in every table in this skill is sentinel.
+5. **TC and SC are separate timelines.** TC comm overlap must be computed
+   against TC compute, SC comm overlap against SC compute. Cross-core
+   overlap is meaningless because TC and SC don't compete for resources.
+   The helpers `cc.merged_compute_by_core` / `cc.not_covered_by_compute`
+   enforce this; never mix the two by hand.
+
 ## 1. What's covered
 
 | Capability | Script |
@@ -22,6 +48,7 @@ read that first for the xplane.pb / xplane.proto schema.
 | List every comm primitive (async + sync, TC + SC) with rich attributes | [`scripts/list_comm_primitives.py`](scripts/list_comm_primitives.py) |
 | Per-axis bandwidth utilization (NCCL bus BW vs peak ICI link BW) | [`scripts/axis_bandwidth.py`](scripts/axis_bandwidth.py) |
 | Per-step compute/comm overlap (sweep-line union) | [`scripts/overlap_report.py`](scripts/overlap_report.py) |
+| Per-op critical-path attribution (TC and SC kept strictly separate) | [`scripts/critical_path_comm.py`](scripts/critical_path_comm.py) |
 
 ICI only. DCN/megascale collectives are deferred to a future skill.
 
@@ -41,8 +68,9 @@ payload):
 | `bidir` | `yes` / `no` heuristic from `(opcode, shape, replica_groups, sharding)` cluster having ≥2 distinct channel_ids |
 | `bytes` | `bytes_accessed` from `XEventMetadata.stats` |
 | `wall_ps` | `done.offset_ps + done.duration_ps − start.offset_ps` for paired async; `duration_ps` for sync |
-| `stall_ps` | `done.device_duration_ps` for async; full `duration_ps` for sync (sync = always exposed) |
-| `hidden_ps` | `wall_ps − stall_ps` |
+| `stall_ps` | `done.device_duration_ps` for async; full `duration_ps` for sync (sync = always exposed). **Sentinel when unpaired** — see §0 rules. |
+| `hidden_ps` | `wall_ps − stall_ps`. **Sentinel = 0 when unpaired** — see §0 rules. |
+| `not_cov_ps` | Time the op was running while NO same-core compute was running. Computed by sweep against `merged_compute_by_core[row.core]`. **This is the only authoritative per-op critical-path metric on unpaired-dominated captures.** TC vs TC compute, SC vs SC compute — never crossed. |
 | `bus_bw_gbps` | NCCL bus BW for this row's `kind` and `group_size`, computed by `axis_bandwidth.py` |
 | `effective_bus_bw_gbps` | `2 × bus_bw_gbps` when `bidir == yes` (both ICI directions carry traffic), else `bus_bw_gbps` |
 | `phys_dims` | Physical torus dims this collective contracts over (subset of `XYZ`), computed from replica_ids vs `topology` |
@@ -55,11 +83,23 @@ payload):
 
 ## 3. Aggregation views
 
-`list_comm_primitives.py --by {kind,source,op}`:
+`list_comm_primitives.py --by {kind,source,op} [--sort-by stall|wall|not_cov|auto]`:
 
-- `kind` (default): roll up by `(kind, axis, core)` with count, Σwall, Σstall, p50/p99 stall.
-- `source`: roll up by source `file:line` — answers "which line of the model is causing comm?".
-- `op`: per individual `op_name`, top N by Σstall.
+- `kind` (default): roll up by `(kind, axis, core)` with count, Σwall,
+  Σstall, ΣNOT_cov, p50/p99 stall.
+- `source`: roll up by source `file:line` — answers "which line of the
+  model is causing comm?". Includes ΣNOT_cov.
+- `op`: per individual `op_name`, with ΣNOT_cov.
+
+**Sort key default is adaptive (`auto`)**: uses `Σstall` when
+`unpaired_ratio ≤ 50%` (in that regime stall reliably equals exposed
+time), and auto-switches to `Σ NOT_cov` when above. The script header
+prints the active sort key and a `[warn]` if you forced `--sort-by stall`
+on an unpaired-dominated capture. **Always read the header line first**
+to know which key the table actually uses.
+
+For pure per-op critical-path attribution (NOT_cov-only, with three
+top-N tables), use `critical_path_comm.py` instead — see §1.
 
 ## 4. Bus-bandwidth formulas (NCCL/XLA convention)
 
@@ -150,6 +190,14 @@ python3 plugins/tpu-perf/skills/comm-analysis/scripts/axis_bandwidth.py \
 
 python3 plugins/tpu-perf/skills/comm-analysis/scripts/overlap_report.py \
   /tmp/tensorboard/tensorboard/plugins/profile/dp8_fsdp128
+
+# Per-op critical-path attribution (NOT_cov-sorted; TC and SC kept separate):
+python3 plugins/tpu-perf/skills/comm-analysis/scripts/critical_path_comm.py \
+  /tmp/tensorboard/tensorboard/plugins/profile/dp8_fsdp128
+
+# Force a specific sort key on list_comm_primitives (override --sort-by auto):
+python3 plugins/tpu-perf/skills/comm-analysis/scripts/list_comm_primitives.py \
+  /tmp/tensorboard/tensorboard/plugins/profile/dp8_fsdp128 --by op --sort-by not_cov
 ```
 
 ## 8. Common gotchas
@@ -204,5 +252,24 @@ python3 plugins/tpu-perf/skills/comm-analysis/scripts/overlap_report.py \
   links and SC lanes can be busy in parallel and overlap with TC compute,
   so summed `stall_ps` legitimately exceeds wall-clock. Always trust
   `overlap_report.py`'s sweep-derived `exposed_comm` for true exposed time.
+
+  **Corollary — per-op rankings degrade too.** When `unpaired_ratio > 50%`,
+  any "Top-N by stall" or "Top-N exposed contributors" table sourced from
+  per-row `stall_ps` / `hidden_ps` is meaningless: every row will show
+  `hidden = 0`, and the rank ordering reflects engine-busy time (which
+  can run on parallel ICI links / SC lanes and overlap with TC compute),
+  not critical-path exposure. To answer "which ops are on the critical
+  path", use the `NOT_cov_by_compute` column — present on every table
+  produced by the updated `list_comm_primitives.py` and
+  `overlap_report.py`, and the only metric used by `critical_path_comm.py`.
+  In this regime, `overlap_report.py` automatically renames its top-N
+  table to "comm engine busy contributors (NOT exposed)" and re-sorts by
+  NOT_cov. `list_comm_primitives.py --sort-by auto` (the default)
+  auto-switches the sort key to `not_cov` and prints a `[warn]` line.
+
+  This corollary applies to ALL stall-based reasoning, not just step
+  totals — the same diagnosis (sentinel value) drives both. If you find
+  yourself about to attribute a bottleneck to "this op has the largest
+  Σstall", first read the `unpaired_ratio` header line and §0 rule 4.
 - **`xplane_pb2.py` is reused from profile-anatomy** via
   `sys.path.insert`. Don't re-vendor it.

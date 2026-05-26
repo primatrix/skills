@@ -252,29 +252,54 @@ def report_for_plane(plane, *, warn_eps: float = 0.05) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Top-N exposed contributors (across all steps, TC plane only)
+# Top-N contributors per plane (works for TC and SC)
 # ---------------------------------------------------------------------------
 
-def top_exposed_per_collective(plane, *, limit: int) -> list[dict]:
-    out = []
+def top_contributors_for_plane(
+    plane,
+    merged_compute: list[tuple[int, int]],
+    *,
+    limit: int,
+) -> tuple[list[dict], int, int]:
+    """Per-op contributors on this plane, with NOT_cov computed against the
+    SAME-core merged compute timeline (TC comm vs TC compute, SC comm vs SC
+    compute — never cross-core).
+
+    Returns (rows, n_async, n_unpaired). The caller decides how to label /
+    sort the table based on n_unpaired/n_async.
+
+    Each row has: op_name, hlo_category, wall_ps, stall_ps, hidden_ps,
+    not_cov_ps, hidden_ratio.
+    """
+    out: list[dict] = []
+    n_async = 0
+    n_unpaired = 0
     async_ln = cc.async_xla_line(plane)
     if async_ln is not None:
-        # Unpaired events represent exposed-only slices (no start event to span the
-        # overlapped window), so hidden_ratio collapses to 0% — that's accurate, not noise.
         for s, d in cc.pair_async_events(plane, async_ln):
+            n_async += 1
             ds = cc.event_stats(plane, d)
             md = cc.event_metadata_stats(plane, d)
             stall = int(ds.get("device_duration_ps") or d.duration_ps)
-            wall = (d.offset_ps + d.duration_ps - s.offset_ps) if s is not None else d.duration_ps
+            if s is not None:
+                start_ps = s.offset_ps
+                end_ps = d.offset_ps + d.duration_ps
+                wall = end_ps - start_ps
+            else:
+                n_unpaired += 1
+                start_ps = d.offset_ps
+                end_ps = d.offset_ps + d.duration_ps
+                wall = d.duration_ps
             hidden = max(0, wall - stall)
+            not_cov = cc.not_covered_by_compute(start_ps, end_ps, merged_compute)
             out.append({
                 "op_name": cc.canonical_op_name(str(ds.get("hlo_op") or cc.event_name(plane, d))),
                 "hlo_category": md.get("hlo_category"),
                 "wall_ps": int(wall), "stall_ps": stall, "hidden_ps": hidden,
+                "not_cov_ps": int(not_cov),
                 "hidden_ratio": hidden / wall if wall else 0.0,
             })
-    out.sort(key=lambda r: -r["stall_ps"])
-    return out[:limit]
+    return out, n_async, n_unpaired
 
 
 # ---------------------------------------------------------------------------
@@ -321,6 +346,60 @@ def _print_step_table(report: dict, label: str):
             print(f"  [info] excluded from compute (wrapper/container ops): {parts}")
 
 
+def _print_top_table(plane, merged_compute, *, core_label: str, limit: int):
+    """Print the top-N per-op contributors for a single plane.
+
+    Adaptive labeling and sort:
+      - When unpaired_ratio ≤ 0.5: title is "exposed-comm contributors",
+        rows sorted by stall (the legacy behavior — valid in this regime).
+      - When unpaired_ratio > 0.5: title becomes "comm engine busy
+        contributors (NOT exposed)" and rows are sorted by NOT_cov_ps
+        (sweep-derived; the only correct critical-path metric here).
+
+    The NOT_cov column is ALWAYS shown so the reader has the authoritative
+    number regardless of regime; the hidden% column is shown only when it's
+    not a sentinel (i.e. when async pairing is intact).
+    """
+    rows, n_async, n_unpaired = top_contributors_for_plane(
+        plane, merged_compute, limit=limit)
+    if not rows:
+        return
+
+    ratio = n_unpaired / n_async if n_async else 0.0
+    degenerate = ratio > 0.5
+
+    if degenerate:
+        title = (f"\nTop-{limit} {core_label} comm engine busy contributors "
+                 f"(NOT 'exposed' — capture is unpaired-dominated, "
+                 f"unpaired_ratio={ratio:.0%}):")
+        rows.sort(key=lambda r: -r["not_cov_ps"])
+        print(title)
+        print(f"  [warn] hidden% column suppressed (sentinel = 0 in this regime). "
+              f"Sort key = NOT_cov_by_compute, computed by sweep against "
+              f"{core_label} compute intervals on the same core.")
+        print(f"{'op_name':<48}{'hlo_category':<20}{'wall(us)':>11}"
+              f"{'stall(us)':>11}{'NOT_cov(us)':>13}")
+        for r in rows[:limit]:
+            print(f"{r['op_name'][:46]:<48}"
+                  f"{(r['hlo_category'] or '?')[:18]:<20}"
+                  f"{r['wall_ps']/1e6:>11.3f}"
+                  f"{r['stall_ps']/1e6:>11.3f}"
+                  f"{r['not_cov_ps']/1e6:>13.3f}")
+    else:
+        title = f"\nTop-{limit} {core_label} exposed-comm contributors:"
+        rows.sort(key=lambda r: -r["stall_ps"])
+        print(title)
+        print(f"{'op_name':<48}{'hlo_category':<20}{'wall(us)':>11}"
+              f"{'stall(us)':>11}{'hidden':>9}{'NOT_cov(us)':>13}")
+        for r in rows[:limit]:
+            print(f"{r['op_name'][:46]:<48}"
+                  f"{(r['hlo_category'] or '?')[:18]:<20}"
+                  f"{r['wall_ps']/1e6:>11.3f}"
+                  f"{r['stall_ps']/1e6:>11.3f}"
+                  f"{r['hidden_ratio']*100:>8.1f}%"
+                  f"{r['not_cov_ps']/1e6:>13.3f}")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("profile_dir")
@@ -359,17 +438,21 @@ def main():
     else:
         print("\n(no SparseCore planes present in this capture)")
 
-    print(f"\nTop-{args.limit} TC exposed-comm contributors:")
-    print(f"{'op_name':<48}{'hlo_category':<20}{'wall(us)':>11}{'stall(us)':>11}{'hidden':>9}")
+    # Per-core merged compute: TC comm rows sweep against TC compute,
+    # SC comm rows sweep against SC compute. Never cross.
+    merged_compute = cc.merged_compute_by_core(xs)
+
+    # Top-N contributors per plane. TC first; SC tables follow only when SC
+    # actually carries comm primitives (typical SparseCore captures do).
     for rep in tc_reports:
         plane = planes_by_name[rep["plane"]]
-        top = top_exposed_per_collective(plane, limit=args.limit)
-        for r in top:
-            print(f"{r['op_name'][:46]:<48}"
-                  f"{(r['hlo_category'] or '?')[:18]:<20}"
-                  f"{r['wall_ps']/1e6:>11.3f}"
-                  f"{r['stall_ps']/1e6:>11.3f}"
-                  f"{r['hidden_ratio']*100:>8.1f}%")
+        _print_top_table(plane, merged_compute.get("TC", []),
+                         core_label="TC", limit=args.limit)
+    for rep in sc_reports:
+        plane = planes_by_name[rep["plane"]]
+        ck = cc.core_kind(plane)
+        _print_top_table(plane, merged_compute.get(ck, []),
+                         core_label=ck, limit=args.limit)
 
     if args.json_out:
         with open(args.json_out, "w") as f:
