@@ -60,6 +60,15 @@ def _summarize_for_core(rows: list[dict], core: str) -> dict:
     n_unpaired = sum(1 for r in core_rows if r["unpaired"])
     unp_ratio = (n_unpaired / n_async) if n_async else 0.0
 
+    # Concurrency: Σwall / union_wall over async comm intervals on this core.
+    # > 1.2 ⇒ multiple ICI links ran in parallel and per-row stall is per-link
+    # engine-busy time, NOT exposed time. NOT_cov is still authoritative.
+    intervals = [
+        (int(r["start_ps"]), int(r["start_ps"]) + int(r["wall_ps"]))
+        for r in core_rows if r["mode"] == "async" and "start_ps" in r
+    ]
+    concurrency, _, _ = cc.comm_concurrency(intervals) if intervals else (1.0, 0, 0)
+
     # ---- Table 1: per op_name, Σ not_cov ----
     by_op = defaultdict(list)
     for r in core_rows:
@@ -114,6 +123,7 @@ def _summarize_for_core(rows: list[dict], core: str) -> dict:
         "n_async": n_async,
         "n_unpaired": n_unpaired,
         "unpaired_ratio": unp_ratio,
+        "comm_concurrency": concurrency,
         "top_by_not_cov": top_by_not_cov,
         "coverage_gap": coverage_gap,
         "top_by_source": top_by_source,
@@ -131,10 +141,15 @@ def _print_summary(s: dict, *, top_n: int):
 
     print(f"\n=== Critical path: {s['core']} "
           f"({s['n_rows']} comm rows, {s['n_async']} async, "
-          f"unpaired_ratio={s['unpaired_ratio']:.0%}) ===")
+          f"unpaired_ratio={s['unpaired_ratio']:.0%}, "
+          f"comm_concurrency={s.get('comm_concurrency', 1.0):.2f}) ===")
     if s["unpaired_ratio"] > 0.5:
         print(f"  [info] capture is unpaired-dominated. NOT_cov is the only "
               f"authoritative per-op exposure metric here.")
+    elif s.get("comm_concurrency", 1.0) > 1.2:
+        print(f"  [info] comm concurrency = {s['comm_concurrency']:.2f} "
+              f"(multiple ICI links in parallel). Σstall is non-additive vs "
+              f"wall-clock; NOT_cov is the authoritative critical-path metric.")
 
     # ---- Table 1 ----
     print(f"\n  -- Table 1: Top-{top_n} ops by Σ NOT_cov_by_compute "

@@ -192,7 +192,17 @@ def _resolve_instr(hlo_instrs, by_comp_id, op_name):
 
 def _row_from_async_pair(plane, start_ev, done_ev, hlo_instrs, by_comp_id,
                          merged_compute_by_core):
-    """start_ev may be None (unpaired). done_ev is always set."""
+    """Build a row from a (start_ev, done_ev) pair returned by pair_async_events.
+
+    Three cases (see pair_async_events docstring):
+      * split layout — start_ev and done_ev are different events. wall spans
+        from start.offset_ps to done.end. stall = done.device_duration_ps.
+      * self-paired layout — start_ev IS done_ev (same XEvent). wall =
+        ev.duration_ps; stall = device_duration_ps. Full data IS available;
+        unpaired=False.
+      * truly unpaired — start_ev is None. Treat as fully exposed
+        (wall == stall), unpaired=True.
+    """
     s_done = cc.event_stats(plane, done_ev)
     md_done = cc.event_metadata_stats(plane, done_ev)
 
@@ -200,7 +210,12 @@ def _row_from_async_pair(plane, start_ev, done_ev, hlo_instrs, by_comp_id,
     op_name = cc.canonical_op_name(str(hlo_op_raw))
     instr = _resolve_instr(hlo_instrs, by_comp_id, op_name)
 
-    if start_ev is not None:
+    if cc.is_self_paired(start_ev, done_ev):
+        start_ps = done_ev.offset_ps
+        end_ps = done_ev.offset_ps + done_ev.duration_ps
+        wall_ps = done_ev.duration_ps
+        unpaired = False
+    elif start_ev is not None:
         start_ps = start_ev.offset_ps
         end_ps = done_ev.offset_ps + done_ev.duration_ps
         wall_ps = end_ps - start_ps
@@ -224,6 +239,7 @@ def _row_from_async_pair(plane, start_ev, done_ev, hlo_instrs, by_comp_id,
         plane=plane, ev=done_ev, op_name=op_name, mode="async",
         wall_ps=int(wall_ps), stall_ps=int(stall_ps), hidden_ps=hidden_ps,
         not_cov_ps=int(not_cov_ps),
+        start_ps=int(start_ps), end_ps=int(end_ps),
         ev_stats=s_done, md_stats=md_done, instr=instr,
         unpaired=unpaired, flow=s_done.get("flow"),
     )
@@ -256,12 +272,14 @@ def _row_from_sync(plane, ev, hlo_instrs, by_comp_id, merged_compute_by_core):
         plane=plane, ev=ev, op_name=op_name, mode="sync",
         wall_ps=int(wall_ps), stall_ps=int(stall_ps), hidden_ps=hidden_ps,
         not_cov_ps=int(not_cov_ps),
+        start_ps=int(start_ps), end_ps=int(end_ps),
         ev_stats=s, md_stats=md, instr=instr, unpaired=False, flow=None,
     )
 
 
 def _build_row(*, plane, ev, op_name, mode, wall_ps, stall_ps, hidden_ps,
-               not_cov_ps, ev_stats, md_stats, instr, unpaired, flow):
+               not_cov_ps, start_ps, end_ps, ev_stats, md_stats, instr,
+               unpaired, flow):
     hlo_op = ev_stats.get("hlo_op") or cc.event_name(plane, ev)
     kind = classify(hlo_op, md_stats.get("hlo_category"))
     bytes_ = md_stats.get("bytes_accessed") or md_stats.get("raw_bytes_accessed") or 0
@@ -277,6 +295,31 @@ def _build_row(*, plane, ev, op_name, mode, wall_ps, stall_ps, hidden_ps,
     channel_id = None
     mesh_axis_indices: tuple[int, ...] = ()
     mesh_axis_sizes: tuple[int, ...] = ()
+    parsed_name = None
+    if instr is None:
+        # No HLO module — try to parse the EventMetadata.name. Modern xprof
+        # carries the full HLO instruction text there for sync collectives
+        # and async-start wrappers (replica_groups, channel_id, shapes).
+        em_name = cc.event_name(plane, ev)
+        parsed_name = cc.parse_hlo_text(em_name)
+        if parsed_name.get("group_size"):
+            group_size = int(parsed_name["group_size"])
+        if parsed_name.get("channel_id"):
+            channel_id = int(parsed_name["channel_id"])
+        if parsed_name.get("mesh_axes") and parsed_name.get("mesh_selected"):
+            ax_meta = parsed_name["mesh_axes"]  # tuple of (name, size)
+            sel = parsed_name["mesh_selected"]
+            size_by = dict(ax_meta)
+            # Drop size-1 axes for the label (degenerate).
+            parts = [f"{ax}={size_by[ax]}"
+                     for ax in sel if size_by.get(ax, 1) > 1]
+            if parts:
+                axis = "+".join(parts)
+            mesh_axis_sizes = tuple(size_by[ax] for ax in sel if size_by.get(ax, 1) > 1)
+        elif parsed_name.get("shape_group_size"):
+            axis = f"{group_size}-way [shape-inferred]"
+        elif group_size > 1:
+            axis = f"{group_size}-way"
     if instr is not None:
         ids = _replica_ids(instr)
         group_size = len(ids)
@@ -337,6 +380,8 @@ def _build_row(*, plane, ev, op_name, mode, wall_ps, stall_ps, hidden_ps,
         "stall_ps": stall_ps,
         "hidden_ps": hidden_ps,
         "not_cov_ps": not_cov_ps,
+        "start_ps": start_ps,
+        "end_ps": end_ps,
         "source": source or "",
         "flow": int(flow) if flow is not None else None,
         "program_id": md_stats.get("program_id"),
@@ -387,6 +432,25 @@ def build_rows(profile_dir, *, include_copies=False) -> list[dict[str, Any]]:
     if not include_copies:
         rows = [r for r in rows if r["kind"] != "Copy"]
     return rows
+
+
+def _async_concurrency_from_rows(rows, core="TC") -> float:
+    """Re-derive (Σwall / union_wall) for async comm intervals on `core` from
+    the row list. Each row carries (start_ps, wall_ps) we attached during
+    construction. Returns 1.0 if no rows.
+    """
+    intervals = []
+    for r in rows:
+        if r["mode"] != "async" or r["core"] != core:
+            continue
+        sp = r.get("start_ps")
+        if sp is None:
+            continue
+        intervals.append((int(sp), int(sp) + int(r["wall_ps"])))
+    if not intervals:
+        return 1.0
+    conc, _, _ = cc.comm_concurrency(intervals)
+    return conc
 
 
 def unpaired_ratio(rows: list[dict[str, Any]]) -> float:
@@ -541,25 +605,38 @@ def main():
 
     r = unpaired_ratio(rows)
 
-    # Adaptive sort: when more than half of async events are flow-singletons,
-    # stall_ps is a degenerate sentinel and any sort using it lies. Switch
-    # to not_cov (per-op time NOT covered by same-core compute) and warn.
+    # Concurrency on TC plane: Σwall / union_wall over async comm intervals.
+    # When > 1.2, multiple ICI links ran in parallel and Σstall is inflated
+    # vs wall-clock — sort by NOT_cov instead.
+    concurrency = _async_concurrency_from_rows(rows, core="TC")
+
+    # Adaptive sort: when stall_ps is a sentinel, sort by NOT_cov instead.
+    # Two regimes that produce sentinel stall:
+    #   1. unpaired_ratio > 50% — flow-singleton fallback sets stall = wall.
+    #   2. concurrency > 1.2 — multiple ICI links parallel; per-row stall is
+    #      per-link engine-busy time, not exposed time. Σstall non-additive.
+    sentinel = r > 0.5 or concurrency > 1.2
     if args.sort_by == "auto":
-        sort_by = "not_cov" if r > 0.5 else "stall"
+        sort_by = "not_cov" if sentinel else "stall"
     else:
         sort_by = args.sort_by
 
     n_unpaired = sum(1 for r_ in rows if r_["unpaired"])
     print(f"comm primitives: {len(rows)} rows  (mode async/sync mix; "
-          f"unpaired={n_unpaired}, unpaired_ratio={r:.0%})")
-    print(f"sort_by={sort_by}" + (
-        "  [auto: capture is unpaired-dominated; stall is sentinel — using NOT_cov]"
-        if args.sort_by == "auto" and sort_by == "not_cov" else ""
-    ))
-    if r > 0.5 and sort_by == "stall":
-        print(f"  [warn] {r:.0%} of async events are flow-singletons; stall_ps "
-              f"is sentinel (≈ wall_ps). Consider --sort-by not_cov for true "
-              f"critical-path exposure.")
+          f"unpaired={n_unpaired}, unpaired_ratio={r:.0%}, "
+          f"TC_comm_concurrency={concurrency:.2f})")
+    reason = ""
+    if args.sort_by == "auto" and sort_by == "not_cov":
+        if r > 0.5:
+            reason = "  [auto: unpaired-dominated; stall is sentinel — using NOT_cov]"
+        elif concurrency > 1.2:
+            reason = (f"  [auto: TC comm concurrency = {concurrency:.2f}; "
+                      f"Σstall is inflated by parallel ICI links — using NOT_cov]")
+    print(f"sort_by={sort_by}" + reason)
+    if sentinel and sort_by == "stall":
+        print(f"  [warn] stall_ps is sentinel "
+              f"(unpaired={r:.0%}, TC concurrency={concurrency:.2f}); "
+              f"consider --sort-by not_cov for true critical-path exposure.")
 
     if args.by == "kind":
         _print_by_kind(_agg_by_kind(rows, sort_by=sort_by), args.limit)
