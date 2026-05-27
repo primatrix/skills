@@ -130,6 +130,10 @@ message HloInstructionProto {
   ShapeProto shape = 3;
   OpMetadata metadata = 7;
   int64 id = 35;
+  // Producer→consumer edges: indices into the parent computation's instructions
+  // by HloInstructionProto.id. memory-profile uses these to compute each
+  // logical buffer's last-use position when sweeping the entry schedule.
+  repeated int64 operand_ids = 36;
   OpSharding sharding = 40;
   // Deprecated upstream — still populated for backward-compat in some HLOs.
   repeated ReplicaGroup replica_groups = 49;
@@ -162,8 +166,12 @@ message HloComputationProto {
 message HloProto {
   reserved 2;
   HloModuleProto hlo_module = 1;
-  // BufferAssignmentProto upstream; declared as bytes here (we don't use it).
-  bytes buffer_assignment = 3;
+  // Static buffer layout decided at compile time. memory-profile reads this
+  // to attribute the HBM peak to HLO instructions and op_names. The runtime
+  // allocator events on /host:CPU are an UNRELIABLE fallback because the
+  // trace window often misses the alloc events for long-lived buffers
+  // (weights / optimizer state) that were allocated before capture started.
+  BufferAssignmentProto buffer_assignment = 3;
 }
 
 // hlo.proto: HloModuleProto
@@ -177,4 +185,106 @@ message HloModuleProto {
   bytes host_program_shape = 4;
   int64 id = 5;
   int64 entry_computation_id = 6;
+  // Per-computation linear instruction sequence chosen by the scheduler.
+  // memory-profile uses sequences[entry_computation_id] to walk allocations
+  // chronologically when locating the static peak moment.
+  HloScheduleProto schedule = 7;
+}
+
+// ---- Buffer assignment (subset of hlo.proto needed by memory-profile) -----
+
+// hlo.proto: LogicalBufferProto
+//   One LogicalBufferProto per (instruction × shape_index) tuple in the
+//   compiled module. Its `size` is the raw byte count; XLA's HeapSimulator
+//   then assigns it to a slot inside one BufferAllocationProto.
+message LogicalBufferProto {
+  // hlo.proto: LogicalBufferProto.Location
+  message Location {
+    // Field 1 reserved upstream (was the now-removed `computation_name`).
+    reserved 1;
+    string instruction_name = 2;
+    repeated int64 shape_index = 3;
+    int64 instruction_id = 4;
+  }
+  int64 id = 1;
+  int64 size = 2;
+  Location defined_at = 3;
+  int64 color = 4;
+}
+
+// hlo.proto: BufferAllocationProto
+//   One physical chunk of HBM that XLA reserves at compile time. Multiple
+//   logical buffers may share the same allocation at non-overlapping
+//   lifetimes (their (offset, size) ranges are recorded under `assigned`).
+//   The sum of `size` over all BufferAllocationProto instances equals the
+//   compile-time HBM peak shown by TensorBoard's Memory Viewer.
+message BufferAllocationProto {
+  // hlo.proto: BufferAllocationProto.Assigned
+  message Assigned {
+    int64 logical_buffer_id = 1;
+    int64 offset = 2;
+    int64 size = 3;
+  }
+  int64 index = 1;
+  int64 size = 2;
+  bool is_thread_local = 3;
+  bool is_entry_computation_parameter = 5;
+  int64 parameter_number = 6;
+  bool maybe_live_out = 7;
+  int64 color = 8;
+  repeated Assigned assigned = 9;
+  repeated int64 parameter_shape_index = 10;
+  bool is_tuple = 11;
+  bool is_constant = 12;
+  bool is_parameter_aliased_with_output = 13;
+}
+
+// hlo.proto: HeapSimulatorTrace
+//   One trace per simulator run; events are ALLOC / FREE / SHARE_WITH on
+//   logical buffer ids. memory-profile prefers the entry-computation
+//   schedule sweep over these traces because traces only cover thread-local
+//   sub-allocations on most modern XLA captures.
+message HeapSimulatorTrace {
+  // hlo.proto: HeapSimulatorTrace.Event
+  message Event {
+    enum Kind {
+      ALLOC = 0;
+      FREE = 1;
+      SHARE_WITH = 2;
+    }
+    Kind kind = 1;
+    int64 buffer_id = 2;
+    string computation_name = 3;
+    string instruction_name = 4;
+    int64 share_with_canonical_id = 5;
+  }
+  repeated Event events = 1;
+  bool whole_module_simulation = 2;
+  int64 buffer_allocation_index = 3;
+}
+
+// hlo.proto: BufferAssignmentProto
+//   Top-level record carried as HloProto.buffer_assignment. Fields 1/3 are
+//   the canonical sources of truth for memory-profile; fields 2/4 are
+//   informational and not currently consumed.
+message BufferAssignmentProto {
+  // hlo.proto: BufferAssignmentProto.BufferAlias
+  message BufferAlias {
+    int64 source_buffer_id = 1;
+    LogicalBufferProto.Location location = 2;
+  }
+  repeated LogicalBufferProto logical_buffers = 1;
+  repeated BufferAlias buffer_aliases = 2;
+  repeated BufferAllocationProto buffer_allocations = 3;
+  repeated HeapSimulatorTrace heap_simulator_traces = 4;
+}
+
+// hlo.proto: HloScheduleProto
+message HloScheduleProto {
+  // hlo.proto: HloScheduleProto.InstructionSequence
+  message InstructionSequence {
+    repeated int64 instruction_ids = 1;
+  }
+  // Map keys are HloComputationProto.id values.
+  map<int64, InstructionSequence> sequences = 1;
 }
