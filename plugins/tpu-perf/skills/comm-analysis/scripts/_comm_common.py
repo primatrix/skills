@@ -116,36 +116,107 @@ def pair_async_events(
     plane: xplane_pb2.XPlane, line: xplane_pb2.XLine
 ) -> list[tuple[Optional[xplane_pb2.XEvent], xplane_pb2.XEvent]]:
     """
-    Group events on `line` by their 'flow' XStat. For each flow group:
-      - 1 event:  yield (None, ev) — caller treats as fully exposed.
-      - 2 events: yield (start, done) sorted by offset_ps.
-      - >=3:      yield (start_min, done_max); intermediate events are
-                   silently dropped. This case is vanishingly rare in
-                   practice; if a caller needs to detect it, build the
-                   flow grouping directly rather than via this helper.
-    Events with no 'flow' stat are returned as (None, ev).
+    Group events on `line` by their 'flow' XStat. xprof has shipped two
+    layouts for async XLA ops over time, and we support both:
+
+      * "split" layout (older): each flow group has 2 events — a *.call-start
+        and *.call-done painted as separate events on the line. We pair them
+        as (start, done) sorted by offset_ps. `wall = done.end - start.start`.
+
+      * "self-paired" layout (current MaxText/JAX captures): each flow group
+        has exactly 1 event whose `offset_ps` is the start time and
+        `offset_ps + duration_ps` is the done time. The XStat
+        `device_duration_ps` reports the device-busy slice of that interval.
+        We return (ev, ev) — the SAME event as both start and done. Callers
+        can detect this with `is_self_paired(s, d)` (= `s is d`) and use
+        `wall = ev.duration_ps`. Self-paired events are NOT unpaired; the
+        full wall is recorded.
+
+    Truly missing data — events with no 'flow' XStat OR with 'flow' but no
+    `device_duration_ps` — are returned as `(None, ev)` and treated as
+    unpaired by callers (fully exposed, hidden=0).
+
+    Flow groups of size ≥3: return (start_min, done_max); intermediate
+    events are silently dropped. Vanishingly rare.
     """
+    names = stat_name_by_id(plane)
+    flow_id = device_dur_id = None
+    for sid, nm in names.items():
+        if nm == "flow":
+            flow_id = sid
+        elif nm == "device_duration_ps":
+            device_dur_id = sid
+
     by_flow: dict[int, list[xplane_pb2.XEvent]] = {}
-    unpaired: list[xplane_pb2.XEvent] = []
+    no_flow: list[xplane_pb2.XEvent] = []
+    no_device_dur: list[xplane_pb2.XEvent] = []
     for ev in line.events:
-        stats = event_stats(plane, ev)
-        flow = stats.get("flow")
+        flow = None
+        has_dev_dur = False
+        for s in ev.stats:
+            if s.metadata_id == flow_id:
+                vf = s.WhichOneof("value")
+                flow = getattr(s, vf) if vf else None
+            elif s.metadata_id == device_dur_id:
+                has_dev_dur = True
         if flow is None:
-            unpaired.append(ev)
+            no_flow.append(ev)
+            continue
+        if not has_dev_dur:
+            # Has flow but no device_duration_ps — we can't trust its stall.
+            # Treat as unpaired so callers fall back to wall_ps.
+            no_device_dur.append(ev)
             continue
         by_flow.setdefault(flow, []).append(ev)
 
     pairs: list[tuple[Optional[xplane_pb2.XEvent], xplane_pb2.XEvent]] = []
     for flow, evs in by_flow.items():
-        evs_sorted = sorted(evs, key=lambda e: e.offset_ps)
-        if len(evs_sorted) == 1:
-            pairs.append((None, evs_sorted[0]))
+        if len(evs) == 1:
+            ev = evs[0]
+            # Self-paired: the SAME event acts as both start and done.
+            # Caller distinguishes via `is_self_paired(s, d)` (s is d).
+            pairs.append((ev, ev))
         else:
-            # First as start, last as done.
+            evs_sorted = sorted(evs, key=lambda e: e.offset_ps)
             pairs.append((evs_sorted[0], evs_sorted[-1]))
-    for ev in unpaired:
+    for ev in no_flow:
+        pairs.append((None, ev))
+    for ev in no_device_dur:
         pairs.append((None, ev))
     return pairs
+
+
+def is_self_paired(start_ev, done_ev) -> bool:
+    """True when `pair_async_events` returned a self-paired event (same XEvent
+    used as both start and done). The 'self-paired' layout — see pair_async_events
+    — encodes the full async wall in a SINGLE event's offset_ps + duration_ps.
+    """
+    return start_ev is not None and start_ev is done_ev
+
+
+def comm_concurrency(intervals: list[tuple[int, int]]) -> tuple[float, int, int]:
+    """Return (concurrency, sum_wall_ps, union_wall_ps) for a set of async
+    comm intervals on a single plane.
+
+    `concurrency = sum_wall / union_wall` measures how many comm primitives
+    were running in parallel on average. On TPU captures multiple ICI links
+    (and SC lanes) can drive comm concurrently; per-event stall_ps reflects
+    per-link engine-busy time and is therefore NOT additive — Σstall
+    legitimately exceeds wall-clock when concurrency > 1.
+
+    Use cases:
+      - concurrency > 1.2 ⇒ Σstall is inflated; rank by NOT_cov instead.
+      - concurrency ≈ 1.0 ⇒ comm is serial; Σstall ≈ exposed time.
+
+    Returns (1.0, 0, 0) for an empty input.
+    """
+    if not intervals:
+        return 1.0, 0, 0
+    sum_wall = sum(b - a for a, b in intervals)
+    union_wall = sum(b - a for a, b in _union_intervals(list(intervals)))
+    if union_wall <= 0:
+        return 1.0, sum_wall, 0
+    return sum_wall / union_wall, sum_wall, union_wall
 
 
 # ---------------------------------------------------------------------------
@@ -164,6 +235,140 @@ _CALL_SUFFIX = re.compile(r"\.(call-start|call-done|start|done)$")
 # (e.g. "%all-reduce.2787 = (...) all-reduce(...) channel_id=56, ..."),
 # this matches the leading %<name> token so we can join on the name alone.
 _LEADING_HLO_NAME = re.compile(r"^%([A-Za-z_][\w.-]*)")
+
+# ---------------------------------------------------------------------------
+# Patterns for parse_hlo_text — extracts replica info / channel_id / shapes
+# directly from XEventMetadata.name when *.hlo_proto.pb is absent. Modern
+# xprof captures emit the full HLO instruction text in EventMetadata.name
+# for sync collectives and async-start wrappers, so we can recover most of
+# what HLO join would have given us.
+# ---------------------------------------------------------------------------
+
+# Modern Shardy form: replica_groups=mesh['axis_0'=128,'axis_1'=1] {'axis_0','axis_1'}
+_HLO_MESH_RE = re.compile(
+    r"replica_groups=mesh\[((?:'[^']+'=\d+(?:,\s*)?)+)\]\s*\{((?:'[^']+'(?:,\s*)?)+)\}"
+)
+_HLO_MESH_AXIS = re.compile(r"'([^']+)'\s*=\s*(\d+)")
+_HLO_MESH_SEL = re.compile(r"'([^']+)'")
+
+# Legacy form: replica_groups={{0,1,2,...,127}} or {{0,1},{2,3},...}
+# We only need the size of the first replica group.
+_HLO_LEGACY_RE = re.compile(r"replica_groups=\{\{([\d,\s]+)\}")
+
+# CollectivePermute: source_target_pairs={{a,b},{c,d},...}
+_HLO_PAIRS_RE = re.compile(r"source_target_pairs=\{((?:\{\d+,\d+\}(?:,\s*)?)+)\}")
+_HLO_PAIR_RE = re.compile(r"\{(\d+),\s*(\d+)\}")
+
+# channel_id=N
+_HLO_CHANNEL_RE = re.compile(r"channel_id\s*=\s*(\d+)")
+
+# Async wrapper: ((output_shape, token[]), output_shape) async-start(input_shape, ...)
+# We extract the output and input shape's leading int dim (the rank that grew/shrank).
+# Examples:
+#   ((bf16[1,20,157184]..., token[]), bf16[128,20,157184]...) async-start(bf16[1,20,157184]...)
+#       AllGather: input[0]=1 -> output[0]=128 ⇒ N=128
+#   ((bf16[512,768,2560]..., token[]), bf16[4,768,2560]...) async-start(bf16[512,768,2560]...)
+#       ReduceScatter: input[0]=512 -> output[0]=4 ⇒ N=128
+_HLO_ASYNC_OUT = re.compile(r"\)\s+async-start\((\w+)\[([\d,]+)\]")
+_HLO_ASYNC_IN = re.compile(
+    r"async-start\(\)|"  # no-input, skip
+    # The OUTPUT shape lives between the outer `((output_shape, token[]),` —
+    # we capture the FIRST shape after `((`.
+    r"\(\((\w+)\[([\d,]+)\]"
+)
+
+
+def parse_hlo_text(name: str) -> dict:
+    """Extract replica_groups / channel_id / shapes from a full HLO instruction
+    string carried in XEventMetadata.name.
+
+    Returns a dict with any of these keys present (only set if parseable):
+      - 'mesh_axes': tuple of (axis_name, size) for ALL axes in the mesh
+      - 'mesh_selected': tuple of axis names this collective contracts over
+      - 'group_size': size of the first replica group (int)
+      - 'channel_id': int
+      - 'pair_count': number of source_target_pairs (CollectivePermute)
+      - 'in_dim0': first dim of the async-start input shape
+      - 'out_dim0': first dim of the async-start output shape
+      - 'shape_group_size': inferred group_size from shape transition
+        (max(in_dim0, out_dim0) // min(in_dim0, out_dim0) when both differ)
+
+    Used when *.hlo_proto.pb is absent. No-op on names that don't contain HLO
+    text (returns {}).
+    """
+    out: dict = {}
+    if not name:
+        return out
+
+    m = _HLO_CHANNEL_RE.search(name)
+    if m:
+        out["channel_id"] = int(m.group(1))
+
+    # Modern Shardy mesh form
+    m = _HLO_MESH_RE.search(name)
+    if m:
+        axes_str, sel_str = m.group(1), m.group(2)
+        axes = [(am.group(1), int(am.group(2)))
+                for am in _HLO_MESH_AXIS.finditer(axes_str)]
+        sel = tuple(sm.group(1) for sm in _HLO_MESH_SEL.finditer(sel_str))
+        if axes:
+            out["mesh_axes"] = tuple(axes)
+        if sel:
+            out["mesh_selected"] = sel
+        # group_size = product of selected axes' sizes
+        if axes and sel:
+            size_by = dict(axes)
+            gs = 1
+            for ax in sel:
+                gs *= size_by.get(ax, 1)
+            out["group_size"] = gs
+    else:
+        # Legacy form
+        m = _HLO_LEGACY_RE.search(name)
+        if m:
+            ids = [x for x in m.group(1).split(",") if x.strip()]
+            out["group_size"] = len(ids)
+
+    # CollectivePermute pairs — count of distinct source devices = "fan-out"
+    m = _HLO_PAIRS_RE.search(name)
+    if m:
+        pairs = list(_HLO_PAIR_RE.finditer(m.group(1)))
+        out["pair_count"] = len(pairs)
+        out["group_size"] = len(pairs)  # treat each CP as a 1-hop ring step
+
+    # Async shape transition for cloned wrappers (no replica_groups in name).
+    # Form: %name = ((INPUT_shape, token[]), OUTPUT_shape) async-start(INPUT_shape, ...)
+    # AllGather grows one dim; ReduceScatter shrinks one dim. We compare each
+    # dim element-wise to find the contracted axis. Works regardless of which
+    # rank carries the gather/scatter dimension.
+    if "group_size" not in out:
+        # OUTPUT shape: full dim list AFTER the inner ", token[]),  ".
+        out_m = re.search(r",\s*token\[\]\)\s*,\s*(\w+)\[([\d,]+)\]", name)
+        # INPUT shape: first arg of async-start(...).
+        in_m = re.search(r"\)\s+async-start\((\w+)\[([\d,]+)\]", name)
+        if out_m and in_m:
+            try:
+                out_dims = [int(x) for x in out_m.group(2).split(",")]
+                in_dims = [int(x) for x in in_m.group(2).split(",")]
+                out["out_dim0"] = out_dims[0] if out_dims else None
+                out["in_dim0"] = in_dims[0] if in_dims else None
+                if len(out_dims) == len(in_dims):
+                    # Find the (single) dim that changed; its ratio = N.
+                    ratios = []
+                    for o, i in zip(out_dims, in_dims):
+                        if o != i and i > 0 and o > 0:
+                            hi, lo = max(o, i), min(o, i)
+                            if hi % lo == 0:
+                                ratios.append(hi // lo)
+                    # Accept only when exactly ONE dim changed and divides
+                    # cleanly. (Two changing dims would be ambiguous.)
+                    if len(ratios) == 1 and ratios[0] > 1:
+                        out["shape_group_size"] = ratios[0]
+                        out["group_size"] = ratios[0]
+            except (ValueError, AttributeError):
+                pass
+
+    return out
 
 
 def canonical_op_name(name: str) -> str:

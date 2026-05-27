@@ -349,16 +349,19 @@ def _print_step_table(report: dict, label: str):
 def _print_top_table(plane, merged_compute, *, core_label: str, limit: int):
     """Print the top-N per-op contributors for a single plane.
 
-    Adaptive labeling and sort:
-      - When unpaired_ratio ≤ 0.5: title is "exposed-comm contributors",
-        rows sorted by stall (the legacy behavior — valid in this regime).
-      - When unpaired_ratio > 0.5: title becomes "comm engine busy
-        contributors (NOT exposed)" and rows are sorted by NOT_cov_ps
-        (sweep-derived; the only correct critical-path metric here).
+    Adaptive labeling and sort. Two distinct sentinel regimes — both make
+    `stall_ps` unreliable as a critical-path metric:
 
-    The NOT_cov column is ALWAYS shown so the reader has the authoritative
-    number regardless of regime; the hidden% column is shown only when it's
-    not a sentinel (i.e. when async pairing is intact).
+      1. unpaired-dominated (`unpaired_ratio > 0.5`): flow-singleton fallback
+         set stall = wall, hidden = 0 for most rows.
+      2. concurrent-comm (`comm_concurrency > 1.2`): multiple ICI links ran
+         in parallel. Per-row stall_ps is per-link engine-busy time, not
+         exposed time; Σstall is non-additive vs wall-clock.
+
+    In either regime we switch the title to "comm engine busy contributors
+    (NOT exposed)", suppress the hidden% column (sentinel/misleading), and
+    sort by NOT_cov_ps (sweep-derived, authoritative). The NOT_cov column
+    is ALWAYS shown.
     """
     rows, n_async, n_unpaired = top_contributors_for_plane(
         plane, merged_compute, limit=limit)
@@ -366,17 +369,31 @@ def _print_top_table(plane, merged_compute, *, core_label: str, limit: int):
         return
 
     ratio = n_unpaired / n_async if n_async else 0.0
-    degenerate = ratio > 0.5
+    # Concurrency from the same async pairs.
+    intervals = []
+    async_ln = cc.async_xla_line(plane)
+    if async_ln is not None:
+        for s, d in cc.pair_async_events(plane, async_ln):
+            if s is not None:
+                intervals.append((s.offset_ps, d.offset_ps + d.duration_ps))
+            else:
+                intervals.append((d.offset_ps, d.offset_ps + d.duration_ps))
+    concurrency, _, _ = cc.comm_concurrency(intervals)
+
+    degenerate = ratio > 0.5 or concurrency > 1.2
 
     if degenerate:
+        if ratio > 0.5:
+            why = f"capture is unpaired-dominated, unpaired_ratio={ratio:.0%}"
+        else:
+            why = f"comm concurrency = {concurrency:.2f} (parallel ICI links)"
         title = (f"\nTop-{limit} {core_label} comm engine busy contributors "
-                 f"(NOT 'exposed' — capture is unpaired-dominated, "
-                 f"unpaired_ratio={ratio:.0%}):")
+                 f"(NOT 'exposed' — {why}):")
         rows.sort(key=lambda r: -r["not_cov_ps"])
         print(title)
-        print(f"  [warn] hidden% column suppressed (sentinel = 0 in this regime). "
-              f"Sort key = NOT_cov_by_compute, computed by sweep against "
-              f"{core_label} compute intervals on the same core.")
+        print(f"  [warn] hidden% column suppressed (stall is sentinel in this "
+              f"regime). Sort key = NOT_cov_by_compute, computed by sweep "
+              f"against {core_label} compute intervals on the same core.")
         print(f"{'op_name':<48}{'hlo_category':<20}{'wall(us)':>11}"
               f"{'stall(us)':>11}{'NOT_cov(us)':>13}")
         for r in rows[:limit]:
