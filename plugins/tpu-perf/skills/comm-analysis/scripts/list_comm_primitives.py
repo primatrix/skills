@@ -173,6 +173,32 @@ def classify(hlo_op: str | None, hlo_category: str | None) -> str:
 # Row construction
 # ---------------------------------------------------------------------------
 
+_DONE_TO_START = {
+    "collective-permute-done": "collective-permute-start",
+    "send-done": "send",
+    "recv-done": "recv",
+    "all-gather-done": "all-gather-start",
+    "all-reduce-done": "all-reduce-start",
+    "reduce-scatter-done": "reduce-scatter-start",
+    "all-to-all-done": "all-to-all-start",
+}
+
+
+def _start_name_for_done(op_name: str) -> str | None:
+    """Map `collective-permute-done.66` → `collective-permute-start.66`.
+
+    `*-done` events in HLO carry no replica info — that lives on the matched
+    `*-start`. The xprof event uses the `done` name, so we have to flip it.
+    """
+    for done_op, start_op in _DONE_TO_START.items():
+        prefix = done_op + "."
+        if op_name.startswith(prefix):
+            return start_op + "." + op_name[len(prefix):]
+        if op_name == done_op:
+            return start_op
+    return None
+
+
 def _resolve_instr(hlo_instrs, by_comp_id, op_name):
     """Look up an HLO instruction by canonical name, then follow any `call`
     wrapper to the real collective. Returns the instruction to read replica
@@ -187,6 +213,19 @@ def _resolve_instr(hlo_instrs, by_comp_id, op_name):
         resolved = cc.resolve_collective_via_call(instr, by_comp_id)
         if resolved is not None:
             return resolved
+    # `*-done` opcodes carry no replica info (it lives on the matched
+    # `*-start`). Flip the suffix and look up the start instruction.
+    if instr.opcode.endswith("-done"):
+        start_name = _start_name_for_done(op_name)
+        if start_name is not None:
+            start_instr = hlo_instrs.get(start_name)
+            if start_instr is not None:
+                # The start may itself be a `call` wrapper — recurse one step.
+                if start_instr.opcode == "call" and by_comp_id is not None:
+                    inner = cc.resolve_collective_via_call(start_instr, by_comp_id)
+                    if inner is not None:
+                        return inner
+                return start_instr
     return instr
 
 

@@ -12,8 +12,22 @@ Peak BW resolution order:
   3. --peak-ici-link-gbps flag
   4. None  ⇒ utilization column dropped, [warn] printed.
 
-When `bidir=yes`, the displayed `util%` doubles the single-direction bus_BW
-because both ICI directions carry traffic simultaneously.
+Bus_BW is a wire-level throughput (bytes/sec) computed from the NCCL/XLA
+formula. It already reflects whatever directions of the ring actually
+carried traffic — there is NO additional ×2 for the bidir case. The
+`bidir` column is a structural label only (does the cluster have ≥2
+distinct channel_ids?), not a multiplier.
+
+Peak BW is the *capacity*, not the *measurement*. On a torus, every ring
+link carries traffic in both directions, so the per-axis capacity is:
+
+    peak_axis = peak_link_unidir × k_dims × directions_per_dim
+              = peak_link × k_dims × 2     (torus default)
+
+Util% = bus_BW / peak_axis × 100. If you see util% > 100, the script has
+a bug — please file it. Util% > 100 used to occur when the script
+multiplied bus_BW × 2 for "bidir" while leaving peak unidir; that path
+was removed.
 
 ---------------------------------------------------------------------------
 TPUv7x — 3D torus, 200 GB/s per link (bidirectional)
@@ -22,8 +36,7 @@ TPUv7x has a 3D torus interconnect. Each ICI link carries 200 GB/s
 bidirectionally (i.e. 100 GB/s per direction). Per-axis theoretical peak
 is therefore:
 
-    peak_axis = peak_link_unidir × k_dims × directions
-              = 100 GB/s × k_dims × (2 if bidir else 1)
+    peak_axis = 100 GB/s × k_dims × 2
 
 where `k_dims` is the number of physical torus dims the collective
 contracts over (1 for X-only, 2 for XY, 3 for XYZ). This is computed
@@ -31,19 +44,38 @@ per-row from the replica_ids vs the physical topology — the pre-existing
 flat `peak_link_gbps × links_per_axis` formula would undercount any
 multi-dim collective.
 
+REQUIRED inputs for util%:
+  * peak_link_gbps  (from xprof XStat, mesh-spec, --peak-ici-link-gbps,
+                     or --tpu-version default)
+  * topology        (from mesh-spec `topology: [X, Y, Z]`)
+
+If topology is unknown, k_dims falls back to 1 and any multi-dim
+collective's peak would be undercounted by 2× or 3×. The script
+SUPPRESSES util% in that case and emits a `[error]` header so analysts
+cannot quote a number computed against a wrong peak. Pass --mesh-spec
+with a `topology:` entry to get util%.
+
 Set TPUv7x defaults via either `--tpu-version v7x` or `tpu_version: v7x`
 in the mesh-spec YAML; both default `peak_link_gbps` to 100 (unidir) when
 no other source provides it.
 
 ---------------------------------------------------------------------------
-KNOWN LIMITATION — cloned-wrapper join failure
+KNOWN LIMITATIONS — HLO axis-attribution failures
 ---------------------------------------------------------------------------
-On some captures, xprof events reference op names like `all-reduce.3008.cloned.1`,
-which exist in HLO as opcode=`call` wrappers around the real collective rather
-than the collective itself. The wrapper has no replica info, so axis stays "—"
-and group_size stays 0 for those rows. Substring-matching back to the real
-collective is too risky (could attribute to the wrong group), so we count the
-unattributed rows and emit a single `[warn]` summary line instead.
+1. `call` wrappers around a collective: xprof event names like
+   `all-reduce.3008.cloned.1` exist in HLO as opcode=`call` wrappers
+   around the real collective. `_resolve_instr` follows `called_computation_ids`
+   (see _comm_common.resolve_collective_via_call) to find the underlying
+   collective and read replica info from there.
+
+2. `*-done` events (collective-permute-done, send-done, recv-done, …):
+   in HLO, replica info lives on the matched `*-start`, not the `*-done`
+   event xprof emits. `_resolve_instr` translates the suffix
+   (e.g. `collective-permute-done.66` → `collective-permute-start.66`)
+   and reads replica info from there.
+
+If both lookups fail, the row stays axis="—" and is counted in the
+[warn] line at the bottom of the report.
 """
 from __future__ import annotations
 
@@ -341,11 +373,10 @@ def main():
         # populated mesh_axis_indices from a Shardy mesh: the Shardy axes
         # are LOGICAL and don't tell us how many torus dims the collective
         # actually spans.
-        instr = hlo_instrs.get(r["op_name"])
-        if instr is not None and instr.opcode == "call":
-            resolved = cc.resolve_collective_via_call(instr, by_comp_id)
-            if resolved is not None:
-                instr = resolved
+        # Reuse list_comm_primitives' resolver so we get the same `call` →
+        # collective and `*-done` → `*-start` handling there. Avoids axis-
+        # attribution gaps that were specific to the path here.
+        instr = lcp._resolve_instr(hlo_instrs, by_comp_id, r["op_name"])
         replica_ids = _replica_ids(instr) if instr is not None else []
 
         if r.get("mesh_axis_indices"):
@@ -366,7 +397,18 @@ def main():
                     if r["group_size"] == 0:
                         r["group_size"] = gs
                 elif r["kind"] in _COLLECTIVE_KINDS:
-                    unattributed_cloned += 1
+                    # collective-permute / send / recv have point-to-point
+                    # semantics — replica_ids is empty by design (the wire
+                    # info is in source_target_pairs, which the vendored
+                    # HLO proto may not carry). Don't count those as
+                    # "could not be attributed"; they're attributed as P2P.
+                    if instr.opcode in ("collective-permute",
+                                        "collective-permute-start",
+                                        "send", "recv"):
+                        if r["axis"] == "—":
+                            r["axis"] = "p2p"
+                    else:
+                        unattributed_cloned += 1
             elif r["kind"] in _COLLECTIVE_KINDS:
                 unattributed_no_hlo += 1
             # Last-chance logical-name lookup for "{N}-way" fallback labels:
@@ -389,14 +431,16 @@ def main():
         r["bidir"] = "yes" if bidir_map.get(r["op_name"]) else "no"
         r["bus_bw_gbps"] = bus_bw_gbps(r["kind"], r["group_size"],
                                        r["bytes"], r["wall_ps"])
-        r["effective_bus_bw_gbps"] = (r["bus_bw_gbps"] * 2.0
-                                      if r["bus_bw_gbps"] and r["bidir"] == "yes"
-                                      else r["bus_bw_gbps"])
+        # bus_BW is already the wire-level rate — do NOT double for bidir.
+        # `effective_bus_bw_gbps` is retained as an alias for back-compat
+        # with prior JSON consumers; new code should use `bus_bw_gbps`.
+        r["effective_bus_bw_gbps"] = r["bus_bw_gbps"]
 
     peak_link, peak_src = resolve_peak_link_gbps(args.profile_dir, mesh_spec,
                                                   args.peak_ici_link_gbps,
                                                   args.tpu_version)
-    topo_str = "×".join(str(d) for d in topology) if topology != (0, 0, 0) else "?"
+    topo_known = topology != (0, 0, 0)
+    topo_str = "×".join(str(d) for d in topology) if topo_known else "?"
     print(f"peak ICI link (unidir): "
           f"{f'{peak_link:.1f} GB/s' if peak_link else '?'}  ({peak_src})  "
           f"topology={topo_str}  directions/dim={directions_per_dim}")
@@ -404,18 +448,24 @@ def main():
           f"(k_dims = #physical torus dims contracted)")
     if peak_link is None:
         print("[warn] peak ICI BW unknown — utilization omitted")
+    if not topo_known:
+        print("[error] topology unknown (no --mesh-spec topology:) — "
+              "util% is suppressed because k_dims would default to 1, "
+              "undercounting peak for multi-dim collectives by 2-3×. "
+              "Pass --mesh-spec with `topology: [X, Y, Z]` to get util%.")
 
     def _row_peak(r) -> Optional[float]:
         """Per-row theoretical peak (GB/s).
 
-        peak_link × k_dims × directions, where directions=2 when bidir==yes.
-        Falls back to k_dims=1 if topology was unknown / replica_ids missing.
+        peak_link × k_dims × directions_per_dim. Returns None when topology
+        is unknown so callers suppress util%.
         """
-        if peak_link is None:
+        if peak_link is None or not topo_known:
             return None
-        k = r.get("k_dims") or 1
-        dirs = directions_per_dim if r.get("bidir") == "yes" else 1
-        return peak_link * k * dirs
+        k = r.get("k_dims") or 0
+        if k == 0:
+            return None  # replica_ids missing — k_dims unknown
+        return peak_link * k * directions_per_dim
 
     # Per-axis aggregate
     by_axis = collections.defaultdict(list)
@@ -436,21 +486,20 @@ def main():
             dom_kind = kinds.most_common(1)[0][0]
             dom_gs = max((r["group_size"] for r in grp), default=0)
             bw = bus_bw_gbps(dom_kind, dom_gs, sb, sw)
-        # Effective bus BW: × 2 if any row in the bucket is bidir.
-        any_bidir = any(r.get("bidir") == "yes" for r in grp)
-        eff_bw = (bw * 2.0) if (bw is not None and any_bidir) else bw
-        # Aggregate peak: use the dominant k_dims in the bucket.
+        # Aggregate peak: peak_link × dom_k_dims × directions_per_dim. Suppressed
+        # when topology is unknown (dom_k would otherwise default to 1).
         k_counter = collections.Counter(r.get("k_dims") or 0 for r in grp)
-        dom_k = max(k_counter.most_common(1)[0][0], 1)
-        peak_axis = (peak_link * dom_k * (directions_per_dim if any_bidir else 1)
-                     if peak_link is not None else None)
-        util = (eff_bw / peak_axis * 100.0) if (eff_bw and peak_axis) else None
+        dom_k = k_counter.most_common(1)[0][0] if k_counter else 0
+        peak_axis = (peak_link * dom_k * directions_per_dim
+                     if (peak_link is not None and topo_known and dom_k > 0)
+                     else None)
+        util = (bw / peak_axis * 100.0) if (bw and peak_axis) else None
         # Show the dominant physical-dim string (most common in bucket).
         phys_counter = collections.Counter(r.get("phys_dims", "") for r in grp)
         dom_phys = phys_counter.most_common(1)[0][0] or "—"
         print(f"{axis[:23]:<24}{dom_phys:<6}{core:<6}{len(grp):>7}"
               f"{sb/1e6:>14.2f}{sw/1e6:>13.3f}"
-              f"{(f'{(eff_bw if eff_bw else bw):.2f}' if bw else '—'):>16}"
+              f"{(f'{bw:.2f}' if bw else '—'):>16}"
               f"{(f'{peak_axis:.1f}' if peak_axis else '—'):>12}"
               f"{(f'{util:.1f}' if util is not None else '—'):>8}")
 
@@ -461,10 +510,9 @@ def main():
           f"{'peak(GB/s)':>12}{'util%':>7}")
     for r in sorted(rows, key=lambda r: -r["stall_ps"])[:args.limit]:
         bw = r.get("bus_bw_gbps")
-        eff_bw = r.get("effective_bus_bw_gbps")
         peak_axis = _row_peak(r)
         r["peak_axis_gbps"] = peak_axis
-        util = (eff_bw / peak_axis * 100.0) if (eff_bw and peak_axis) else None
+        util = (bw / peak_axis * 100.0) if (bw and peak_axis) else None
         phys = r.get("phys_dims") or "—"
         print(f"{r['op_name'][:46]:<48}{r['kind']:<16}{r['axis'][:23]:<24}{phys:<6}{r['core']:<6}"
               f"{r['bidir']:<6}{r['wall_ps']/1e6:>11.3f}{r['stall_ps']/1e6:>11.3f}"
@@ -474,7 +522,10 @@ def main():
 
     if unattributed_cloned:
         print(f"\n[warn] {unattributed_cloned} collective rows could not be "
-              f"axis-attributed (cloned-wrapper join failure — see banner)")
+              f"axis-attributed (HLO entry has no replica info — typically "
+              f"`*-done` events where the matched `*-start` was not joined, "
+              f"or `call` wrappers around a collective whose called "
+              f"computation could not be resolved)")
     if unattributed_no_hlo:
         print(f"\n[warn] {unattributed_no_hlo} collective rows have no HLO "
               f"counterpart (HLO module missing or op renamed)")

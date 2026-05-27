@@ -1,6 +1,6 @@
 ---
 name: comm-analysis
-description: Use when analyzing communication on a TPU pretraining profile — extracts every comm primitive (async + sync, TC + SparseCore), attributes axes via HLO replica_groups, computes per-row NCCL bus BW vs per-axis peak ICI BW (peak_link × k_torus_dims × directions; TPUv7x: 200 GB/s bidir per link on a 3D torus), and reports per-step compute/comm overlap. Builds on profile-anatomy.
+description: Use when analyzing communication on a TPU pretraining profile — extracts every comm primitive (async + sync, TC + SparseCore), attributes axes via HLO replica_groups, computes per-row NCCL bus BW vs per-axis peak ICI BW (peak_link × k_torus_dims × directions_per_dim; TPUv7x: 200 GB/s bidir per link on a 3D torus; util% requires `--mesh-spec` with topology), and reports per-step compute/comm overlap. Builds on profile-anatomy.
 ---
 
 # Communication Analysis
@@ -25,17 +25,25 @@ analysis that ignored them produced a wrong attribution.
    titles. If `unpaired_ratio > 50%`, the capture is "unpaired-dominated"
    and per-row `stall_ps` / `hidden_ps` are SENTINEL values (stall ≈ wall,
    hidden = 0). They are not data.
-2. **Never quote a per-op `hidden%` or `exposed%` in unpaired-dominated
+2. **Check the topology line at the top of `axis_bandwidth.py` output.**
+   If it shows `topology=?`, the script ran without `--mesh-spec` (or the
+   mesh-spec had no `topology:` entry). In that case `k_dims` defaults to
+   1, `peak` and `util%` columns are SUPPRESSED, and the script prints
+   `[error] topology unknown — util% is suppressed`. Do not work around
+   this — re-run with `--mesh-spec` pointing at a YAML that has
+   `topology: [X, Y, Z]`. **A util% computed against k_dims=1 would be
+   wrong by 2-3× on any multi-dim collective.**
+3. **Never quote a per-op `hidden%` or `exposed%` in unpaired-dominated
    captures.** The only authoritative per-op critical-path metric there is
    `NOT_cov_by_compute` (sweep-derived; in the new column on every table,
    and the sole sort key in `critical_path_comm.py`).
-3. **Before recommending an optimization off a top-N list, check the same
+4. **Before recommending an optimization off a top-N list, check the same
    op's `cov%`** (= `1 − NOT_cov / wall`). If `cov% > 90%`, the op is NOT
    on the critical path regardless of how big its `wall_ps` looks.
-4. **§8's "stall is degenerate" warning applies to EVERY stall-based
+5. **§8's "stall is degenerate" warning applies to EVERY stall-based
    table**, not just step totals. If §8 says stall is sentinel, every
    per-row stall column in every table in this skill is sentinel.
-5. **TC and SC are separate timelines.** TC comm overlap must be computed
+6. **TC and SC are separate timelines.** TC comm overlap must be computed
    against TC compute, SC comm overlap against SC compute. Cross-core
    overlap is meaningless because TC and SC don't compete for resources.
    The helpers `cc.merged_compute_by_core` / `cc.not_covered_by_compute`
@@ -111,12 +119,18 @@ top-N tables), use `critical_path_comm.py` instead — see §1.
 | AllToAll | `(N−1)/N × message_bytes / time` |
 | CollectivePermute / P2P | `message_bytes / time` |
 
-`N = group_size`; `time = wall_ps` (in-flight, not stall). Per-axis peak
-is computed PER ROW from the physical torus dims the collective contracts
-over:
+`N = group_size`; `time = wall_ps` (in-flight, not stall). Bus_BW from
+this formula is wire-level — it already reflects whatever directions of
+the ring carried traffic. **There is NO additional ×2 multiplier for
+"bidir" rows.** `bidir` in the per-collective table is a structural
+label only (does the cluster have ≥2 distinct channel_ids?), not a
+factor in the BW or util computation.
+
+Per-axis peak is computed PER ROW from the physical torus dims the
+collective contracts over:
 
 ```
-peak_axis = peak_link_unidir × k_dims × directions
+peak_axis = peak_link_unidir × k_dims × directions_per_dim
 ```
 
 - `peak_link_unidir` is the single-direction per-link peak (e.g. 100 GB/s
@@ -124,34 +138,47 @@ peak_axis = peak_link_unidir × k_dims × directions
 - `k_dims` ∈ {1,2,3} is the number of physical torus dims the collective's
   replica group spans (derived from replica_ids vs `topology`). A
   collective on `X` only has `k_dims=1`; one spanning `XY` has `k_dims=2`.
-- `directions` = 2 when `bidir == yes` (both ring directions carry
-  traffic), else 1.
+- `directions_per_dim` = 2 (every torus dim has two ring directions and
+  both are available to a single collective). Configurable via
+  mesh-spec `links_per_axis` for non-torus topologies.
 
-Equivalently on TPUv7x: peak ≈ 200 GB/s × `k_dims` for bidir collectives.
+Equivalently on TPUv7x: peak = 200 GB/s × `k_dims` (always — regardless
+of the bidir label).
 
-When `bidir == yes`, the displayed `util%` doubles the single-direction
-bus BW (because both ICI directions carry traffic simultaneously) and
-compares against the bidir peak.
+If `topology` is unknown, util% is suppressed (see §0 rule 2). Util% > 100
+indicates a bug — please file it.
 
 ## 5. Peak-BW resolution order
+
+Util% requires **both** a peak_link value and a topology. They are
+resolved separately:
+
+`peak_link` (unidirectional GB/s per ICI link):
 
 1. xprof XStat (`peak_ici_*` / `peak_link_*` scanned across device, host, and Task Environment planes via `cc.peak_ici_link_gbps_from_xprof`).
 2. `--mesh-spec` YAML `peak_link_gbps:`.
 3. `--peak-ici-link-gbps N` flag (unidirectional GB/s per link).
 4. `--tpu-version v7x` flag or `tpu_version: v7x` in mesh-spec ⇒ defaults
    `peak_link_gbps = 100` (unidir, = 200 GB/s bidir per link).
-5. None ⇒ utilization column omitted, `[warn]` printed.
+5. None ⇒ peak/util columns blank, `[warn] peak ICI BW unknown` printed.
+
+`topology`:
+
+1. `--mesh-spec` YAML `topology: [X, Y, Z]`.
+2. None ⇒ peak/util columns blank, `[error] topology unknown` printed.
+   This is a hard gate — there is no fallback, because k_dims=1 would
+   silently undercount peak by 2-3× on multi-dim collectives.
 
 `*op_stats.pb` does NOT carry ICI peak BW: its
 `PerfEnv.peak_bws_giga_bytes_per_second` list is keyed by upstream
 `MemBwType` (HBM_RW / SRAM_* / CMEM_* / VMEM_*) and has no ICI entry.
 
-## 6. Optional mesh-spec YAML
+## 6. Mesh-spec YAML (required for util%)
 
 ```yaml
 tpu_version: v7x                 # ⇒ peak_link defaults to 100 GB/s unidir
-topology: [4, 4, 8]              # physical chip dims (X, Y, Z) — required
-                                 # for k_dims attribution. TPUv7x is 3D torus.
+topology: [4, 4, 4]              # physical chip dims (X, Y, Z) — REQUIRED
+                                 # for util%. TPUv7x is 3D torus.
 axes:
   fsdp:  {dims: [Y, Z], size: 32}
   dp:    {dims: [X],    size: 4}
@@ -159,10 +186,10 @@ peak_link_gbps: 100              # unidirectional; overrides tpu_version default
 links_per_axis: 2                # = directions per torus dim (2 for any torus)
 ```
 
-All fields optional. Without a `topology`, `k_dims` falls back to 1 and
-multi-dim collectives will be undercounted in peak BW. Without a
-mesh-spec, axes are reported as physical `X`/`Y`/`Z` / `XY` / `XYZ`
-(or `stride-N group` if topology is unknown).
+Without `topology`, util% is suppressed (see §0 rule 2 and §5). Without a
+mesh-spec, axes are still attributed via Shardy mesh metadata
+(`axis_0=128`, `axis_1=128`, etc.) when present in HLO, but no peak/util
+is computed and physical-dim attribution falls back to `—`.
 
 ### TPUv7x specifics
 
@@ -184,7 +211,8 @@ python3 plugins/tpu-perf/skills/comm-analysis/scripts/list_comm_primitives.py \
 python3 plugins/tpu-perf/skills/comm-analysis/scripts/axis_bandwidth.py \
   /tmp/tensorboard/tensorboard/plugins/profile/dp8_fsdp128 --mesh-spec mesh.yaml
 
-# Quick TPUv7x run without a mesh-spec (peak_link defaults to 100 GB/s unidir):
+# Without a mesh-spec, util% is suppressed (you'll only see bus_BW absolute
+# values). To get util% you must pass --mesh-spec with a `topology:` entry.
 python3 plugins/tpu-perf/skills/comm-analysis/scripts/axis_bandwidth.py \
   /tmp/tensorboard/tensorboard/plugins/profile/run --tpu-version v7x
 
@@ -210,13 +238,23 @@ python3 plugins/tpu-perf/skills/comm-analysis/scripts/list_comm_primitives.py \
   axis attribution and the bidir heuristic degrade gracefully — `axis`
   stays `—` and a `[warn] N collective rows have no HLO counterpart`
   line is emitted.
-- **Cloned-wrapper join failure is a known limitation.** xprof events
-  often reference op names like `all-reduce.3008.cloned.1`, which exist
-  in HLO as opcode=`call` wrappers around the actual collective rather
-  than as the collective itself. The wrapper has no replica info, so
-  axis stays `—` and group_size stays `0` for those rows.
-  `axis_bandwidth.py` counts these and emits a single
-  `[warn] N collective rows could not be axis-attributed (cloned-wrapper join failure)` line.
+- **HLO axis-attribution requires resolver chasing for two opcodes:**
+  1. `call` wrappers (e.g. `all-reduce.3008.cloned.1`) — `_resolve_instr`
+     follows `called_computation_ids` to the underlying collective and
+     reads replica info from there.
+  2. `*-done` events (e.g. `collective-permute-done.66`) — replica info
+     lives on the matched `*-start`, not the `*-done` event xprof emits.
+     `_resolve_instr` flips the suffix
+     (`collective-permute-done.66` → `collective-permute-start.66`)
+     and reads replica info from there.
+
+  Rows that fall through both paths (e.g. `*-start` instructions whose
+  `source_target_pairs` field is missing from the vendored HLO proto)
+  are classified by the operation kind:
+   - `collective-permute` / `send` / `recv` → axis is set to `p2p`.
+     This is a structural label, not a peer-counting attribution.
+   - Everything else is counted in the
+     `[warn] N collective rows could not be axis-attributed` line.
 - **Modern HLO uses `collective_device_list` / `iota_collective_device_list`,
   not legacy `replica_groups` (field 49).** The vendored helpers walk
   all three locations; the legacy field is empty in current captures.
