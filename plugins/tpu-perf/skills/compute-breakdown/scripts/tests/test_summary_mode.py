@@ -201,7 +201,7 @@ class TestRunSummaryMode(unittest.TestCase):
                 for i in range(20)]
         doc = cb._run_summary_mode(recs, ctx=self._ctx(), include_comm=False, top=5)
         self.assertEqual(len(doc["top_compute_groups"]), 5)
-        self.assertEqual(doc["tail_compute"]["n_groups_omitted"], 15)
+        self.assertEqual(doc["tail_compute"]["n_groups"], 15)
         # Tail duration = sum of the 15 smallest durations (1..15)
         self.assertEqual(doc["tail_compute"]["dur_ps"], sum(range(1, 16)))
 
@@ -242,8 +242,9 @@ class TestRunSummaryMode(unittest.TestCase):
                                    include_comm=False, top=10)
         self.assertEqual(doc["totals"]["comm_duration_ps"], 200)
         self.assertEqual(doc["totals"]["data_move_duration_ps"], 50)
-        self.assertEqual(doc["by_kind_rollup"]["comm"]["dur_ps"], 200)
-        self.assertEqual(doc["by_kind_rollup"]["data_move"]["dur_ps"], 50)
+        rollup = {r["kind"]: r for r in doc["by_kind_rollup"]}
+        self.assertEqual(rollup["comm"]["dur_ps"], 200)
+        self.assertEqual(rollup["data_move"]["dur_ps"], 50)
         # But comm must NOT appear in top_compute_groups.
         ranked_keys = {g["agg_key"] for g in doc["top_compute_groups"]}
         self.assertNotIn("B", ranked_keys)

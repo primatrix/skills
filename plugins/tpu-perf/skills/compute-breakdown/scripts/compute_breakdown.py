@@ -717,14 +717,14 @@ def _run_summary_mode(records: list[EventRecord], *, ctx: dict,
     for r in compute_records:
         coverage[r.agg_key_kind] = coverage.get(r.agg_key_kind, 0) + 1
 
-    by_kind_rollup: dict = {}
-    for kind in ("compute", "data_move", "comm"):
+    by_kind_rollup: list = []
+    for kind in ("compute", "data_move", "comm", "other"):
         n = totals[f"n_events_{kind}"]
         d = totals[f"{kind}_duration_ps"]
-        by_kind_rollup[kind] = {
-            "n": n, "dur_ps": d,
+        by_kind_rollup.append({
+            "kind": kind, "n": n, "dur_ps": d,
             "pct_of_step": round(100.0 * d / step_dur_safe, 3),
-        }
+        })
 
     return {
         "status": "ok",
@@ -738,7 +738,7 @@ def _run_summary_mode(records: list[EventRecord], *, ctx: dict,
         "totals": totals,
         "agg_key_coverage": coverage,
         "top_compute_groups": top_list,
-        "tail_compute": {"n_groups_omitted": len(tail), "dur_ps": tail_dur},
+        "tail_compute": {"n_groups": len(tail), "dur_ps": tail_dur},
         "by_kind_rollup": by_kind_rollup,
     }
 
