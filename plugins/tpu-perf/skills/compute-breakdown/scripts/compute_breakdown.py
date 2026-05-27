@@ -24,6 +24,73 @@ import xplane_pb2  # noqa: E402  (after sys.path insert, by design)
 import _peaks  # noqa: E402
 
 
+# Per-group cap on number of unique HLO-op signatures retained for the
+# `hlo_op_breakdown` field. Above this many distinct signatures, the rest
+# are folded into one overflow bucket so output size stays bounded.
+_HLO_OP_BREAKDOWN_CAP = 64
+
+# Number of slowest signature rows surfaced per group in the JSON
+# output's `hlo_op_breakdown`. The full retained dict (up to
+# _HLO_OP_BREAKDOWN_CAP) is sorted by total_dur_ps desc and the top
+# _HLO_OP_BREAKDOWN_OUTPUT_N rows are emitted; the rest is folded into
+# the overflow bucket.
+_HLO_OP_BREAKDOWN_OUTPUT_N = 8
+
+
+# Regex precompiled for HLO-op-text signature extraction. We can't bucket by
+# raw HLO text — each metadata_id has a unique text (varying SSA numbers,
+# operand names) so 690 events produce 500+ distinct strings, which defeats
+# the rollup. Instead we normalize: for custom-calls, use the call target;
+# for other ops, use the op opcode (the token before the first `[`).
+_HLO_OPCODE_RE = re.compile(r'^\s*%?[\w.]+\s*=\s*[^=]*?\b([a-z][a-z0-9_-]*)\s*\(')
+_CUSTOM_CALL_TARGET_RE = re.compile(r'custom_call_target="([^"]+)"')
+# kLoop fusions get further sub-categorized by the leading-fusion-name token
+# (e.g. `convert_bitcast_fusion`, `pad_bitcast_fusion`) so the breakdown can
+# distinguish dtype convert from pad-only from generic fusion work.
+_FUSION_NAME_RE = re.compile(r'^\s*%([a-z_][a-z0-9_]*)\b')
+
+
+def _hlo_op_signature(hlo_text: str, hlo_category: str) -> str:
+    """Bucket key for hlo_op_breakdown rollup. Designed so that semantically
+    similar ops collapse to the same key, but distinct *kinds* of work stay
+    separate.
+
+    - custom-call → "custom-call:<target>" (e.g. "custom-call:tpu_custom_call",
+      "custom-call:AllocateBuffer"). Crucial: AllocateBuffer at 75ps and
+      tpu_custom_call at 2.6ms must NOT collapse into one bucket.
+    - loop/input fusion → "<fusion-name-prefix> [<category>]"
+      (e.g. "convert_bitcast_fusion [loop fusion]"). Strips the trailing
+      `.NNN` SSA index so different instances of the same logical fusion
+      collapse.
+    - everything else → the HLO opcode (`dot`, `reduce`, `slice`, ...)
+      qualified by category for readability ("dot [convolution]").
+
+    For Pallas TPU custom-calls a richer signature would also include the
+    inner kernel name (e.g. `kda_intra_chunk_bwd_subchunk`), but those names
+    are SSA-level identifiers in the IR text and not always exposed in the
+    metadata's `name`. Callers wanting that detail should look at
+    `example_hlo_op` on the heaviest bucket.
+    """
+    if not hlo_text:
+        return f"<empty> [{hlo_category}]"
+    if hlo_category == "custom-call":
+        m = _CUSTOM_CALL_TARGET_RE.search(hlo_text)
+        if m:
+            return f"custom-call:{m.group(1)}"
+        return "custom-call:<no-target>"
+    if "fusion" in hlo_category:
+        m = _FUSION_NAME_RE.match(hlo_text)
+        if m:
+            # Strip trailing .NNN SSA index from the fusion name token.
+            name = re.sub(r'\.\d+$', '', m.group(1))
+            return f"{name} [{hlo_category}]"
+        return f"<unparsed-fusion> [{hlo_category}]"
+    m = _HLO_OPCODE_RE.match(hlo_text)
+    if m:
+        return f"{m.group(1)} [{hlo_category}]"
+    return f"<unparsed> [{hlo_category}]"
+
+
 # ----------------------------------------------------------------------
 # Stage 3 per-event normalized record. Field schema per spec §4.
 # ----------------------------------------------------------------------
@@ -414,7 +481,23 @@ class _GroupAgg:
                                           # the group; never overwritten.
                                           # Used by mode 4 (roofline) per
                                           # spec §8.2.
-    example_hlo_op: str | None = None
+    example_hlo_op: str | None = None     # HLO text of the SLOWEST single
+                                           # event in the group. Replaced
+                                           # whenever we see a longer dur.
+                                           # Avoids the AllocateBuffer trap
+                                           # where the first record was a
+                                           # zero-cost placeholder.
+    example_hlo_op_dur_ps: int = 0        # dur of the example_hlo_op event,
+                                           # so callers can sanity-check
+                                           # that the example is meaningful.
+    # Per-HLO-text rollup so callers can see time distribution within a group
+    # without trusting a single example. Key: hlo_op text. Value: [total_dur_ps,
+    # n_executions, hlo_category]. Capped at _HLO_OP_BREAKDOWN_CAP unique texts;
+    # overflow folded into a single "(other-N-texts)" bucket.
+    _hlo_op_dur: dict = dataclasses.field(default_factory=dict)
+    _hlo_op_overflow_dur: int = 0
+    _hlo_op_overflow_n: int = 0
+    _hlo_op_overflow_count: int = 0
 
     @property
     def avg_dur_ps(self) -> float:
@@ -432,6 +515,51 @@ class _GroupAgg:
     def model_flops_sum(self) -> int | None:
         return self._model_flops_sum if self._model_flops_seen > 0 else None
 
+    def hlo_op_breakdown(self, top_n: int = _HLO_OP_BREAKDOWN_OUTPUT_N) -> list:
+        """Top-N normalized-signature rows sorted by total_dur_ps desc.
+
+        Each row: {signature, hlo_category, total_dur_ps, n_executions,
+        pct_of_group, example_hlo_op, example_hlo_op_dur_ps}. Allows callers
+        to verify time distribution within a group without trusting a single
+        first-record example. Below-cutoff rows + cap overflow are folded
+        into one (other-N-buckets) row.
+
+        Signature normalization (see _hlo_op_signature):
+          - custom-call:<target>          (so AllocateBuffer ≠ tpu_custom_call)
+          - <fusion-name-prefix> [...]    (so convert_bitcast ≠ pad_bitcast)
+          - <opcode> [<category>]         (everything else)
+        """
+        items = sorted(self._hlo_op_dur.items(), key=lambda kv: -kv[1][0])
+        rows = []
+        kept = items[:top_n]
+        rest = items[top_n:]
+        rest_dur = sum(v[0] for _, v in rest) + self._hlo_op_overflow_dur
+        rest_n = sum(v[1] for _, v in rest) + self._hlo_op_overflow_n
+        rest_buckets = len(rest) + (
+            1 if self._hlo_op_overflow_count > 0 else 0)
+        denom = self.total_dur_ps if self.total_dur_ps else 1
+        for sig, (dur, n, cat, ex_text, ex_dur) in kept:
+            rows.append({
+                "signature": sig,
+                "hlo_category": cat,
+                "total_dur_ps": dur,
+                "n_executions": n,
+                "pct_of_group": round(100.0 * dur / denom, 3),
+                "example_hlo_op": ex_text,
+                "example_hlo_op_dur_ps": ex_dur,
+            })
+        if rest_buckets > 0 or rest_dur > 0:
+            rows.append({
+                "signature": f"(other-{rest_buckets}-signatures)",
+                "hlo_category": None,
+                "total_dur_ps": rest_dur,
+                "n_executions": rest_n,
+                "pct_of_group": round(100.0 * rest_dur / denom, 3),
+                "example_hlo_op": None,
+                "example_hlo_op_dur_ps": None,
+            })
+        return rows
+
 
 def _aggregate_by_key(records: list[EventRecord],
                         *, dedupe_shapes_cap: int = 8) -> dict:
@@ -444,6 +572,7 @@ def _aggregate_by_key(records: list[EventRecord],
                 source_inner=r.source_inner, source_stack=r.source_stack,
                 tf_op=r.tf_op, kind=r.kind,
                 example_hlo_op=r.hlo_op,
+                example_hlo_op_dur_ps=r.duration_ps,
                 min_dur_ps=r.duration_ps, max_dur_ps=r.duration_ps,
                 first_dtype=r.dtype,    # spec §8.2: first record wins.
             )
@@ -454,6 +583,35 @@ def _aggregate_by_key(records: list[EventRecord],
             g.min_dur_ps = r.duration_ps
         if r.duration_ps > g.max_dur_ps:
             g.max_dur_ps = r.duration_ps
+        # Replace example_hlo_op whenever a longer single-event dur shows up.
+        # First-record-wins is dangerous when groups mix zero-cost placeholders
+        # (e.g. AllocateBuffer custom-calls at 75ps) with real heavy ops
+        # (e.g. tpu_custom_call Pallas kernels at 2.6ms) — the longest event
+        # is a far better representative than the first.
+        if r.duration_ps > g.example_hlo_op_dur_ps:
+            g.example_hlo_op = r.hlo_op
+            g.example_hlo_op_dur_ps = r.duration_ps
+        # Per-signature rollup. Bucketing by raw HLO text doesn't collapse
+        # related ops (each metadata_id has unique SSA numbers), so we
+        # normalize via _hlo_op_signature: custom-calls keyed by target,
+        # fusions by fusion-name-prefix, everything else by opcode.
+        # Cell layout: [total_dur_ps, n_executions, hlo_category,
+        #               example_hlo_text, example_dur_ps].
+        sig = _hlo_op_signature(r.hlo_op, r.hlo_category)
+        cell = g._hlo_op_dur.get(sig)
+        if cell is not None:
+            cell[0] += r.duration_ps
+            cell[1] += 1
+            if r.duration_ps > cell[4]:
+                cell[3] = r.hlo_op
+                cell[4] = r.duration_ps
+        elif len(g._hlo_op_dur) < _HLO_OP_BREAKDOWN_CAP:
+            g._hlo_op_dur[sig] = [r.duration_ps, 1, r.hlo_category,
+                                   r.hlo_op, r.duration_ps]
+        else:
+            g._hlo_op_overflow_dur += r.duration_ps
+            g._hlo_op_overflow_n += 1
+            g._hlo_op_overflow_count += 1
         if r.flops is not None:
             g._flops_sum += r.flops
             g._flops_seen += 1
@@ -547,6 +705,8 @@ def _run_summary_mode(records: list[EventRecord], *, ctx: dict,
             "flops_sum":          g.flops_sum,
             "bytes_accessed_sum": g.bytes_accessed_sum,
             "example_hlo_op":     g.example_hlo_op,
+            "example_hlo_op_dur_ps": g.example_hlo_op_dur_ps,
+            "hlo_op_breakdown":   g.hlo_op_breakdown(),
         }
 
     top_list = [_g_to_dict(g, i + 1) for i, g in enumerate(ordered[:top])]
@@ -621,6 +781,8 @@ def _run_by_source_mode(records: list[EventRecord], *, ctx: dict,
             "dtypes": dict(g.dtypes),
             "dtype_uncertain": g.dtype_uncertain,
             "example_hlo_op": g.example_hlo_op,
+            "example_hlo_op_dur_ps": g.example_hlo_op_dur_ps,
+            "hlo_op_breakdown": g.hlo_op_breakdown(),
         })
     totals_out = dict(totals)
     totals_out["n_groups_total"] = len(group_rows)
