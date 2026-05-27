@@ -23,7 +23,7 @@ class TestCLI(unittest.TestCase):
         self.assertIn("--include-host-pools", r.stdout)
         self.assertIn("--time-samples", r.stdout)
 
-    def test_no_xplane_returns_absent(self):
+    def test_no_data_sources_returns_absent(self):
         r = subprocess.run(
             [sys.executable, str(SCRIPT), "/tmp"],
             capture_output=True, text=True,
@@ -31,10 +31,12 @@ class TestCLI(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
         doc = json.loads(r.stdout)
         self.assertEqual(doc["status"], "absent")
-        self.assertEqual(doc["reason"], "no_xplane_pb")
+        self.assertEqual(doc["reason"], "no_data_sources")
         self.assertEqual(doc["skill"], "memory-profile")
-        self.assertEqual(doc["version"], 1)
+        self.assertEqual(doc["version"], 2)
         self.assertEqual(doc["inputs"]["profile_dir"], "/tmp")
+        self.assertEqual(doc["inputs"]["hlo_reason"], "no_hlo_proto_pb")
+        self.assertEqual(doc["inputs"]["runtime_reason"], "no_xplane_pb")
 
     def test_step_and_all_trace_mutually_exclusive(self):
         r = subprocess.run(
