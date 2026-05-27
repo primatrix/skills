@@ -22,8 +22,10 @@ contains:
 
 | File pattern | What it is | When to read it |
 |---|---|---|
-| `*.xplane.pb` | The authoritative protobuf trace. Contains all profiled hosts and devices, all events, all metadata. | Whenever you need anything reliable. This is the source of truth. |
+| `*.xplane.pb` | The authoritative protobuf trace. Contains all profiled hosts and devices, all events, all metadata, **and the HloProto for every JIT-compiled module** (see §2.1). | Whenever you need anything reliable. This is the source of truth. |
 | `*.trace.json.gz` | Chrome-trace-format JSON gzipped. A flattened, browser-viewable export of the same data, **capped at ~1M events**. | Quick browser inspection, manual scripts that don't need every event. Do not use it for total-time accounting if the cap was hit. |
+| `*.hlo_proto.pb` | Standalone `xla.HloProto` (defined in [`scripts/_proto/hlo.proto`](scripts/_proto/hlo.proto)) — one file per JAX-compiled module, named `<module>.hlo_proto.pb`. **Equivalent to the embedded copy in xplane** (decodes to the same `HloProto`; only field ordering differs). May be absent in some captures. | Quick HLO inspection without parsing the (possibly multi-GB) xplane. |
+| `ALL_HOSTS.op_stats_v2.pb` | Pre-aggregated op stats (defined in [`comm-analysis/scripts/_proto/op_stats.proto`](../comm-analysis/scripts/_proto/op_stats.proto)). | Quick pre-aggregated reads. |
 
 ## 2. xplane.pb schema
 
@@ -97,6 +99,44 @@ Five-level proto tree, defined in [`scripts/_proto/xplane.proto`](scripts/_proto
   - `int64 id`, `string name`, `string description`.
   - **No `value_type` field** — value type is determined per-XStat at
     the use site, via `WhichOneof("value")`.
+
+### 2.1 Embedded `HloProto` on `/host:metadata`
+
+Modern XProf/JAX captures embed the **full `xla.HloProto`** of every
+JIT-compiled module *inside the xplane itself* — you do **not** need
+the standalone `*.hlo_proto.pb` files (and they are not always
+shipped). Layout:
+
+```
+XPlane(name='/host:metadata')
+└── event_metadata[i]                 # one entry per compiled module
+    ├── name = 'jit_train_step(8722433274278871538)'   # module label
+    └── stats[j]
+        ├── metadata_id  →  stat_metadata[*].name == 'Hlo Proto'
+        └── bytes_value  →  serialized xla.HloProto
+```
+
+To decode: parse the `bytes_value` with
+[`scripts/_proto/hlo_pb2.HloProto`](scripts/_proto/hlo_pb2.py). The
+embedded blob and the on-disk `<module>.hlo_proto.pb` decode to the
+same `HloProto` (only proto field ordering may differ — re-serializing
+either produces equally-sized buffers but `bytes`-level inequality is
+expected).
+
+What lives inside `HloProto`:
+
+- `hlo_module.name`, `hlo_module.id`, `hlo_module.entry_computation_id`
+- `hlo_module.computations` — list of `HloComputationProto`, each with
+  `instructions: list[HloInstructionProto]`. Each instruction carries
+  `opcode`, `name`, `shape`, `operand_ids`, `metadata`,
+  `frontend_attributes`, `channel_id` (for collectives), etc.
+- `buffer_assignment`, `schedule`, `hlo_module.sharding`,
+  `hlo_module.spmd_output_sharding`,
+  `hlo_module.frontend_attributes` (`mesh_shape`, `num_partitions`,
+  Shardy mesh definitions, …).
+
+Use [`scripts/extract_hlo_proto.py`](scripts/extract_hlo_proto.py) as
+the reference reader.
 
 ### Real planes observed in `dp8_fsdp128`
 
@@ -173,10 +213,10 @@ not compute totals from a truncated trace.
 
 ## 4. Reference scripts
 
-All seven scripts under [`scripts/`](scripts/) accept a profile
-directory as argv[1] and run standalone with stdlib + `protobuf`.
-They print `[absent]` and exit 0 (no traceback) when the slice they
-cover is missing.
+All scripts under [`scripts/`](scripts/) accept a profile directory as
+argv[1] and run standalone with stdlib + `protobuf`. They print
+`[absent]` and exit 0 (no traceback) when the slice they cover is
+missing.
 
 | Script | What it shows |
 |---|---|
@@ -184,6 +224,7 @@ cover is missing.
 | [`dump_xplane_metadata.py`](scripts/dump_xplane_metadata.py) | The `event_metadata{}` and `stat_metadata{}` reverse-lookup tables of every plane. |
 | [`extract_step_events.py`](scripts/extract_step_events.py) | Per-step events on the device plane's `"Steps"` line. |
 | [`extract_hlo_events.py`](scripts/extract_hlo_events.py) | HLO-level events on `"XLA Ops"`. **Op-level stats** (`hlo_category`, `tf_op`, `program_id`, `flops`, `model_flops`, `bytes_accessed`, `raw_bytes_accessed`, `shape_with_layout`) are read from `XEventMetadata.stats`, not `XEvent.stats`. The HLO op text itself is `XEventMetadata.name`. |
+| [`extract_hlo_proto.py`](scripts/extract_hlo_proto.py) | Decodes the **embedded `xla.HloProto`** for every compiled module (the `'Hlo Proto'` `bytes` stat on `/host:metadata`'s `XEventMetadata.stats`). Cross-checks against any sibling `*.hlo_proto.pb` files. Pass `--dump <module-substring>` to print the entry-computation instructions. |
 | [`extract_framework_ops.py`](scripts/extract_framework_ops.py) | `/host:CPU` framework events, with stat names discovered (not assumed). |
 | [`extract_collective_events.py`](scripts/extract_collective_events.py) | `"Async XLA Ops"` paired by the `flow` stat (per-`XEvent.stats`) — measures exposed comm stall via `device_duration_ps` of `*-done` events. |
 | [`read_trace_json.py`](scripts/read_trace_json.py) | `trace.json.gz` top-level plus pid/tid name maps and sample `X`/`i` events. |
@@ -193,6 +234,17 @@ cover is missing.
 ```bash
 python3 plugins/tpu-perf/skills/profile-anatomy/scripts/walk_xplane.py \
   /Users/xl/tensorboard/tensorboard/plugins/profile/dp8_fsdp128
+
+# Embedded HloProto for every compiled module — works on the
+# 2026_05_26_11_29_35 fixture (12 modules embedded) as well as any
+# capture lacking standalone *.hlo_proto.pb files.
+python3 plugins/tpu-perf/skills/profile-anatomy/scripts/extract_hlo_proto.py \
+  /Users/xl/tensorboard/tensorboard/plugins/profile/2026_05_26_11_29_35
+
+# Dump the entry computation of the matching module.
+python3 plugins/tpu-perf/skills/profile-anatomy/scripts/extract_hlo_proto.py \
+  /Users/xl/tensorboard/tensorboard/plugins/profile/2026_05_26_11_29_35 \
+  --dump jit_train_step
 ```
 
 ## 5. Common gotchas
@@ -223,3 +275,9 @@ python3 plugins/tpu-perf/skills/profile-anatomy/scripts/walk_xplane.py \
   don't double-count its events against `"XLA Ops"`.
 - **Async pairing uses `flow`, not `is_root`.** Don't write code that
   looks for an `is_root` stat — it doesn't exist in current captures.
+- **HLO proto lives on `/host:metadata`, not `/device:*`.** The
+  per-module `HloProto` is attached to `XEventMetadata.stats` of the
+  `/host:metadata` plane as a `'Hlo Proto'` `bytes_value` (see §2.1) —
+  not on any device plane and not on any `XEvent.stats`. Don't rely on
+  the on-disk `*.hlo_proto.pb` files being present; the xplane-embedded
+  copy is the source of truth.
