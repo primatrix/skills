@@ -60,13 +60,84 @@ class TestAggregateByKey(unittest.TestCase):
         self.assertEqual(out["A"].hlo_categories,
                          {"loop fusion": 2, "convolution fusion": 1})
 
-    def test_example_hlo_op_is_first_seen(self):
+    def test_hlo_op_signature_normalization(self):
+        # custom-call buckets by target so 0-cost AllocateBuffer ≠ Pallas kernel
+        self.assertEqual(
+            cb._hlo_op_signature(
+                '%cc.4874 = bf16[..] custom-call(...) custom_call_target="AllocateBuffer"',
+                "custom-call"),
+            "custom-call:AllocateBuffer")
+        self.assertEqual(
+            cb._hlo_op_signature(
+                '%cc.123 = bf16[..] custom-call(...) custom_call_target="tpu_custom_call"',
+                "custom-call"),
+            "custom-call:tpu_custom_call")
+        # fusion strips trailing .NNN SSA index so different instances collapse
+        self.assertEqual(
+            cb._hlo_op_signature(
+                "%convert_bitcast_fusion.42 = bf16[..] fusion(...)",
+                "loop fusion"),
+            "convert_bitcast_fusion [loop fusion]")
+        self.assertEqual(
+            cb._hlo_op_signature(
+                "%convert_bitcast_fusion.99 = bf16[..] fusion(...)",
+                "loop fusion"),
+            "convert_bitcast_fusion [loop fusion]")
+        # generic opcode + category
+        self.assertEqual(
+            cb._hlo_op_signature(
+                "%reduce.7 = f32[..] reduce(f32[..] %x), to_apply=...",
+                "reduce"),
+            "reduce [reduce]")
+        # empty / unparseable falls through to a category-only key
+        self.assertEqual(cb._hlo_op_signature("", "loop fusion"),
+                          "<empty> [loop fusion]")
+
+    def test_hlo_op_breakdown_orders_by_dur_and_separates_targets(self):
+        # AllocateBuffer placeholders + Pallas kernel + small fusion in one group;
+        # breakdown must order by total_dur_ps and keep AllocateBuffer separate.
         recs = [
-            _make_record(agg_key="A", hlo_op="first"),
-            _make_record(agg_key="A", hlo_op="second"),
+            _make_record(
+                agg_key="A", duration_ps=75, hlo_category="custom-call",
+                hlo_op='%cc.1 = ... custom-call(...) custom_call_target="AllocateBuffer"'),
+            _make_record(
+                agg_key="A", duration_ps=75, hlo_category="custom-call",
+                hlo_op='%cc.2 = ... custom-call(...) custom_call_target="AllocateBuffer"'),
+            _make_record(
+                agg_key="A", duration_ps=316_880_000_000, hlo_category="custom-call",
+                hlo_op='%vmap_jit__pallas.10 = ... custom-call(...) '
+                       'custom_call_target="tpu_custom_call"'),
+            _make_record(
+                agg_key="A", duration_ps=13_930_000_000, hlo_category="loop fusion",
+                hlo_op="%convert_bitcast_fusion.5 = bf16[..] fusion(...)"),
         ]
         out = cb._aggregate_by_key(recs)
-        self.assertEqual(out["A"].example_hlo_op, "first")
+        rows = out["A"].hlo_op_breakdown(top_n=8)
+        sigs = [r["signature"] for r in rows]
+        self.assertEqual(sigs[0], "custom-call:tpu_custom_call")
+        self.assertEqual(sigs[1], "convert_bitcast_fusion [loop fusion]")
+        self.assertIn("custom-call:AllocateBuffer", sigs)
+        # Heaviest signature takes ~95% of group time, not "240 events".
+        self.assertGreater(rows[0]["pct_of_group"], 90.0)
+        self.assertEqual(rows[0]["n_executions"], 1)
+        # AllocateBuffer reports its 2 events together, separate from kernel.
+        ab = next(r for r in rows if r["signature"] == "custom-call:AllocateBuffer")
+        self.assertEqual(ab["n_executions"], 2)
+        self.assertEqual(ab["total_dur_ps"], 150)
+
+    def test_example_hlo_op_picks_longest_duration(self):
+        # example_hlo_op should track the heaviest single event in the group,
+        # not the first one seen — otherwise a 0-cost AllocateBuffer placeholder
+        # appearing before a real Pallas kernel would be reported as the
+        # "representative" op and mislead users.
+        recs = [
+            _make_record(agg_key="A", hlo_op="placeholder", duration_ps=10),
+            _make_record(agg_key="A", hlo_op="heavy",       duration_ps=1000),
+            _make_record(agg_key="A", hlo_op="medium",      duration_ps=100),
+        ]
+        out = cb._aggregate_by_key(recs)
+        self.assertEqual(out["A"].example_hlo_op, "heavy")
+        self.assertEqual(out["A"].example_hlo_op_dur_ps, 1000)
 
 
 class TestComputeTotals(unittest.TestCase):
