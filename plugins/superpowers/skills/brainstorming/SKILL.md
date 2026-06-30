@@ -22,13 +22,13 @@ Every project goes through this process. A todo list, a single-function utility,
 You MUST create a task for each of these items and complete them in order:
 
 1. **Explore project context** — check files, docs, recent commits
-2. **Offer visual companion** (if topic will involve visual questions) — this is its own message, not combined with a clarifying question. See the Visual Companion section below.
+2. **Offer the visual companion just-in-time** — NOT upfront. The first time a question would genuinely be clearer shown than described, offer it then (its own message); on approval its browser tab opens for you. If no visual question ever arises, never offer it. See the Visual Companion section below.
 3. **Ask clarifying questions** — one at a time, understand purpose/constraints/success criteria
 4. **Propose 2-3 approaches** — with trade-offs and your recommendation
 5. **Present design** — in sections scaled to their complexity, get user approval after each section
-6. **Publish RFC to wiki** — create RFC in `primatrix/wiki` via GitHub API: determine next RFC number, ask user to select GitHub Project, create branch + RFC file + PR, associate with Project
-7. **Spec review loop** — dispatch spec-document-reviewer subagent with precisely crafted review context (never your session history); fix issues and re-dispatch until approved (max 5 iterations, then surface to human)
-8. **User reviews written spec** — ask user to review the spec file before proceeding
+6. **Publish design RFC to primatrix/wiki** — create or update an RFC PR in `primatrix/wiki` and record its metadata for downstream planning
+7. **RFC self-review** — quick inline check for placeholders, contradictions, ambiguity, scope (see below)
+8. **User reviews RFC PR** — ask user to review the RFC before proceeding
 9. **Transition to implementation** — invoke writing-plans skill to create implementation plan
 
 ## Process Flow
@@ -36,33 +36,25 @@ You MUST create a task for each of these items and complete them in order:
 ```dot
 digraph brainstorming {
     "Explore project context" [shape=box];
-    "Visual questions ahead?" [shape=diamond];
-    "Offer Visual Companion\n(own message, no other content)" [shape=box];
     "Ask clarifying questions" [shape=box];
     "Propose 2-3 approaches" [shape=box];
     "Present design sections" [shape=box];
     "User approves design?" [shape=diamond];
     "Publish RFC to wiki" [shape=box];
-    "Spec review loop" [shape=box];
-    "Spec review passed?" [shape=diamond];
-    "User reviews spec?" [shape=diamond];
+    "RFC self-review\n(fix inline)" [shape=box];
+    "User reviews RFC?" [shape=diamond];
     "Invoke writing-plans skill" [shape=doublecircle];
 
-    "Explore project context" -> "Visual questions ahead?";
-    "Visual questions ahead?" -> "Offer Visual Companion\n(own message, no other content)" [label="yes"];
-    "Visual questions ahead?" -> "Ask clarifying questions" [label="no"];
-    "Offer Visual Companion\n(own message, no other content)" -> "Ask clarifying questions";
+    "Explore project context" -> "Ask clarifying questions";
     "Ask clarifying questions" -> "Propose 2-3 approaches";
     "Propose 2-3 approaches" -> "Present design sections";
     "Present design sections" -> "User approves design?";
     "User approves design?" -> "Present design sections" [label="no, revise"];
     "User approves design?" -> "Publish RFC to wiki" [label="yes"];
-    "Publish RFC to wiki" -> "Spec review loop";
-    "Spec review loop" -> "Spec review passed?";
-    "Spec review passed?" -> "Spec review loop" [label="issues found,\nfix and re-dispatch"];
-    "Spec review passed?" -> "User reviews spec?" [label="approved"];
-    "User reviews spec?" -> "Publish RFC to wiki" [label="changes requested"];
-    "User reviews spec?" -> "Invoke writing-plans skill" [label="approved"];
+    "Publish RFC to wiki" -> "RFC self-review\n(fix inline)";
+    "RFC self-review\n(fix inline)" -> "User reviews RFC?";
+    "User reviews RFC?" -> "Publish RFC to wiki" [label="changes requested"];
+    "User reviews RFC?" -> "Invoke writing-plans skill" [label="approved"];
 }
 ```
 
@@ -109,76 +101,43 @@ digraph brainstorming {
 
 ## After the Design
 
-**Publish RFC to wiki:**
+**Publish RFC to primatrix/wiki:**
 
-1. **Determine next RFC number:**
-   ```bash
-   gh api repos/primatrix/wiki/contents/docs/rfc --jq '[.[].name | select(test("^[0-9]{4}-"))] | sort | (last // "0000-") | split("-") | .[0] | tonumber + 1'
-   ```
-   Format as zero-padded 4-digit number (e.g., `0002`).
+- Write the validated design as an RFC in the `primatrix/wiki` repository, not as a local `docs/superpowers/specs/...` file.
+- Determine the next RFC number from `docs/rfc/` and create a branch named `rfc/NNNN-<topic>`.
+- Create `docs/rfc/NNNN-<topic>.md`, update `docs/rfc/index.md`, and add the RFC to `docs/.vitepress/config.ts` so it appears in navigation.
+- Open a PR against `primatrix/wiki` and, when the user wants project tracking, associate it with the selected GitHub Project.
+- Store RFC metadata in session context for `writing-plans`: `RFC_NUMBER`, `RFC_BRANCH`, `RFC_PATH`, and `RFC_PR_URL`.
 
-2. **Select GitHub Project:**
-   Run `gh project list --owner primatrix` and present interactive choice to user via AskUserQuestion. Store the selected project number.
+Useful commands:
 
-3. **Create branch:**
-   ```bash
-   MAIN_SHA=$(gh api repos/primatrix/wiki/git/ref/heads/main --jq '.object.sha')
-   # Check if branch already exists
-   if gh api repos/primatrix/wiki/git/ref/heads/rfc/NNNN-<topic> >/dev/null 2>&1; then
-     echo "Branch rfc/NNNN-<topic> already exists. Using existing branch."
-   else
-     gh api repos/primatrix/wiki/git/refs -f ref="refs/heads/rfc/NNNN-<topic>" -f sha="$MAIN_SHA"
-   fi
-   ```
+```bash
+gh api repos/primatrix/wiki/contents/docs/rfc \
+  --jq '[.[].name | select(test("^[0-9]{4}-"))] | sort | (last // "0000-") | split("-") | .[0] | tonumber + 1'
 
-4. **Create RFC file** (`docs/rfc/NNNN-<topic>.md`):
-   Use the design spec content as-is (current brainstorming output format). Encode as base64 and push:
-   ```bash
-   CONTENT=$(printf '%s' "$SPEC_CONTENT" | base64 | tr -d '\n')
-   gh api repos/primatrix/wiki/contents/docs/rfc/NNNN-<topic>.md \
-     -X PUT -f message="docs: add RFC NNNN <topic>" \
-     -f content="$CONTENT" -f branch="rfc/NNNN-<topic>"
-   ```
+MAIN_SHA=$(gh api repos/primatrix/wiki/git/ref/heads/main --jq '.object.sha')
+gh api repos/primatrix/wiki/git/refs \
+  -f ref="refs/heads/rfc/NNNN-<topic>" -f sha="$MAIN_SHA"
+```
 
-5. **Update `docs/rfc/index.md`:**
-   Fetch current content, add a new row to the RFC table, push update to the same branch.
+Use elements-of-style:writing-clearly-and-concisely skill if available for the RFC content.
 
-6. **Update `docs/.vitepress/config.ts`:**
-   Fetch current content, add new sidebar entry to the RFC items array, push update to the same branch.
+**RFC Self-Review:**
+After publishing or updating the RFC, look at it with fresh eyes:
 
-7. **Create PR:**
-   ```bash
-   gh pr create --repo primatrix/wiki --head "rfc/NNNN-<topic>" \
-     --title "RFC NNNN: <topic>" --body-file <(echo "<spec summary>")
-   ```
+1. **Placeholder scan:** Any "TBD", "TODO", incomplete sections, or vague requirements? Fix them.
+2. **Internal consistency:** Do any sections contradict each other? Does the architecture match the feature descriptions?
+3. **Scope check:** Is this focused enough for a single implementation plan, or does it need decomposition?
+4. **Ambiguity check:** Could any requirement be interpreted two different ways? If so, pick one and make it explicit.
 
-8. **Associate with Project:**
-   ```bash
-   gh project item-add <project-number> --owner primatrix --url <pr-url>
-   ```
-
-- Use elements-of-style:writing-clearly-and-concisely skill if available for the RFC content
-- Store RFC metadata (branch name, RFC number, RFC file path, PR URL) in session context for writing-plans to use
-  Store as session variables: `RFC_NUMBER`, `RFC_BRANCH` (e.g., `rfc/NNNN-<topic>`), `RFC_PATH` (e.g., `docs/rfc/NNNN-<topic>.md`), `RFC_PR_URL`. Downstream skills access these via the same session context.
-
-**Spec Review Loop:**
-After publishing the RFC:
-
-1. Dispatch spec-document-reviewer subagent (see spec-document-reviewer-prompt.md)
-   - Provide the RFC content by fetching from GitHub:
-     ```bash
-     gh api repos/primatrix/wiki/contents/docs/rfc/NNNN-<topic>.md \
-       -H "Accept: application/vnd.github.raw" -f ref="rfc/NNNN-<topic>"
-     ```
-2. If Issues Found: fix, push update to the RFC file on the branch, re-dispatch
-3. If loop exceeds 5 iterations, surface to human for guidance
+Fix any issues inline and push the RFC branch update. No need to re-review — just fix and move on.
 
 **User Review Gate:**
-After the spec review loop passes, ask the user to review the RFC before proceeding:
+After the RFC self-review passes, ask the user to review the RFC PR before proceeding:
 
-> "RFC published as PR: `<PR_URL>`. Please review the RFC and let me know if you want to make any changes before we start writing out the implementation plan."
+> "RFC published as PR: `<RFC_PR_URL>`. Please review it and let me know if you want to make any changes before we start writing out the implementation plan."
 
-Wait for the user's response. If they request changes, make them (push updates to the RFC branch) and re-run the spec review loop. Only proceed once the user approves.
+Wait for the user's response. If they request changes, update the RFC branch and re-run the RFC self-review. Only proceed once the user approves.
 
 **Implementation:**
 
@@ -198,10 +157,10 @@ Wait for the user's response. If they request changes, make them (push updates t
 
 A browser-based companion for showing mockups, diagrams, and visual options during brainstorming. Available as a tool — not a mode. Accepting the companion means it's available for questions that benefit from visual treatment; it does NOT mean every question goes through the browser.
 
-**Offering the companion:** When you anticipate that upcoming questions will involve visual content (mockups, layouts, diagrams), offer it once for consent:
-> "Some of what we're working on might be easier to explain if I can show it to you in a web browser. I can put together mockups, diagrams, comparisons, and other visuals as we go. This feature is still new and can be token-intensive. Want to try it? (Requires opening a local URL)"
+**Offering the companion (just-in-time):** Do NOT offer it upfront. Wait until a question would genuinely be clearer shown than told — a real mockup / layout / diagram question, not merely a UI *topic*. The first time that happens, offer it then, as its own message:
+> "This next part might be easier if I show you — I can put together mockups, diagrams, and comparisons in a browser tab as we go. It's still new and can be token-intensive. Want me to? I'll open it for you."
 
-**This offer MUST be its own message.** Do not combine it with clarifying questions, context summaries, or any other content. The message should contain ONLY the offer above and nothing else. Wait for the user's response before continuing. If they decline, proceed with text-only brainstorming.
+**This offer MUST be its own message.** Only the offer — no clarifying question, summary, or other content. Wait for the user's response. If they accept, start the server with `--open` so their browser opens to the first screen automatically. If they decline, continue text-only and don't offer again unless they raise it.
 
 **Per-question decision:** Even after the user accepts, decide FOR EACH QUESTION whether to use the browser or the terminal. The test: **would the user understand this better by seeing it than reading it?**
 

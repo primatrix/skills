@@ -1,9 +1,44 @@
-const crypto = require('crypto');
-const http = require('http');
-const fs = require('fs');
-const path = require('path');
+# Zero-Dependency Brainstorm Server Implementation Plan
 
-// ========== WebSocket Protocol (RFC 6455) ==========
+> **For agentic workers:** REQUIRED: Use superpowers:subagent-driven-development (if subagents available) or superpowers:executing-plans to implement this plan. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+**Goal:** Replace the brainstorm server's vendored node_modules with a single zero-dependency `server.js` using Node built-ins.
+
+**Architecture:** Single file with WebSocket protocol (RFC 6455 text frames), HTTP server (`http` module), and file watching (`fs.watch`). Exports protocol functions for unit testing when required as a module.
+
+**Tech Stack:** Node.js built-ins only: `http`, `crypto`, `fs`, `path`
+
+**Spec:** `docs/superpowers/specs/2026-03-11-zero-dep-brainstorm-server-design.md`
+
+**Existing tests:** `tests/brainstorm-server/ws-protocol.test.js` (unit), `tests/brainstorm-server/server.test.js` (integration)
+
+---
+
+## File Map
+
+- **Create:** `skills/brainstorming/scripts/server.js` — the zero-dep replacement
+- **Modify:** `skills/brainstorming/scripts/start-server.sh:94,100` — change `index.js` to `server.js`
+- **Modify:** `.gitignore:6` — remove the `!skills/brainstorming/scripts/node_modules/` exception
+- **Delete:** `skills/brainstorming/scripts/index.js`
+- **Delete:** `skills/brainstorming/scripts/package.json`
+- **Delete:** `skills/brainstorming/scripts/package-lock.json`
+- **Delete:** `skills/brainstorming/scripts/node_modules/` (714 files)
+- **No changes:** `skills/brainstorming/scripts/helper.js`, `skills/brainstorming/scripts/frame-template.html`, `skills/brainstorming/scripts/stop-server.sh`
+
+---
+
+## Chunk 1: WebSocket Protocol Layer
+
+### Task 1: Implement WebSocket protocol exports
+
+**Files:**
+- Create: `skills/brainstorming/scripts/server.js`
+- Test: `tests/brainstorm-server/ws-protocol.test.js` (already exists)
+
+- [ ] **Step 1: Create server.js with OPCODES constant and computeAcceptKey**
+
+```js
+const crypto = require('crypto');
 
 const OPCODES = { TEXT: 0x01, CLOSE: 0x08, PING: 0x09, PONG: 0x0A };
 const WS_MAGIC = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11';
@@ -11,7 +46,16 @@ const WS_MAGIC = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11';
 function computeAcceptKey(clientKey) {
   return crypto.createHash('sha1').update(clientKey + WS_MAGIC).digest('base64');
 }
+```
 
+- [ ] **Step 2: Implement encodeFrame**
+
+Server frames are never masked. Three length encodings:
+- payload < 126: 2-byte header (FIN+opcode, length)
+- 126-65535: 4-byte header (FIN+opcode, 126, 16-bit length)
+- &gt; 65535: 10-byte header (FIN+opcode, 127, 64-bit length)
+
+```js
 function encodeFrame(opcode, payload) {
   const fin = 0x80;
   const len = payload.length;
@@ -35,12 +79,19 @@ function encodeFrame(opcode, payload) {
 
   return Buffer.concat([header, payload]);
 }
+```
 
+- [ ] **Step 3: Implement decodeFrame**
+
+Client frames are always masked. Returns `{ opcode, payload, bytesConsumed }` or `null` for incomplete. Throws on unmasked frames.
+
+```js
 function decodeFrame(buffer) {
   if (buffer.length < 2) return null;
 
+  const firstByte = buffer[0];
   const secondByte = buffer[1];
-  const opcode = buffer[0] & 0x0F;
+  const opcode = firstByte & 0x0F;
   const masked = (secondByte & 0x80) !== 0;
   let payloadLen = secondByte & 0x7F;
   let offset = 2;
@@ -70,26 +121,63 @@ function decodeFrame(buffer) {
 
   return { opcode, payload: data, bytesConsumed: totalLen };
 }
+```
 
-// ========== Configuration ==========
+- [ ] **Step 4: Add module exports at the bottom of the file**
+
+```js
+module.exports = { computeAcceptKey, encodeFrame, decodeFrame, OPCODES };
+```
+
+- [ ] **Step 5: Run unit tests**
+
+Run: `cd tests/brainstorm-server && node ws-protocol.test.js`
+Expected: All tests pass (handshake, encoding, decoding, boundaries, edge cases)
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add skills/brainstorming/scripts/server.js
+git commit -m "Add WebSocket protocol layer for zero-dep brainstorm server"
+```
+
+---
+
+## Chunk 2: HTTP Server and Application Logic
+
+### Task 2: Add HTTP server, file watching, and WebSocket connection handling
+
+**Files:**
+- Modify: `skills/brainstorming/scripts/server.js`
+- Test: `tests/brainstorm-server/server.test.js` (already exists)
+
+- [ ] **Step 1: Add configuration and constants at top of server.js (after requires)**
+
+```js
+const http = require('http');
+const fs = require('fs');
+const path = require('path');
 
 const PORT = process.env.BRAINSTORM_PORT || (49152 + Math.floor(Math.random() * 16383));
 const HOST = process.env.BRAINSTORM_HOST || '127.0.0.1';
 const URL_HOST = process.env.BRAINSTORM_URL_HOST || (HOST === '127.0.0.1' ? 'localhost' : HOST);
 const SCREEN_DIR = process.env.BRAINSTORM_DIR || '/tmp/brainstorm';
-const OWNER_PID = process.env.BRAINSTORM_OWNER_PID ? Number(process.env.BRAINSTORM_OWNER_PID) : null;
 
 const MIME_TYPES = {
   '.html': 'text/html', '.css': 'text/css', '.js': 'application/javascript',
   '.json': 'application/json', '.png': 'image/png', '.jpg': 'image/jpeg',
   '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.svg': 'image/svg+xml'
 };
+```
 
-// ========== Templates and Constants ==========
+- [ ] **Step 2: Add WAITING_PAGE, template loading at module scope, and helper functions**
 
+Load `frameTemplate` and `helperInjection` at module scope so they're accessible to `wrapInFrame` and `handleRequest`. They only read files from `__dirname` (the scripts directory), which is valid whether the module is required or run directly.
+
+```js
 const WAITING_PAGE = `<!DOCTYPE html>
 <html>
-<head><meta charset="utf-8"><title>Brainstorm Companion</title>
+<head><title>Brainstorm Companion</title>
 <style>body { font-family: system-ui, sans-serif; padding: 2rem; max-width: 800px; margin: 0 auto; }
 h1 { color: #333; } p { color: #666; }</style>
 </head>
@@ -99,8 +187,6 @@ h1 { color: #333; } p { color: #666; }</style>
 const frameTemplate = fs.readFileSync(path.join(__dirname, 'frame-template.html'), 'utf-8');
 const helperScript = fs.readFileSync(path.join(__dirname, 'helper.js'), 'utf-8');
 const helperInjection = '<script>\n' + helperScript + '\n</script>';
-
-// ========== Helper Functions ==========
 
 function isFullDocument(html) {
   const trimmed = html.trimStart().toLowerCase();
@@ -121,11 +207,12 @@ function getNewestScreen() {
     .sort((a, b) => b.mtime - a.mtime);
   return files.length > 0 ? files[0].path : null;
 }
+```
 
-// ========== HTTP Request Handler ==========
+- [ ] **Step 3: Add HTTP request handler**
 
+```js
 function handleRequest(req, res) {
-  touchActivity();
   if (req.method === 'GET' && req.url === '/') {
     const screenFile = getNewestScreen();
     let html = screenFile
@@ -138,10 +225,10 @@ function handleRequest(req, res) {
       html += helperInjection;
     }
 
-    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+    res.writeHead(200, { 'Content-Type': 'text/html' });
     res.end(html);
   } else if (req.method === 'GET' && req.url.startsWith('/files/')) {
-    const fileName = req.url.slice(7);
+    const fileName = req.url.slice(7); // strip '/files/'
     const filePath = path.join(SCREEN_DIR, path.basename(fileName));
     if (!fs.existsSync(filePath)) {
       res.writeHead(404);
@@ -157,9 +244,11 @@ function handleRequest(req, res) {
     res.end('Not found');
   }
 }
+```
 
-// ========== WebSocket Connection Handling ==========
+- [ ] **Step 4: Add WebSocket connection handling**
 
+```js
 const clients = new Set();
 
 function handleUpgrade(req, socket) {
@@ -204,13 +293,13 @@ function handleUpgrade(req, socket) {
           break;
         case OPCODES.PONG:
           break;
-        default: {
+        default:
+          // Unsupported opcode — close with 1003
           const closeBuf = Buffer.alloc(2);
           closeBuf.writeUInt16BE(1003);
           socket.end(encodeFrame(OPCODES.CLOSE, closeBuf));
           clients.delete(socket);
           return;
-        }
       }
     }
   });
@@ -227,7 +316,6 @@ function handleMessage(text) {
     console.error('Failed to parse WebSocket message:', e.message);
     return;
   }
-  touchActivity();
   console.log(JSON.stringify({ source: 'user-event', ...event }));
   if (event.choice) {
     const eventsFile = path.join(SCREEN_DIR, '.events');
@@ -241,84 +329,44 @@ function broadcast(msg) {
     try { socket.write(frame); } catch (e) { clients.delete(socket); }
   }
 }
+```
 
-// ========== Activity Tracking ==========
+- [ ] **Step 5: Add debounce timer map**
 
-const IDLE_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
-let lastActivity = Date.now();
-
-function touchActivity() {
-  lastActivity = Date.now();
-}
-
-// ========== File Watching ==========
-
+```js
 const debounceTimers = new Map();
+```
 
-// ========== Server Startup ==========
+File watching logic is inlined in `startServer` (Step 6) to keep watcher lifecycle together with server lifecycle and include an `error` handler per spec.
 
+- [ ] **Step 6: Add startServer function and conditional main**
+
+`frameTemplate` and `helperInjection` are already at module scope (Step 2). `startServer` just creates the screen dir, starts the HTTP server, watcher, and logs startup info.
+
+```js
 function startServer() {
   if (!fs.existsSync(SCREEN_DIR)) fs.mkdirSync(SCREEN_DIR, { recursive: true });
-
-  // Track known files to distinguish new screens from updates.
-  // macOS fs.watch reports 'rename' for both new files and overwrites,
-  // so we can't rely on eventType alone.
-  const knownFiles = new Set(
-    fs.readdirSync(SCREEN_DIR).filter(f => f.endsWith('.html'))
-  );
 
   const server = http.createServer(handleRequest);
   server.on('upgrade', handleUpgrade);
 
   const watcher = fs.watch(SCREEN_DIR, (eventType, filename) => {
     if (!filename || !filename.endsWith('.html')) return;
-
     if (debounceTimers.has(filename)) clearTimeout(debounceTimers.get(filename));
     debounceTimers.set(filename, setTimeout(() => {
       debounceTimers.delete(filename);
       const filePath = path.join(SCREEN_DIR, filename);
-
-      if (!fs.existsSync(filePath)) return; // file was deleted
-      touchActivity();
-
-      if (!knownFiles.has(filename)) {
-        knownFiles.add(filename);
+      if (eventType === 'rename' && fs.existsSync(filePath)) {
         const eventsFile = path.join(SCREEN_DIR, '.events');
         if (fs.existsSync(eventsFile)) fs.unlinkSync(eventsFile);
         console.log(JSON.stringify({ type: 'screen-added', file: filePath }));
-      } else {
+      } else if (eventType === 'change') {
         console.log(JSON.stringify({ type: 'screen-updated', file: filePath }));
       }
-
       broadcast({ type: 'reload' });
     }, 100));
   });
   watcher.on('error', (err) => console.error('fs.watch error:', err.message));
-
-  function shutdown(reason) {
-    console.log(JSON.stringify({ type: 'server-stopped', reason }));
-    const infoFile = path.join(SCREEN_DIR, '.server-info');
-    if (fs.existsSync(infoFile)) fs.unlinkSync(infoFile);
-    fs.writeFileSync(
-      path.join(SCREEN_DIR, '.server-stopped'),
-      JSON.stringify({ reason, timestamp: Date.now() }) + '\n'
-    );
-    watcher.close();
-    clearInterval(lifecycleCheck);
-    server.close(() => process.exit(0));
-  }
-
-  function ownerAlive() {
-    if (!OWNER_PID) return true;
-    try { process.kill(OWNER_PID, 0); return true; } catch (e) { return false; }
-  }
-
-  // Check every 60s: exit if owner process died or idle for 30 minutes
-  const lifecycleCheck = setInterval(() => {
-    if (!ownerAlive()) shutdown('owner process exited');
-    else if (Date.now() - lastActivity > IDLE_TIMEOUT_MS) shutdown('idle timeout');
-  }, 60 * 1000);
-  lifecycleCheck.unref();
 
   server.listen(PORT, HOST, () => {
     const info = JSON.stringify({
@@ -334,5 +382,98 @@ function startServer() {
 if (require.main === module) {
   startServer();
 }
+```
 
-module.exports = { computeAcceptKey, encodeFrame, decodeFrame, OPCODES };
+- [ ] **Step 7: Run integration tests**
+
+The test directory already has a `package.json` with `ws` as a dependency. Install it if needed, then run tests.
+
+Run: `cd tests/brainstorm-server && npm install && node server.test.js`
+Expected: All tests pass
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add skills/brainstorming/scripts/server.js
+git commit -m "Add HTTP server, WebSocket handling, and file watching to server.js"
+```
+
+---
+
+## Chunk 3: Swap and Cleanup
+
+### Task 3: Update start-server.sh and remove old files
+
+**Files:**
+- Modify: `skills/brainstorming/scripts/start-server.sh:94,100`
+- Modify: `.gitignore:6`
+- Delete: `skills/brainstorming/scripts/index.js`
+- Delete: `skills/brainstorming/scripts/package.json`
+- Delete: `skills/brainstorming/scripts/package-lock.json`
+- Delete: `skills/brainstorming/scripts/node_modules/` (entire directory)
+
+- [ ] **Step 1: Update start-server.sh — change `index.js` to `server.js`**
+
+Two lines to change:
+
+Line 94: `env BRAINSTORM_DIR="$SCREEN_DIR" BRAINSTORM_HOST="$BIND_HOST" BRAINSTORM_URL_HOST="$URL_HOST" node server.js`
+
+Line 100: `nohup env BRAINSTORM_DIR="$SCREEN_DIR" BRAINSTORM_HOST="$BIND_HOST" BRAINSTORM_URL_HOST="$URL_HOST" node server.js > "$LOG_FILE" 2>&1 &`
+
+- [ ] **Step 2: Remove the gitignore exception for node_modules**
+
+In `.gitignore`, delete line 6: `!skills/brainstorming/scripts/node_modules/`
+
+- [ ] **Step 3: Delete old files**
+
+```bash
+git rm skills/brainstorming/scripts/index.js
+git rm skills/brainstorming/scripts/package.json
+git rm skills/brainstorming/scripts/package-lock.json
+git rm -r skills/brainstorming/scripts/node_modules/
+```
+
+- [ ] **Step 4: Run both test suites**
+
+Run: `cd tests/brainstorm-server && node ws-protocol.test.js && node server.test.js`
+Expected: All tests pass
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add skills/brainstorming/scripts/ .gitignore
+git commit -m "Remove vendored node_modules, swap to zero-dep server.js"
+```
+
+### Task 4: Manual smoke test
+
+- [ ] **Step 1: Start the server manually**
+
+```bash
+cd skills/brainstorming/scripts
+BRAINSTORM_DIR=/tmp/brainstorm-smoke BRAINSTORM_PORT=9876 node server.js
+```
+
+Expected: `server-started` JSON printed with port 9876
+
+- [ ] **Step 2: Open browser to http://localhost:9876**
+
+Expected: Waiting page with "Waiting for Claude to push a screen..."
+
+- [ ] **Step 3: Write an HTML file to the screen directory**
+
+```bash
+echo '<h2>Hello from smoke test</h2>' > /tmp/brainstorm-smoke/test.html
+```
+
+Expected: Browser reloads and shows "Hello from smoke test" wrapped in frame template
+
+- [ ] **Step 4: Verify WebSocket works — check browser console**
+
+Open browser dev tools. The WebSocket connection should show as connected (no errors in console). The frame template's status indicator should show "Connected".
+
+- [ ] **Step 5: Stop server with Ctrl-C, clean up**
+
+```bash
+rm -rf /tmp/brainstorm-smoke
+```
