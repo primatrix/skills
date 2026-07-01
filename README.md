@@ -1,375 +1,211 @@
 # Primatrix Skills Plugin Marketplace
 
-A [Claude Code plugin marketplace](https://code.claude.com/docs/en/plugin-marketplaces) containing reusable Agent Skills. Also compatible with [Codex](https://developers.openai.com/codex/cli) and [Gemini CLI](https://geminicli.com/docs/cli/skills/).
+A [Claude Code plugin marketplace](https://code.claude.com/docs/en/plugin-marketplaces) containing reusable Agent Skills and workflow plugins. The same repository can also be used by Codex through `codex plugin` and by Gemini CLI through individual skill installs.
 
 ## What is a Skill?
 
-A Skill is a set of structured instructions (defined in a `SKILL.md` file) that teaches an AI coding agent how to perform a specific workflow. When installed, the agent loads relevant skills based on your request, giving it domain-specific knowledge and step-by-step procedures.
+A Skill is a set of structured instructions, usually defined in a `SKILL.md` file, that teaches an AI coding agent how to perform a specific workflow. A plugin can bundle skills together with slash commands, hooks, agents, and supporting scripts.
 
-## Available Skills
+## Available Plugins
 
-| Skill | Description |
-|-------|-------------|
-| [exec-remote](#exec-remote) | Execute Python scripts on remote GPU/TPU clusters via SkyPilot |
-| [beaver](#beaver) | Beaver issue tracker: project setup, issue creation, and PR workflows for GitHub Projects V2 |
-| [session-recorder](#session-recorder) | Records the complete session content to a daily work directory |
-| [lint-fix](#lint-fix) | Check and fix lint issues for changed Python files |
-| [xprof-profiling-analysis](#xprof-profiling-analysis) | Analyze TPU/XLA profiling data (xprof, xplane, trace) for performance optimization |
+| Plugin | Version | Contents | Description |
+|--------|---------|----------|-------------|
+| `agent-recap` | `0.1.0` | 1 skill | Mine local Claude/Codex session history and produce daily or weekly recaps. |
+| `beaver` | `3.3.0` | 9 commands, 2 support skills | GitHub-native issue lifecycle and project workflow commands. |
+| `exec-remote` | `1.0.0` | 3 skills | Run Python scripts, tests, or benchmarks on remote GPU/TPU clusters via SkyPilot. |
+| `gke-tpu` | `1.0.0` | 1 skill | Manage GKE-based TPU workloads with `kubectl`, code sync, and benchmark execution. |
+| `lint-fix` | `1.0.0` | 1 skill | Check and fix lint issues for changed Python files. |
+| `session-recorder` | `1.0.0` | 1 skill | Record complete session content into dated work logs. |
+| `superpowers` | `6.0.3` | 14 skills, 3 commands, hooks | Core workflow skills: TDD, debugging, brainstorming, review, planning, and collaboration patterns. Based on official Superpowers v6.0.3 with Primatrix RFC workflow customizations. |
+| `tpu-perf` | `0.3.0` | 4 skills | Systematic TPU pretraining profile analysis: anatomy, communication, compute, and HBM memory. |
+| `xprof-profiling-analysis` | `2.0.0` | 1 skill | TPU/XLA profiling methodology plus XProf MCP-oriented analysis workflows. |
 
----
+`tpu-perf` replaces the older `tpu-perf-model` plugin.
 
-### exec-remote
+## Skill Inventory
 
-Execute Python scripts on remote GPU/TPU clusters via [SkyPilot](https://skypilot.readthedocs.io/).
+| Plugin | Skill | Use when |
+|--------|-------|----------|
+| `agent-recap` | `agent-recap` | Summarizing recent local agent work into a structured report. |
+| `beaver` | `beaver-engine` | Internal engine for Beaver commands. |
+| `beaver` | `spec-document-reviewer` | Internal reviewer prompt for Beaver design RFCs. |
+| `exec-remote` | `exec-remote` | Running code, tests, or benchmarks on a provisioned remote GPU/TPU cluster. |
+| `exec-remote` | `deploy-cluster` | Deploying a SkyPilot-managed TPU cluster on GKE. |
+| `exec-remote` | `apply-resource` | Creating, deleting, or listing GKE TPU nodepool resources through xpk. |
+| `gke-tpu` | `gke-tpu` | Creating pods/jobs, syncing code, and running TPU workloads on GKE. |
+| `lint-fix` | `lint-fix` | Linting or auto-fixing changed Python files with isort, ruff, black, and codespell. |
+| `session-recorder` | `session-recorder` | Recording full session history for progress tracking and documentation. |
+| `superpowers` | `using-superpowers` | Establishing skill usage rules at the start of a conversation. |
+| `superpowers` | `brainstorming` | Exploring requirements before creative implementation work. |
+| `superpowers` | `writing-plans` | Writing an implementation plan from a spec or requirements. |
+| `superpowers` | `executing-plans` | Executing a written implementation plan with review checkpoints. |
+| `superpowers` | `subagent-driven-development` | Splitting independent implementation tasks across subagents. |
+| `superpowers` | `dispatching-parallel-agents` | Dispatching independent read/search/review tasks in parallel. |
+| `superpowers` | `systematic-debugging` | Diagnosing bugs or unexpected behavior before proposing fixes. |
+| `superpowers` | `test-driven-development` | Implementing features or fixes through a red-green-refactor loop. |
+| `superpowers` | `verification-before-completion` | Verifying evidence before claiming work is complete or passing. |
+| `superpowers` | `requesting-code-review` | Checking work before merge or handoff. |
+| `superpowers` | `receiving-code-review` | Handling review feedback rigorously before changing code. |
+| `superpowers` | `finishing-a-development-branch` | Deciding how to finish, merge, PR, or clean up completed work. |
+| `superpowers` | `using-git-worktrees` | Starting isolated feature work or plan execution. |
+| `superpowers` | `writing-skills` | Creating, editing, or verifying skills before deployment. |
+| `tpu-perf` | `profile-anatomy` | Reading TPU pretraining profile layouts, xplane.pb, and trace.json.gz. |
+| `tpu-perf` | `comm-analysis` | Analyzing TPU communication primitives, axis bandwidth, and compute/comm overlap. |
+| `tpu-perf` | `compute-breakdown` | Producing HLO duration breakdowns, layer scopes, non-compute audits, and roofline shortfall reports. |
+| `tpu-perf` | `memory-profile` | Analyzing HBM peak occupancy and alive-buffer attribution from profile directories. |
+| `xprof-profiling-analysis` | `xprof-profiling-analysis` | Analyzing TPU/GPU profiles with XProf APIs and offline trace methodology. |
 
-**Use when:** the user asks to run code on GPU, TPU, or any remote cluster.
+## Slash Commands
 
-This plugin contains three skills with a parent-child relationship:
-
-```
-exec-remote          ← Entry point: run scripts on a provisioned cluster
-├── deploy-cluster   ← Deploy a SkyPilot-managed TPU cluster on GKE
-└── apply-resource   ← Provision/manage the underlying GKE TPU cluster via xpk
-```
-
-`exec-remote` is the top-level skill. When a cluster doesn't exist yet, it delegates to `deploy-cluster`, which in turn delegates to `apply-resource` to create the GKE infrastructure.
-
-| Skill | Description |
-|-------|-------------|
-| **exec-remote** | Executes Python scripts, tests, or benchmarks on a provisioned remote cluster (GPU or TPU). Entry point — delegates to the sub-skills as needed. |
-| **deploy-cluster** | Deploys a SkyPilot-managed TPU cluster on GKE. Generates `~/.sky/config.yaml`, fetches GKE credentials, and runs `sky launch`. |
-| **apply-resource** | Manages GKE TPU clusters using xpk. Creates, deletes, and lists TPU Nodepool resources. Multi-user safe — always queries GKE in real-time. |
-
-**Capabilities:**
-- Provision GPU clusters (H100, A100, L4, etc.) or TPU clusters (v4, v6e, etc.) on GCP
-- Execute Python scripts and pytest tests on remote instances
-- Automatically sync local working directory to the remote cluster
-- Manage full cluster lifecycle (create GKE cluster → deploy SkyPilot → execute → teardown)
-
-**Prerequisites:**
-- [SkyPilot](https://skypilot.readthedocs.io/) installed and configured
-- [xpk](https://github.com/AI-Hypercomputer/xpk) installed (for GKE TPU cluster management)
-- [Google Cloud SDK](https://cloud.google.com/sdk/docs/install) with `gcloud auth login` completed
-- [kubectl](https://cloud.google.com/kubernetes-engine/docs/how-to/cluster-access-for-kubectl) with `gke-gcloud-auth-plugin`
-- [uv](https://github.com/astral-sh/uv) for dependency management
-
-#### GKE TPU Getting Started
-
-For running code on TPU via GKE (the full `apply-resource → deploy-cluster → exec-remote` pipeline), additional tools are required:
-
-| Tool | Install | Verify |
-|------|---------|--------|
-| [xpk](https://github.com/AI-Hypercomputer/xpk) | [Install guide](https://github.com/AI-Hypercomputer/xpk/blob/main/docs/installation.md) | `xpk --help` |
-| [kubectl](https://cloud.google.com/kubernetes-engine/docs/how-to/cluster-access-for-kubectl) | `gcloud components install kubectl` | `kubectl version --client` |
-
-After installing the plugin (see [Installation](#installation)), open your AI agent in your project directory and paste the prompt below.
-
-Replace **`YOUR_REPO_PATH/sglang-jax/benchmark/moe/bench_ep_moe.py`** with your actual script path.
-
-##### COPY THIS PROMPT
-
-> **[Context]**
-> I'm working on a JAX-based ML project with `pyproject.toml` that has a `tpu` extra dependency group. No remote cluster exists yet — `.cluster_name_tpu` is absent. The `exec-remote` plugin provides a three-stage pipeline: `apply-resource` (creates GKE cluster via `xpk cluster create-pathways --spot`) → `deploy-cluster` (deploys SkyPilot on GKE via its `scripts/deploy.py`) → `exec-remote` (runs code via `sky exec`). The GCP project is `tpu-service-473302`. The deploy script writes `.cluster_name_tpu` as the integration point between stages.
->
-> **[Objective]**
-> Run **Full CI Tests parallel** on a TPU cluster by provisioning the full GKE infrastructure from scratch, following the complete `apply-resource → deploy-cluster → exec-remote` pipeline.
->
-> **[Style]**
-> Step-by-step automated execution. Collect all cluster parameters from me once upfront (cluster name, TPU type, number of slices, GCP zone), then carry them through every subsequent step — never re-ask. Auto-calculate `--num-nodes` from TPU type (total_chips / 4, e.g. v6e-8 = 2 nodes, v6e-4 = 1 node). After `xpk` creates the GKE cluster, poll `gcloud container clusters list` until status is `RUNNING` — do NOT proceed while `RECONCILING` or `PROVISIONING` (deploying SkyPilot in these states causes SSL errors).
->
-> **[Tone]**
-> Proactive — execute each pipeline step automatically and report progress. Only pause to collect user input during initial parameter gathering.
->
-> **[Audience]**
-> ML engineer who wants to run training code on cloud TPU without manually managing infrastructure.
->
-> **[Response]**
-> After each stage (GKE creation, SkyPilot deployment, code execution), briefly report the result and verify success before proceeding. Use `sky exec` with `--extra tpu` for dependencies and `--workdir .` to sync the local directory. If any step fails, diagnose the error and suggest a fix before continuing.
-
-The agent will ask you for cluster parameters (cluster name, TPU type, number of slices, GCP zone) once, then execute the full pipeline automatically:
-
-```
-apply-resource   →  Creates GKE cluster with TPU nodepool via xpk
-                     Polls until cluster status is RUNNING
-deploy-cluster   →  Configures and launches SkyPilot on GKE
-                     Writes .cluster_name_tpu
-exec-remote      →  Syncs local directory, runs your script
-                     with correct --num-nodes and --extra tpu
-```
-
----
-
-### beaver
-
-Beaver issue tracker for [GitHub Projects V2](https://docs.github.com/en/issues/planning-and-tracking-with-projects) — project setup, issue creation, and PR workflows.
-
-**Use when:** the user wants to create a GitHub Project V2 with structured issue tracking, create Beaver-tracked issues (Goal/Task/SubTask), or open PRs linked to Beaver issues.
-
-This plugin contains one command and two skills:
-
-```
-create-beaver-project  ← Command: set up a new GitHub Project V2 with Beaver config
-beaver-pr              ← Skill: commit, push, and open a PR linked to a Beaver issue
-create-beaver-issue    ← Skill: create a Beaver-tracked GitHub Issue with Project V2 fields
-```
-
-| Skill / Command | Description |
-|-----------------|-------------|
-| **create-beaver-project** | Creates a GitHub Project V2 with custom fields (Level, Status, Progress), a `beaver-config` README block, and initializes the issue repo with issue types, labels, and milestones. |
-| **create-beaver-issue** | Creates a Beaver-tracked GitHub Issue (Goal/Task/SubTask) with automatic Project V2 field setup, tracking rules, and parent issue linking. |
-| **beaver-pr** | Commits changes, pushes the branch, and opens a GitHub PR with optional Beaver issue association. |
-
-**Capabilities:**
-- Create GitHub Project V2 with standardized custom fields (Level, Status, Progress)
-- Create structured issues with three hierarchy levels: Goal, Task, SubTask
-- Automatic Project V2 field setup and tracking rule configuration
-- PR workflow with optional Beaver issue linking
-- Issue body templates with Chinese (中文) convention for 目标/验收标准 sections
-- Milestone management with weekly milestone auto-generation
-
-**Prerequisites:**
-- [GitHub CLI](https://cli.github.com/) (`gh`) installed and authenticated
-- Token scopes: `project` and `admin:org` (for issue types)
-- Organization-level GitHub Projects V2 access
-
----
-
-### lint-fix
-
-Check and fix lint issues for changed Python files. Supports single commit, commit range, and unstaged/staged working tree changes.
-
-**Use when:** the user wants to verify or fix lint compliance for specific changes.
-
-**Capabilities:**
-- Lint files changed in a single commit or a range of commits
-- Lint unstaged or staged working tree changes
-- Auto-fix issues using isort, ruff, black, and codespell
-- Manually fix remaining issues that cannot be auto-resolved
-- Stage fixes for user review before committing
-
-**Supported Linters:**
-- [isort](https://pycqa.github.io/isort/) — import sorting
-- [ruff](https://docs.astral.sh/ruff/) — fast Python linter
-- [black](https://black.readthedocs.io/) — code formatting
-- [codespell](https://github.com/codespell-project/codespell) — spelling checks
-
-**Prerequisites:**
-- A git repository with Python files
-- Linter tools installed (isort, ruff, black, codespell)
-
----
-
-### xprof-profiling-analysis
-
-Comprehensive methodology for analyzing TPU/XLA profiling data: from trace parsing to performance bottleneck identification and optimization.
-
-**Use when:** analyzing TPU/XLA profiling data (xprof, trace.json.gz, op_stats, xplane), understanding HLO op performance, backward pass structure (gmm/tgmm), MFU calculation for MoE models, communication bottleneck identification, or comparing GPU vs TPU training performance.
-
-**Capabilities:**
-- Parse and analyze `trace.json.gz` and `xplane.pb` profiling data
-- Classify HLO ops (matmul, attention, communication, custom kernels, etc.)
-- Identify forward/backward pass structure using `tf_op` fields
-- Calculate MFU for dense and MoE models
-- Analyze communication patterns (AllGather, ReduceScatter, AllReduce, AllToAll)
-- Diagnose communication overlap issues via async-done stall analysis
-- Map XLA flags to performance symptoms
-- Detect truncated traces (1M event limit) and fall back to xplane.pb
-
-**Covers:**
-- Trace event structure and TPU device identification
-- HLO operator classification rules
-- GMM/TGMM backward pass structure for MoE models
-- MFU formula and MoE-specific considerations
-- Communication primitive to parallelism strategy mapping
-- XLA flags reference (Continuation Fusion, SparseCore offload, DP overlap)
-- Roofline and system bound analysis
-- Common pitfalls and anti-patterns
-
-**Prerequisites:**
-- TPU profiling data (`trace.json.gz`, `xplane.pb`, or `op_stats_v2.pb`)
-- Python with TensorFlow/JAX for xplane.pb parsing
-
----
+| Plugin | Commands |
+|--------|----------|
+| `beaver` | `/beaver-create`, `/beaver-design`, `/beaver-decompose`, `/beaver-dev`, `/beaver-fix`, `/beaver-focus`, `/beaver-pr`, `/beaver-setup`, `/beaver-tracker` |
+| `superpowers` | `/brainstorm`, `/write-plan`, `/execute-plan` |
 
 ## Installation
 
 ### Claude Code
 
-Install plugins via the [plugin marketplace](https://code.claude.com/docs/en/plugin-marketplaces):
+Add this repository as a marketplace, then install the plugins you need:
 
-```bash
-# add this repository as a community marketplace
+```text
 /plugin marketplace add primatrix/skills
 
-# install plugins from the marketplace
-/plugin install exec-remote@primatrix-skills
+/plugin install agent-recap@primatrix-skills
 /plugin install beaver@primatrix-skills
+/plugin install exec-remote@primatrix-skills
+/plugin install gke-tpu@primatrix-skills
 /plugin install lint-fix@primatrix-skills
+/plugin install session-recorder@primatrix-skills
+/plugin install superpowers@primatrix-skills
+/plugin install tpu-perf@primatrix-skills
 /plugin install xprof-profiling-analysis@primatrix-skills
+```
 
-# project scope (default is user scope)
-/plugin install exec-remote@primatrix-skills --scope project
-/plugin install beaver@primatrix-skills --scope project
+For project-local installs, add `--scope project`:
+
+```text
+/plugin install superpowers@primatrix-skills --scope project
+/plugin install tpu-perf@primatrix-skills --scope project
+```
+
+Verify from a Claude Code session:
+
+```text
+/plugin list
 ```
 
 ### Codex
 
-Install skills via [skills.sh](https://skills.sh):
+Codex can consume this repository as a plugin marketplace:
 
 ```bash
-npx skills add primatrix/skills@exec-remote -a codex
-npx skills add primatrix/skills@beaver -a codex
-npx skills add primatrix/skills@lint-fix -a codex
-npx skills add primatrix/skills@xprof-profiling-analysis -a codex
+codex plugin marketplace add primatrix/skills --ref main
+codex plugin list --marketplace primatrix-skills
+
+codex plugin add agent-recap@primatrix-skills
+codex plugin add beaver@primatrix-skills
+codex plugin add exec-remote@primatrix-skills
+codex plugin add gke-tpu@primatrix-skills
+codex plugin add lint-fix@primatrix-skills
+codex plugin add session-recorder@primatrix-skills
+codex plugin add superpowers@primatrix-skills
+codex plugin add tpu-perf@primatrix-skills
+codex plugin add xprof-profiling-analysis@primatrix-skills
+```
+
+Refresh an already-added marketplace snapshot before installing newly-added plugins:
+
+```bash
+codex plugin marketplace upgrade primatrix-skills
+codex plugin list --marketplace primatrix-skills
+```
+
+Verify installed plugins:
+
+```bash
+codex plugin list
 ```
 
 ### Gemini CLI
 
-Install skills via the built-in [skill commands](https://geminicli.com/docs/cli/skills/):
+Gemini CLI installs individual skill directories. Use the paths from [Skill Inventory](#skill-inventory):
 
 ```bash
-# install from GitHub (user scope by default: ~/.gemini/skills)
+gemini skills install https://github.com/primatrix/skills.git --path plugins/superpowers/skills/using-superpowers
+gemini skills install https://github.com/primatrix/skills.git --path plugins/superpowers/skills/brainstorming
+gemini skills install https://github.com/primatrix/skills.git --path plugins/tpu-perf/skills/profile-anatomy
+gemini skills install https://github.com/primatrix/skills.git --path plugins/tpu-perf/skills/comm-analysis
 gemini skills install https://github.com/primatrix/skills.git --path plugins/exec-remote/skills/exec-remote
-gemini skills install https://github.com/primatrix/skills.git --path plugins/beaver/skills/beaver-pr
-gemini skills install https://github.com/primatrix/skills.git --path plugins/beaver/skills/create-beaver-issue
-gemini skills install https://github.com/primatrix/skills.git --path plugins/lint-fix/skills/lint-fix
-gemini skills install https://github.com/primatrix/skills.git --path plugins/xprof-profiling-analysis/skills/xprof-profiling-analysis
-
-# project/workspace scope (.gemini/skills in current project)
-gemini skills install https://github.com/primatrix/skills.git --path plugins/exec-remote/skills/exec-remote --scope workspace
-gemini skills install https://github.com/primatrix/skills.git --path plugins/beaver/skills/beaver-pr --scope workspace
 ```
 
-### Cross-platform (skills.sh)
-
-[skills.sh](https://skills.sh) is a universal package manager that works across Claude Code, Codex, and Gemini CLI:
+Install into the current workspace instead of user scope:
 
 ```bash
-npx skills add primatrix/skills@exec-remote
-npx skills add primatrix/skills@beaver
-npx skills add primatrix/skills@lint-fix
-npx skills add primatrix/skills@xprof-profiling-analysis
-
-# install to a specific agent
-npx skills add primatrix/skills -a claude-code
-npx skills add primatrix/skills -a codex
+gemini skills install https://github.com/primatrix/skills.git --path plugins/tpu-perf/skills/profile-anatomy --scope workspace
 ```
 
-### Verify installation
+Verify:
 
 ```bash
-# Claude Code — start a session and run:
-/exec-remote
-/beaver-pr
-/create-beaver-issue
-/lint-fix
-
-# Codex — start a session and run:
-/skills
-
-# Gemini CLI
 gemini skills list
 ```
 
 ## Repository Structure
 
-This repository is a Claude Code [plugin marketplace](https://code.claude.com/docs/en/plugin-marketplaces). Each plugin wraps one or more skills.
-
-```
+```text
 .claude-plugin/
-└── marketplace.json          # Marketplace definition (plugin registry)
+└── marketplace.json              # Marketplace definition and plugin registry
 plugins/
-├── <plugin-name>/
-│   ├── .claude-plugin/
-│   │   └── plugin.json       # Plugin manifest (name, description, version)
-│   └── skills/
-│       └── <skill-name>/
-│           ├── SKILL.md      # Skill definition (frontmatter + instructions)
-│           └── scripts/      # Optional supporting scripts
+└── <plugin-name>/
+    ├── .claude-plugin/
+    │   └── plugin.json           # Claude/Codex marketplace plugin manifest
+    ├── .codex-plugin/            # Optional Codex-specific plugin manifest
+    ├── .cursor-plugin/           # Optional Cursor-specific plugin manifest
+    ├── commands/                 # Optional slash commands
+    ├── agents/                   # Optional agent prompts
+    ├── hooks/                    # Optional runtime hooks
+    └── skills/
+        └── <skill-name>/
+            ├── SKILL.md          # Skill frontmatter and instructions
+            └── scripts/          # Optional supporting scripts
 ```
-
-The `SKILL.md` file contains:
-- **YAML frontmatter** — `name`, `description`, and optional metadata
-- **Markdown body** — detailed instructions the agent follows when the skill is activated
 
 ## Local Development
 
-When developing or modifying skills locally, you need a way to test changes **before** pushing to GitHub. The plugin marketplace installs from the remote repository, so local edits won't take effect by default.
+When changing a plugin locally, test it from a local marketplace checkout before publishing.
 
-The solution is to symlink the plugin cache to your local working directory:
-
-### Setup
+Codex can install directly from the local repository:
 
 ```bash
-# 1. Clone the repository
-git clone https://github.com/primatrix/skills.git
-cd skills
-
-# 2. Install the plugin from the marketplace first (this sets up the registry)
-#    In a Claude Code session:
-/plugin marketplace add primatrix/skills
-/plugin install exec-remote@primatrix-skills
-
-# 3. Replace the cache with a symlink to your local directory
-rm -rf ~/.claude/plugins/cache/primatrix-skills/exec-remote/1.0.0
-ln -s /path/to/skills/plugins/exec-remote \
-      ~/.claude/plugins/cache/primatrix-skills/exec-remote/1.0.0
-
-# 4. Restart Claude Code session, then verify
-/plugin
+cd /path/to/skills
+codex plugin marketplace add /path/to/skills
+codex plugin add superpowers@primatrix-skills
 ```
 
-Repeat step 3 for each plugin you want to develop locally:
+If the remote `primatrix-skills` marketplace is already registered, remove it first or use a temporary copy with a different `.claude-plugin/marketplace.json` name.
 
-```bash
-rm -rf ~/.claude/plugins/cache/primatrix-skills/<plugin-name>/1.0.0
-ln -s /path/to/skills/plugins/<plugin-name> \
-      ~/.claude/plugins/cache/primatrix-skills/<plugin-name>/1.0.0
+Claude Code can point at a local marketplace path through the same marketplace flow:
+
+```text
+/plugin marketplace add /path/to/skills
+/plugin install superpowers@primatrix-skills
 ```
 
-### Workflow
-
-Once the symlink is in place, local edits are reflected immediately (after restarting the session):
-
-```
-Local edit → Restart Claude Code → /exec-remote → Verify
-```
-
-### Caveats
-
-- **Do not run `/plugin install` again** — it will overwrite the symlink with a fresh copy from GitHub.
-- **Restart the session** after making changes — plugins are loaded at session startup.
-- `plugin.json` only needs `name`, `description`, and `version`. Do **not** add a `skills` field — Claude Code auto-discovers skills from the `skills/` subdirectory.
+After editing skills, restart the agent session or reload plugins so the updated `SKILL.md` files are loaded.
 
 ## Contributing
 
-To add a new plugin:
+To add or update a plugin:
 
-1. Create a new directory under `plugins/` with your plugin name
-2. Add `.claude-plugin/plugin.json` with `name`, `description`, and `version`
-3. Add skills under `skills/<skill-name>/SKILL.md` with proper frontmatter and instructions
-4. Include any supporting scripts or templates in the skill directory
-5. Register the plugin in `.claude-plugin/marketplace.json`
-6. Submit a pull request
+1. Create or update `plugins/<plugin-name>/`.
+2. Keep `.claude-plugin/plugin.json` in sync with the plugin name, description, and version.
+3. Add skills under `skills/<skill-name>/SKILL.md`.
+4. Add commands, agents, hooks, or scripts only when the plugin actually needs them.
+5. Register the plugin in `.claude-plugin/marketplace.json`.
+6. Update this README's plugin table, skill inventory, and install commands.
+7. Submit a pull request.
 
 ## License
 
 [Apache License 2.0](LICENSE)
-
----
-
-### session-recorder
-
-Records the complete session's content and logs it to a daily work directory with a dynamic filename.
-
-**Use when:** the user wants to record their full progress for documentation purposes.
-
-**Capabilities:**
-- Record complete, unedited session history (questions and answers)
-- Automatically exclude cancelled operations
-- Generate dynamic log files named `{$cli-name}-session.md`
-- Organize logs by date in a `YYYY-MM-DD` directory structure
-
-**Prerequisites:**
-- Python 3.x installed
-- Base directory for logs set to `/Users/leos/python/daily_work`

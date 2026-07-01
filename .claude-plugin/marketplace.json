@@ -28,7 +28,7 @@
     {
       "name": "beaver",
       "source": "./plugins/beaver",
-      "description": "Beaver project management: GitHub-native issue lifecycle with explicit /beaver-xxx commands covering the full development cycle (create, claim, design, decompose, dev, PR, beaver-fix, tracker, focus, setup)",
+      "description": "Beaver project management: GitHub-native issue lifecycle with explicit /beaver-xxx commands covering the full development cycle (create, design, decompose, dev, PR, beaver-fix, tracker, focus, setup)",
       "version": "3.3.0",
       "license": "Apache-2.0",
       "keywords": ["beaver", "github", "issues", "project-management", "pr", "lifecycle"],
@@ -46,17 +46,17 @@
     {
       "name": "superpowers",
       "source": "./plugins/superpowers",
-      "description": "Core skills library: TDD, debugging, brainstorming, collaboration patterns, and proven techniques",
+      "description": "Core skills library for Claude Code: TDD, debugging, collaboration patterns, and proven techniques",
       "category": "workflow",
-      "version": "1.0.0",
-      "license": "Apache-2.0",
+      "version": "6.0.3",
+      "license": "MIT",
       "keywords": ["skills", "tdd", "debugging", "brainstorming", "collaboration", "workflows"]
     },
     {
       "name": "xprof-profiling-analysis",
       "source": "./plugins/xprof-profiling-analysis",
-      "description": "Analyze TPU/XLA profiling data: trace parsing, HLO op classification, MFU calculation, communication bottleneck identification, and XLA flags diagnostics",
-      "version": "1.0.0",
+      "description": "TPU/XLA profiling analysis: MCP tools for XProf HTTP API (operator breakdowns, memory profiles, A/B comparisons) + methodology skills for trace parsing, MFU calculation, bottleneck identification",
+      "version": "2.0.0",
       "license": "Apache-2.0",
       "keywords": ["tpu", "xla", "profiling", "xprof", "xplane", "mfu", "performance"],
       "category": "performance"
@@ -71,15 +71,6 @@
       "category": "infrastructure"
     },
     {
-      "name": "tpu-perf-model",
-      "source": "./plugins/tpu-perf-model",
-      "description": "Theoretical TPU v7x performance modeling via Register/VMEM/HBM data flow simulation",
-      "version": "1.0.0",
-      "license": "Apache-2.0",
-      "keywords": ["tpu", "performance", "modeling", "roofline", "pallas"],
-      "category": "performance"
-    },
-    {
       "name": "agent-recap",
       "source": "./plugins/agent-recap",
       "description": "Mine local Claude/Codex session history to produce structured daily/weekly work recaps with optional GitHub Issue sync",
@@ -91,8 +82,8 @@
     {
       "name": "tpu-perf",
       "source": "./plugins/tpu-perf",
-      "description": "Systematic TPU pretraining efficiency analysis — profile schema reference and (future) optimization-point detection skills",
-      "version": "0.1.0",
+      "description": "Systematic analysis of TPU pretraining efficiency. profile-anatomy: schema + reference scripts for xplane.pb / trace.json.gz. comm-analysis: per-axis NCCL bus BW, peak ICI utilization, and per-step compute/comm overlap. compute-breakdown: source-line aggregation, layer scoping, non-compute audit, v7x roofline shortfall. memory-profile: HBM peak occupancy, alive-buffer attribution, lifetime/shape/tf_op/parent_jit rollups.",
+      "version": "0.3.0",
       "license": "Apache-2.0",
       "keywords": ["tpu", "profiling", "xplane", "pretraining", "performance"],
       "category": "performance"
