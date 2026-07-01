@@ -64,8 +64,8 @@
     {
       "name": "gke-tpu",
       "source": "./plugins/gke-tpu",
-      "description": "Manage GKE-based TPU workloads — create pods/jobs via kubectl, sync code, and run multi-process benchmarks",
-      "version": "1.0.0",
+      "description": "Plan and render GKE TPU Jobs and nodepool actions with explicit context/namespace safety",
+      "version": "2.0.0",
       "license": "Apache-2.0",
       "keywords": ["gke", "tpu", "kubectl", "kubernetes", "jax"],
       "category": "infrastructure"
