@@ -13,33 +13,30 @@ Assume they are a skilled developer, but know almost nothing about our toolset o
 
 **Announce at start:** "I'm using the writing-plans skill to create the implementation plan."
 
-**Context:** This should be run in a dedicated worktree (created by brainstorming skill).
+**Context:** If working in an isolated worktree, it should have been created via the `superpowers:using-git-worktrees` skill at execution time.
 
-**Save plans to:** Append to the existing RFC file on `primatrix/wiki` (created by brainstorming skill).
+**Save plans to:** `docs/superpowers/plans/YYYY-MM-DD-<feature-name>.md`
+- (User preferences for plan location override this default)
 
-The brainstorming skill creates an RFC PR with design spec content. This skill appends the implementation plan as a new `## Implementation Plan` section to the same RFC file, pushing a new commit to the same branch/PR.
+**Primatrix RFC workflow override:** If `brainstorming` produced a `primatrix/wiki` RFC PR, append the implementation plan to that RFC instead of writing a local plan file. Use the RFC metadata from session context: `RFC_NUMBER`, `RFC_BRANCH`, `RFC_PATH`, and `RFC_PR_URL`.
 
-**To append to the RFC:**
+To append the plan:
+
 ```bash
-set -e
+CURRENT=$(gh api "repos/primatrix/wiki/contents/${RFC_PATH}" \
+  -f ref="${RFC_BRANCH}" --jq '.content' | base64 -d)
+FILE_SHA=$(gh api "repos/primatrix/wiki/contents/${RFC_PATH}" \
+  -f ref="${RFC_BRANCH}" --jq '.sha')
 
-# Fetch current RFC content
-CURRENT=$(gh api repos/primatrix/wiki/contents/docs/rfc/NNNN-<topic>.md \
-  -f ref="rfc/NNNN-<topic>" --jq '.content' | base64 -d)
-FILE_SHA=$(gh api repos/primatrix/wiki/contents/docs/rfc/NNNN-<topic>.md \
-  -f ref="rfc/NNNN-<topic>" --jq '.sha')
-
-# Append implementation plan
-UPDATED=$(printf '%s\n\n---\n\n## Implementation Plan\n\n%s' "$CURRENT" "$PLAN_CONTENT")
+UPDATED=$(printf '%s\n\n---\n\n%s\n' "$CURRENT" "$PLAN_CONTENT")
 NEW_CONTENT=$(printf '%s' "$UPDATED" | base64 | tr -d '\n')
 
-# Push update
-gh api repos/primatrix/wiki/contents/docs/rfc/NNNN-<topic>.md \
-  -X PUT -f message="docs: add implementation plan to RFC NNNN" \
-  -f content="$NEW_CONTENT" -f sha="$FILE_SHA" -f branch="rfc/NNNN-<topic>"
+gh api "repos/primatrix/wiki/contents/${RFC_PATH}" \
+  -X PUT -f message="docs: add implementation plan to RFC ${RFC_NUMBER}" \
+  -f content="$NEW_CONTENT" -f sha="$FILE_SHA" -f branch="$RFC_BRANCH"
 ```
 
-RFC metadata (branch name, RFC number, file path, PR URL) is available in the session context from the brainstorming phase.
+If no RFC metadata is available and the user did not ask for the Primatrix wiki workflow, use the default local plan path above.
 
 ## Scope Check
 
@@ -55,6 +52,15 @@ Before defining tasks, map out which files will be created or modified and what 
 - In existing codebases, follow established patterns. If the codebase uses large files, don't unilaterally restructure - but if a file you're modifying has grown unwieldy, including a split in the plan is reasonable.
 
 This structure informs the task decomposition. Each task should produce self-contained changes that make sense independently.
+
+## Task Right-Sizing
+
+A task is the smallest unit that carries its own test cycle and is worth a
+fresh reviewer's gate. When drawing task boundaries: fold setup,
+configuration, scaffolding, and documentation steps into the task whose
+deliverable needs them; split only where a reviewer could meaningfully
+reject one task while approving its neighbor. Each task ends with an
+independently testable deliverable.
 
 ## Bite-Sized Task Granularity
 
@@ -72,13 +78,20 @@ This structure informs the task decomposition. Each task should produce self-con
 ```markdown
 # [Feature Name] Implementation Plan
 
-> **For agentic workers:** REQUIRED: Use superpowers:subagent-driven-development (if subagents available) or superpowers:executing-plans to implement this plan. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** [One sentence describing what this builds]
 
 **Architecture:** [2-3 sentences about approach]
 
 **Tech Stack:** [Key technologies/libraries]
+
+## Global Constraints
+
+[The spec's project-wide requirements — version floors, dependency limits,
+naming and copy rules, platform requirements — one line each, with exact
+values copied verbatim from the spec. Every task's requirements implicitly
+include this section.]
 
 ---
 ```
@@ -92,6 +105,12 @@ This structure informs the task decomposition. Each task should produce self-con
 - Create: `exact/path/to/file.py`
 - Modify: `exact/path/to/existing.py:123-145`
 - Test: `tests/exact/path/to/test.py`
+
+**Interfaces:**
+- Consumes: [what this task uses from earlier tasks — exact signatures]
+- Produces: [what later tasks rely on — exact function names, parameter
+  and return types. A task's implementer sees only their own task; this
+  block is how they learn the names and types neighboring tasks use.]
 
 - [ ] **Step 1: Write the failing test**
 
@@ -126,45 +145,60 @@ git commit -m "feat: add specific feature"
 ```
 ````
 
+## No Placeholders
+
+Every step must contain the actual content an engineer needs. These are **plan failures** — never write them:
+- "TBD", "TODO", "implement later", "fill in details"
+- "Add appropriate error handling" / "add validation" / "handle edge cases"
+- "Write tests for the above" (without actual test code)
+- "Similar to Task N" (repeat the code — the engineer may be reading tasks out of order)
+- Steps that describe what to do without showing how (code blocks required for code steps)
+- References to types, functions, or methods not defined in any task
+
 ## Remember
 - Exact file paths always
-- Complete code in plan (not "add validation")
+- Complete code in every step — if a step changes code, show the code
 - Exact commands with expected output
-- Reference relevant skills with @ syntax
 - DRY, YAGNI, TDD, frequent commits
 
-## Plan Review Loop
+## Self-Review
 
-After completing each chunk of the plan:
+After writing the complete plan, look at the spec with fresh eyes and check the plan against it. This is a checklist you run yourself — not a subagent dispatch.
 
-1. Dispatch plan-document-reviewer subagent (see plan-document-reviewer-prompt.md) with precisely crafted review context — never your session history. This keeps the reviewer focused on the plan, not your thought process.
-   - Provide: chunk content, path to spec document
-2. If ❌ Issues Found:
-   - Fix the issues in the chunk
-   - Re-dispatch reviewer for that chunk
-   - Repeat until ✅ Approved
-3. If ✅ Approved: proceed to next chunk (or execution handoff if last chunk)
+**1. Spec coverage:** Skim each section/requirement in the spec. Can you point to a task that implements it? List any gaps.
 
-**Chunk boundaries:** Use `## Chunk N: <name>` headings to delimit chunks. Each chunk should be ≤1000 lines and logically self-contained.
+**2. Placeholder scan:** Search your plan for red flags — any of the patterns from the "No Placeholders" section above. Fix them.
 
-**Review loop guidance:**
-- Same agent that wrote the plan fixes it (preserves context)
-- If loop exceeds 5 iterations, surface to human for guidance
-- Reviewers are advisory - explain disagreements if you believe feedback is incorrect
+**3. Type consistency:** Do the types, method signatures, and property names you used in later tasks match what you defined in earlier tasks? A function called `clearLayers()` in Task 3 but `clearFullLayers()` in Task 7 is a bug.
+
+If you find issues, fix them inline. No need to re-review — just fix and move on. If you find a spec requirement with no task, add the task.
 
 ## Execution Handoff
 
-After saving the plan:
+After saving the plan, offer execution choice. If the plan was appended to a Primatrix RFC, reference the RFC PR instead of a local file path:
 
-**"Implementation plan appended to RFC: `<PR_URL>`. Ready to execute?"**
+**"Plan complete and saved to `docs/superpowers/plans/<filename>.md`. Two execution options:**
 
-**Execution path depends on harness capabilities:**
+**1. Subagent-Driven (recommended)** - I dispatch a fresh subagent per task, review between tasks, fast iteration
 
-**If harness has subagents (Claude Code, etc.):**
-- **REQUIRED:** Use superpowers:subagent-driven-development
-- Do NOT offer a choice - subagent-driven is the standard approach
+**2. Inline Execution** - Execute tasks in this session using executing-plans, batch execution with checkpoints
+
+**Which approach?"**
+
+For the Primatrix RFC workflow, use:
+
+**"Implementation plan appended to RFC: `<RFC_PR_URL>`. Two execution options:**
+
+**1. Subagent-Driven (recommended)** - I dispatch a fresh subagent per task, review between tasks, fast iteration
+
+**2. Inline Execution** - Execute tasks in this session using executing-plans, batch execution with checkpoints
+
+**Which approach?"**
+
+**If Subagent-Driven chosen:**
+- **REQUIRED SUB-SKILL:** Use superpowers:subagent-driven-development
 - Fresh subagent per task + two-stage review
 
-**If harness does NOT have subagents:**
-- Execute plan in current session using superpowers:executing-plans
+**If Inline Execution chosen:**
+- **REQUIRED SUB-SKILL:** Use superpowers:executing-plans
 - Batch execution with checkpoints for review
