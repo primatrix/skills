@@ -16,7 +16,7 @@ A Skill is a set of structured instructions, usually defined in a `SKILL.md` fil
 | `gke-tpu` | `1.0.0` | 1 skill | Manage GKE-based TPU workloads with `kubectl`, code sync, and benchmark execution. |
 | `lint-fix` | `1.0.0` | 1 skill | Check and fix lint issues for changed Python files. |
 | `session-recorder` | `1.0.0` | 1 skill | Record complete session content into dated work logs. |
-| `superpowers` | `6.0.3` | 13 skills, 3 commands, hooks | Core workflow skills: TDD, debugging, brainstorming, review, planning, and collaboration patterns. Based on official Superpowers v6.0.3 with Primatrix RFC workflow customizations. |
+| `superpowers` | `6.0.3` | 14 skills, 3 commands, hooks | Core workflow skills: TDD, debugging, brainstorming, review, planning, and collaboration patterns. Based on official Superpowers v6.0.3 with Primatrix RFC workflow customizations. |
 | `tpu-perf` | `0.3.0` | 4 skills | Systematic TPU pretraining profile analysis: anatomy, communication, compute, and HBM memory. |
 | `xprof-profiling-analysis` | `2.0.0` | 1 skill | TPU/XLA profiling methodology plus XProf MCP-oriented analysis workflows. |
 

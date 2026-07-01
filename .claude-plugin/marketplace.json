@@ -49,7 +49,7 @@
       "description": "Core skills library for Claude Code: TDD, debugging, collaboration patterns, and proven techniques",
       "category": "workflow",
       "version": "6.0.3",
-      "license": "Apache-2.0",
+      "license": "MIT",
       "keywords": ["skills", "tdd", "debugging", "brainstorming", "collaboration", "workflows"]
     },
     {
