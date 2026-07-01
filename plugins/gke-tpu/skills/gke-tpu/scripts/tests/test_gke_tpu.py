@@ -188,6 +188,46 @@ class ValidationTests(unittest.TestCase):
         self.assertFalse(result["ok"])
         self.assertEqual(result["error"]["code"], "unsupported_repo_config")
 
+    def test_interactive_command_must_be_a_list(self):
+        interactive = BASE_CONFIG.replace(
+            'mode = "batch"',
+            'mode = "interactive"\ncommand = "sleep infinity"',
+        )
+        config = gke_tpu.load_config_text(interactive)
+
+        result = gke_tpu.validate_config(config)
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["error"]["code"], "invalid_workload_command")
+
+    def test_script_and_module_targets_require_entrypoints(self):
+        cases = [
+            ("script", "script = \"benchmarks/foo.py\"\n", "missing_run_script"),
+            ("module", "script = \"benchmarks/foo.py\"\n", "missing_run_module"),
+        ]
+        for target, line_to_remove, error_code in cases:
+            with self.subTest(target=target):
+                text = BASE_CONFIG.replace('target = "script"', f'target = "{target}"')
+                text = text.replace(line_to_remove, "")
+                config = gke_tpu.load_config_text(text)
+
+                result = gke_tpu.validate_config(config)
+
+                self.assertFalse(result["ok"])
+                self.assertEqual(result["error"]["code"], error_code)
+
+    def test_run_args_must_be_a_list(self):
+        text = BASE_CONFIG.replace(
+            'args = ["--batch-size", "8"]',
+            'args = "--batch-size 8"',
+        )
+        config = gke_tpu.load_config_text(text)
+
+        result = gke_tpu.validate_config(config)
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["error"]["code"], "invalid_run_args")
+
 
 if __name__ == "__main__":
     unittest.main()

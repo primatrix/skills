@@ -111,6 +111,16 @@ def _context(project: str, zone: str, cluster: str, k8s: dict[str, Any]) -> str:
     return explicit or f"gke_{project}_{zone}_{cluster}"
 
 
+def _string_list(value: Any, code: str, message: str, *, allow_empty: bool) -> list[str]:
+    if (
+        not isinstance(value, list)
+        or (not allow_empty and not value)
+        or any(not isinstance(item, str) for item in value)
+    ):
+        raise GkeTpuError(code, message)
+    return value
+
+
 def _workload_command(config: dict[str, Any], hosts: int) -> tuple[list[str], bool]:
     workload = config.get("workload", {})
     mode = workload.get("mode", "batch")
@@ -120,15 +130,45 @@ def _workload_command(config: dict[str, Any], hosts: int) -> tuple[list[str], bo
         raise GkeTpuError("invalid_workload_mode", "workload.mode must be batch or interactive")
 
     if mode == "interactive":
-        return workload.get("command", ["sleep", "infinity"]), False
+        command = _string_list(
+            workload.get("command", ["sleep", "infinity"]),
+            "invalid_workload_command",
+            "[workload].command must be a list of strings",
+            allow_empty=False,
+        )
+        return command, False
 
     target = run.get("target", "command")
-    if target in ("script", "module"):
+    if target == "script":
+        script = run.get("script")
+        if not isinstance(script, str) or not script:
+            raise GkeTpuError("missing_run_script", "[run].script is required when target = script")
+        _string_list(
+            run.get("args", []),
+            "invalid_run_args",
+            "[run].args must be a list of strings",
+            allow_empty=True,
+        )
+        return ["python3", "-u", "/opt/gke-tpu/launcher.py"], True
+    if target == "module":
+        module = run.get("module")
+        if not isinstance(module, str) or not module:
+            raise GkeTpuError("missing_run_module", "[run].module is required when target = module")
+        _string_list(
+            run.get("args", []),
+            "invalid_run_args",
+            "[run].args must be a list of strings",
+            allow_empty=True,
+        )
         return ["python3", "-u", "/opt/gke-tpu/launcher.py"], True
     if target == "command":
         command = run.get("command")
-        if not isinstance(command, list) or not command:
-            raise GkeTpuError("missing_run_command", "[run].command is required when target = command")
+        _string_list(
+            command,
+            "missing_run_command",
+            "[run].command is required when target = command",
+            allow_empty=False,
+        )
         return command, False
     raise GkeTpuError("invalid_run_target", "run.target must be script, module, or command")
 
@@ -636,7 +676,6 @@ def _volume_lines(model: dict[str, Any]) -> list[str]:
         if not bucket:
             raise GkeTpuError("missing_storage_bucket", "[storage.gcsfuse].bucket is required")
         mount_options = gcsfuse.get("mount_options", "")
-        option_line = f'\n          mountOptions: "{mount_options}"' if mount_options else ""
         lines += [
             "- name: gke-gcsfuse-cache",
             "  emptyDir:",
@@ -650,7 +689,7 @@ def _volume_lines(model: dict[str, Any]) -> list[str]:
             '      gcsfuseMetadataPrefetchOnMount: "true"',
             f"      bucketName: {bucket}",
         ]
-        if option_line:
+        if mount_options:
             lines.append(f'      mountOptions: "{mount_options}"')
     elif storage_type == "pvc":
         pvc = storage.get("pvc", {})
