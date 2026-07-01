@@ -13,7 +13,7 @@ A Skill is a set of structured instructions, usually defined in a `SKILL.md` fil
 | `agent-recap` | `0.1.0` | 1 skill | Mine local Claude/Codex session history and produce daily or weekly recaps. |
 | `beaver` | `3.3.0` | 9 commands, 2 support skills | GitHub-native issue lifecycle and project workflow commands. |
 | `exec-remote` | `1.0.0` | 3 skills | Run Python scripts, tests, or benchmarks on remote GPU/TPU clusters via SkyPilot. |
-| `gke-tpu` | `1.0.0` | 1 skill | Manage GKE-based TPU workloads with `kubectl`, code sync, and benchmark execution. |
+| `gke-tpu` | `2.0.0` | 1 skill | Plan nodepool actions and render GKE TPU Job manifests with explicit context/namespace safety. |
 | `lint-fix` | `1.0.0` | 1 skill | Check and fix lint issues for changed Python files. |
 | `session-recorder` | `1.0.0` | 1 skill | Record complete session content into dated work logs. |
 | `superpowers` | `6.0.3` | 14 skills, 3 commands, hooks | Core workflow skills: TDD, debugging, brainstorming, review, planning, and collaboration patterns. Based on official Superpowers v6.0.3 with Primatrix RFC workflow customizations. |
@@ -32,7 +32,7 @@ A Skill is a set of structured instructions, usually defined in a `SKILL.md` fil
 | `exec-remote` | `exec-remote` | Running code, tests, or benchmarks on a provisioned remote GPU/TPU cluster. |
 | `exec-remote` | `deploy-cluster` | Deploying a SkyPilot-managed TPU cluster on GKE. |
 | `exec-remote` | `apply-resource` | Creating, deleting, or listing GKE TPU nodepool resources through xpk. |
-| `gke-tpu` | `gke-tpu` | Creating pods/jobs, syncing code, and running TPU workloads on GKE. |
+| `gke-tpu` | `gke-tpu` | Planning GKE TPU nodepool actions and rendering batch/interactive TPU Job manifests. |
 | `lint-fix` | `lint-fix` | Linting or auto-fixing changed Python files with isort, ruff, black, and codespell. |
 | `session-recorder` | `session-recorder` | Recording full session history for progress tracking and documentation. |
 | `superpowers` | `using-superpowers` | Establishing skill usage rules at the start of a conversation. |

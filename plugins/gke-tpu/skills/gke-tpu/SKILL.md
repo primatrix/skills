@@ -1,92 +1,49 @@
 ---
 name: gke-tpu
-description: Manage GKE-based TPU workloads — create pods/jobs via kubectl, sync code, and run multi-process benchmarks. Use when the user wants to create/manage/run TPU workloads on GKE. Reads config from gke.toml in the current working directory.
+description: Use when managing GKE TPU workloads, TPU nodepools, TPU topology, reservations, or Kubernetes Jobs on TPU v6e/v7x.
 ---
 
-# GKE TPU Skill
+# GKE TPU
 
-Manage GKE-based TPU workloads via `kubectl`. Config-driven via `gke.toml` in the current working directory (CWD).
+Use this skill as a small planning/rendering aid for GKE TPU workloads. The agent still owns `gcloud` / `kubectl` execution and live diagnosis.
 
 ## Commands
 
-| Command | Description | Reference |
-|---|---|---|
-| `create` | Create TPU pod (single-host) or job (multi-host) | [references/create.md](references/create.md) |
-| `sync` | Sync code + install deps to all containers | [references/sync.md](references/sync.md) |
-| `run` | Execute script on multi-process TPU | [references/run.md](references/run.md) |
-| `status` | Check pod/workload status | [references/status.md](references/status.md) |
+Run `python3 scripts/gke_tpu.py <command> [--config path | --profile name]`. All script output is JSON.
 
-**Read the relevant reference file for the user's command before executing.**
+| Command | Purpose |
+|---|---|
+| `init` | Print a TOML template as JSON; does not write files. |
+| `validate` | Check config shape and breaking-change violations. |
+| `plan-nodepool` | Compute expected TPU nodepool spec and `gcloud` argv. |
+| `render-workload` | Render one multi-doc Job manifest to `/tmp/gke-tpu/<workload>/workload.yaml`. |
+| `delete-workload-plan` | Emit resource-name deletes for Job/Service/ConfigMap. |
+| `delete-nodepool-plan` | Emit nodepool and workload-policy delete argv. |
 
-## Configuration
+Read only the reference needed for the user's action:
+- Config schema: [references/config.md](references/config.md)
+- Nodepool planning: [references/nodepool.md](references/nodepool.md)
+- Workload rendering/apply: [references/workload.md](references/workload.md)
+- Cleanup: [references/cleanup.md](references/cleanup.md)
+- Topology hints: [references/topologies.md](references/topologies.md)
 
-Read `gke.toml` from the current working directory at the start of every command. This keeps configs isolated per worktree/session. Never hardcode project/cluster/zone/bucket. If `gke.toml` does not exist in CWD, prompt the user to create one.
+## Hard Boundaries
 
-```toml
-[gke]
-project = "<your-gcp-project>"
-cluster = "<your-cluster-name>"
-zone = "<your-zone>"
+- Do not sync code, copy launchers into pods, run commands inside existing pods, or wrap `kubectl status/logs/describe`; use normal Kubernetes knowledge for that.
+- Do not manage app env, secrets, repo clone paths, install commands, or requirements files.
+- Do not write `.claude`, `.codex`, `~/.agents`, or other agent-private state.
+- Do not write repo config unless the user explicitly asks. `render-workload` may write only `/tmp/gke-tpu/...`.
+- Every write action is plan-first and needs the action-specific confirmation token from JSON.
+- Every `kubectl` command must include explicit `--context <context>` and `-n <namespace>`.
 
-[tpu]
-accelerator = "tpu-v6e-slice"   # nodeSelector accelerator label
-topology = "4x4"                # TPU topology (determines chip count)
-chips_per_node = 4              # google.com/tpu resource per container
-machine_type = "ct6e-standard-4t"  # GKE machine type
-max_nodes = 4                   # autoscaling max for node pool
-reservation = ""                # optional: reservation name for reserved capacity
+## Execution Pattern
 
-[workload]
-name = "my-workload"
-docker_image = "us-docker.pkg.dev/cloud-tpu-images/jax-ai-image/tpu:jax0.8.1-rev1"
-service_account = "gcs-account"
+1. Resolve config from `--config`, `--profile`, `gke-tpu.toml`, or `configs/gke-tpu/default.toml`.
+2. Run `validate`.
+3. For nodepools, run `plan-nodepool`, query actual GKE state yourself, then execute the JSON `argv` only after confirmation.
+4. For workloads, run `render-workload`, show the JSON plan, then `kubectl apply` the rendered manifest only after confirmation.
+5. Use `delete-workload-plan` / `delete-nodepool-plan` for destructive actions.
 
-[storage]
-type = "gcsfuse"                # "gcsfuse" or "pvc"
-mount_path = "/inference-models"
+## Breaking Change
 
-# --- gcsfuse-specific (only when type = "gcsfuse") ---
-bucket = "inference-model-storage-poc-tpu"
-mount_options = "implicit-dirs,file-cache:max-parallel-downloads:256,file-cache:enable-parallel-downloads:true,file-cache:download-chunk-size-mb:128,file-cache:max-size-mb:81920,file-cache:parallel-downloads-per-file:512,metadata-cache:ttl-secs:-1,metadata-cache:stat-cache-max-size-mb:-1,metadata-cache:type-cache-max-size-mb:-1,file-cache:cache-file-for-range-read:true,file-system:kernel-list-cache-ttl-secs:-1,read_ahead_kb=1024"
-
-# --- pvc-specific (only when type = "pvc") ---
-# pvc_name = "my-model-pvc"       # name of existing PersistentVolumeClaim
-# read_only = false                # mount as read-only (default: false)
-# gcsfuse_backed = false           # true if PVC's StorageClass uses GCS Fuse CSI driver
-                                   # when true: adds gke-gcsfuse/volumes annotation + gke-gcsfuse-cache volume
-                                   # when false: plain PVC mount, no sidecar needed
-
-[repo]
-git_url = "https://github.com/sgl-project/sglang-jax.git"
-remote_path = "/tmp/sglang-jax"
-install_cmd = "pip install -e ."            # run in repo root
-# requirements_file = "requirements-tpu.txt"  # optional: extra deps file (relative to repo root)
-```
-
-### TPU Topology Reference
-
-See [references/tpu-topologies.md](references/tpu-topologies.md) for supported topologies (v6e and v7x), machine types, and chips-per-node mappings.
-
-**Single-host** (1 VM): use Pod. **Multi-host** (>1 VM): use Indexed Job + headless Service.
-
-## Critical Rules
-
-1. **Single vs multi-host**: Determine from topology. `chips / chips_per_node = hosts`. If hosts > 1, must use Job + headless Service.
-2. **Storage**: Check `storage.type`:
-   - `gcsfuse`: mount with `gke-gcsfuse/volumes: "true"` annotation and `gke-gcsfuse-cache` emptyDir volume.
-   - `pvc`: mount the existing PVC directly. The PVC must already exist in the namespace.
-     - If `storage.gcsfuse_backed = true`: the PVC's StorageClass uses GCS Fuse CSI driver under the hood — still needs `gke-gcsfuse/volumes: "true"` annotation and `gke-gcsfuse-cache` emptyDir volume, otherwise mount will fail with "failed to find the sidecar container".
-     - If `storage.gcsfuse_backed = false` (default): plain PVC mount, no gcsfuse annotation or cache volume needed.
-3. **Simultaneous launch**: For multi-host, `jax.distributed.initialize()` must run in all pods at the same time.
-4. **Same code path**: ALL processes must execute the SAME jitted computations.
-5. **Docker image must match JAX version** in pyproject.toml.
-6. **Reservations**: If `tpu.reservation` is set, use `--reservation-affinity=specific` with fixed node count (no autoscaling).
-7. **Multi-host verification**: `import jax` blocks on multi-host TPU. Use `/dev/vfio/` for per-pod hardware check, `run` command for full JAX cluster verification.
-
-## Prerequisites
-
-See [references/prerequisites.md](references/prerequisites.md) for gcloud/kubectl install steps.
-
-## Troubleshooting
-
-See [references/troubleshooting.md](references/troubleshooting.md) for common issues.
+This skill no longer supports `gke.toml`, `[repo]`, `sync`, `run`, or `status` workflows. Put code in the image, mounted storage, or command-time `git clone`; use batch Jobs for normal runs and interactive Jobs only for debugging.
