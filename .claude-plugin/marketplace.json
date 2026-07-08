@@ -87,6 +87,15 @@
       "license": "Apache-2.0",
       "keywords": ["tpu", "profiling", "xplane", "pretraining", "performance"],
       "category": "performance"
+    },
+    {
+      "name": "sglang-jax-doc-maintainer",
+      "source": "./plugins/sglang-jax-doc-maintainer",
+      "description": "Maintain sglang-jax Chinese architecture wiki (docs/projects/sglang-jax/01-13) from PR diffs / commits / branch diffs / drift; two-phase workflow gated by plan-sufficiency and landing-equivalence reviewer subagents",
+      "version": "1.0.0",
+      "license": "Apache-2.0",
+      "keywords": ["sglang-jax", "documentation", "wiki", "reviewer", "subagent"],
+      "category": "documentation"
     }
   ]
 }
