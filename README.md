@@ -13,6 +13,7 @@ A Skill is a set of structured instructions, usually defined in a `SKILL.md` fil
 | `agent-recap` | `0.1.0` | 1 skill | Mine local Claude/Codex session history and produce daily or weekly recaps. |
 | `beaver` | `3.3.0` | 9 commands, 2 support skills | GitHub-native issue lifecycle and project workflow commands. |
 | `exec-remote` | `1.0.0` | 3 skills | Run Python scripts, tests, or benchmarks on remote GPU/TPU clusters via SkyPilot. |
+| `gcloud-support-case` | `1.0.0` | 1 skill | Open, list, and inspect Google Cloud support cases (Cloud TPU / GKE / GCS) via the Cloud Support API v2. |
 | `gke-tpu` | `2.0.0` | 1 skill | Plan nodepool actions and render GKE TPU Job manifests with explicit context/namespace safety. |
 | `lint-fix` | `1.0.0` | 1 skill | Check and fix lint issues for changed Python files. |
 | `session-recorder` | `1.0.0` | 1 skill | Record complete session content into dated work logs. |
@@ -32,6 +33,7 @@ A Skill is a set of structured instructions, usually defined in a `SKILL.md` fil
 | `exec-remote` | `exec-remote` | Running code, tests, or benchmarks on a provisioned remote GPU/TPU cluster. |
 | `exec-remote` | `deploy-cluster` | Deploying a SkyPilot-managed TPU cluster on GKE. |
 | `exec-remote` | `apply-resource` | Creating, deleting, or listing GKE TPU nodepool resources through xpk. |
+| `gcloud-support-case` | `gcloud-support-case` | Opening or checking a Google Cloud support case when a Cloud TPU, GKE, or GCS production job is failing. |
 | `gke-tpu` | `gke-tpu` | Planning GKE TPU nodepool actions and rendering batch/interactive TPU Job manifests. |
 | `lint-fix` | `lint-fix` | Linting or auto-fixing changed Python files with isort, ruff, black, and codespell. |
 | `session-recorder` | `session-recorder` | Recording full session history for progress tracking and documentation. |
@@ -74,6 +76,7 @@ Add this repository as a marketplace, then install the plugins you need:
 /plugin install agent-recap@primatrix-skills
 /plugin install beaver@primatrix-skills
 /plugin install exec-remote@primatrix-skills
+/plugin install gcloud-support-case@primatrix-skills
 /plugin install gke-tpu@primatrix-skills
 /plugin install lint-fix@primatrix-skills
 /plugin install session-recorder@primatrix-skills
@@ -106,6 +109,7 @@ codex plugin list --marketplace primatrix-skills
 codex plugin add agent-recap@primatrix-skills
 codex plugin add beaver@primatrix-skills
 codex plugin add exec-remote@primatrix-skills
+codex plugin add gcloud-support-case@primatrix-skills
 codex plugin add gke-tpu@primatrix-skills
 codex plugin add lint-fix@primatrix-skills
 codex plugin add session-recorder@primatrix-skills
