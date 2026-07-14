@@ -1,0 +1,5 @@
+{
+  "name": "gcloud-support-case",
+  "description": "Open, list, and inspect Google Cloud support cases (Cloud TPU / GKE / GCS) via the Cloud Support API v2, with guided classification, priority confirmation, and formatted case detail output",
+  "version": "1.0.0"
+}

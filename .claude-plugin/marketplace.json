@@ -87,6 +87,15 @@
       "license": "Apache-2.0",
       "keywords": ["tpu", "profiling", "xplane", "pretraining", "performance"],
       "category": "performance"
+    },
+    {
+      "name": "gcloud-support-case",
+      "source": "./plugins/gcloud-support-case",
+      "description": "Open, list, and inspect Google Cloud support cases (Cloud TPU / GKE / GCS) via the Cloud Support API v2, with guided classification, priority confirmation, and formatted case detail output",
+      "version": "1.0.0",
+      "license": "Apache-2.0",
+      "keywords": ["gcloud", "gcp", "support", "case", "cloud-support-api", "tpu", "gke", "gcs"],
+      "category": "infrastructure"
     }
   ]
 }
