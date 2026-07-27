@@ -1,0 +1,12 @@
+{
+  "url": "https://kb.example.com",
+  "api_key": "ol_api_REPLACE_ME",
+  "host_header": null,
+  "forwarded_proto": null,
+  "active_transport": "primary",
+  "temporary_transport": {
+    "url": "http://NODEPORT_IP:NODEPORT",
+    "host_header": "kb.example.com",
+    "forwarded_proto": "https"
+  }
+}

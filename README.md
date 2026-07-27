@@ -16,6 +16,7 @@ A Skill is a set of structured instructions, usually defined in a `SKILL.md` fil
 | `gcloud-support-case` | `1.0.0` | 1 skill | Open, list, and inspect Google Cloud support cases (Cloud TPU / GKE / GCS) via the Cloud Support API v2. |
 | `gke-tpu` | `2.0.0` | 1 skill | Plan nodepool actions and render GKE TPU Job manifests with explicit context/namespace safety. |
 | `lint-fix` | `1.0.0` | 1 skill | Check and fix lint issues for changed Python files. |
+| `service-integrations` | `1.0.0` | 3 skills | Work with Plane, GitLab, and Outline through credential-safe agent workflows. |
 | `session-recorder` | `1.0.0` | 1 skill | Record complete session content into dated work logs. |
 | `superpowers` | `6.0.3` | 14 skills, 3 commands, hooks | Core workflow skills: TDD, debugging, brainstorming, review, planning, and collaboration patterns. Based on official Superpowers v6.0.3 with Primatrix RFC workflow customizations. |
 | `tpu-perf` | `0.3.0` | 4 skills | Systematic TPU pretraining profile analysis: anatomy, communication, compute, and HBM memory. |
@@ -36,6 +37,9 @@ A Skill is a set of structured instructions, usually defined in a `SKILL.md` fil
 | `gcloud-support-case` | `gcloud-support-case` | Opening or checking a Google Cloud support case when a Cloud TPU, GKE, or GCS production job is failing. |
 | `gke-tpu` | `gke-tpu` | Planning GKE TPU nodepool actions and rendering batch/interactive TPU Job manifests. |
 | `lint-fix` | `lint-fix` | Linting or auto-fixing changed Python files with isort, ruff, black, and codespell. |
+| `service-integrations` | `plane-api` | Reading or managing Plane projects, work items, cycles, modules, pages, members, and workspace settings through configured MCP tools. |
+| `service-integrations` | `gitlab-cli` | Inspecting or managing GitLab projects, merge requests, CI/CD pipelines, jobs, runners, variables, or permissions through glab CLI or the GitLab REST API. |
+| `service-integrations` | `outline-api` | Inspecting, creating, updating, publishing, searching, moving, or managing Outline knowledge-base documents through its API or MCP endpoint. |
 | `session-recorder` | `session-recorder` | Recording full session history for progress tracking and documentation. |
 | `superpowers` | `using-superpowers` | Establishing skill usage rules at the start of a conversation. |
 | `superpowers` | `brainstorming` | Exploring requirements before creative implementation work. |
