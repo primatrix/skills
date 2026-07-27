@@ -96,6 +96,15 @@
       "license": "Apache-2.0",
       "keywords": ["gcloud", "gcp", "support", "case", "cloud-support-api", "tpu", "gke", "gcs"],
       "category": "infrastructure"
+    },
+    {
+      "name": "service-integrations",
+      "source": "./plugins/service-integrations",
+      "description": "Read and manage Plane, GitLab, and Outline through configured MCP tools, CLI, and APIs with credential-safe, read-first workflows",
+      "version": "1.0.0",
+      "license": "Apache-2.0",
+      "keywords": ["plane", "gitlab", "glab", "outline", "mcp", "api", "knowledge-base", "project-management"],
+      "category": "productivity"
     }
   ]
 }

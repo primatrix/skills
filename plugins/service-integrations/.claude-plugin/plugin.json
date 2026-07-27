@@ -1,0 +1,6 @@
+{
+  "name": "service-integrations",
+  "description": "Read and manage Plane, GitLab, and Outline through their configured MCP tools, CLI, and APIs with credential-safe, read-first workflows",
+  "version": "1.0.0",
+  "license": "Apache-2.0"
+}

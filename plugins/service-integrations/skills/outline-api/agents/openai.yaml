@@ -1,0 +1,6 @@
+interface:
+  display_name: "Outline API"
+  short_description: "Use Outline API safely from an agent"
+  default_prompt: "Use $outline-api to inspect or update an Outline knowledge base."
+policy:
+  allow_implicit_invocation: true

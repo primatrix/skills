@@ -1,0 +1,4 @@
+interface:
+  display_name: "Plane Operations"
+  short_description: "Read and manage Plane workspace data safely."
+  default_prompt: "Use $plane-api to inspect my Plane projects and summarize their current status."
