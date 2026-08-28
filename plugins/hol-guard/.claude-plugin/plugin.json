@@ -1,0 +1,5 @@
+{
+  "name": "hol-guard",
+  "description": "Install and operate HOL Guard local runtime security for AI coding agents before tool execution.",
+  "version": "0.1.0"
+}
