@@ -64,7 +64,7 @@ Do not infer protection of the current agent merely because some other detected 
 
 ```bash
 hol-guard approvals
-hol-guard approvals open
+hol-guard approvals open <request-id>
 hol-guard receipts
 hol-guard diff <harness>
 ```
