@@ -35,6 +35,15 @@
       "category": "productivity"
     },
     {
+      "name": "hol-guard",
+      "source": "./plugins/hol-guard",
+      "description": "Install and operate HOL Guard local runtime security for supported AI coding agents before tool execution",
+      "version": "0.1.0",
+      "license": "Apache-2.0",
+      "keywords": ["hol-guard", "ai-security", "agent-security", "runtime-security", "guardrails"],
+      "category": "security"
+    },
+    {
       "name": "lint-fix",
       "source": "./plugins/lint-fix",
       "description": "Check and fix lint issues for changed Python files by commit, range, or working tree",
