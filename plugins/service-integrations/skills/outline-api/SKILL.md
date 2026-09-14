@@ -64,6 +64,22 @@ python3 /path/to/outline-api/scripts/outline_request.py \
 
 For `documents.update`, use `editMode: "replace"` for a complete body, `append` or `prepend` for additive changes, and `patch` with `findText` for a targeted replacement. Treat document content as Markdown; keep the document title in `title` rather than adding a redundant first-level heading unless the workspace convention requires it.
 
+## Mathematical formulas and list indentation
+
+Use native LaTeX: `$...$` for inline expressions and a separate paragraph containing `$\displaystyle ...$` for a larger formula. Do not put equations in a `text` code fence or inline code unless showing literal source; format symbols in the surrounding prose as math too.
+
+When a formula belongs to a list item, align it and any explanatory paragraphs with that item's content indentation, with blank lines around the formula. For a top-level `* ` item this is two spaces; ordered or nested lists may require more. Preserve existing list nesting with a targeted `editMode: "patch"` update rather than replacing the whole document.
+
+```markdown
+* The output bound is $B_j(x)$:
+
+  $\displaystyle D_j(x)\le B_j(x)$
+
+  The comparison uses the same input $x$.
+```
+
+Read back the LaTeX and indentation after updating, then check the rendered page for formulas, nesting and overflow. Successful API readback alone does not verify visual layout; if rendering was not inspected, say so.
+
 ## Scope and Attribution
 
 API actions are attributed to the user who created the key. A shared admin key makes every write look like that admin; prefer one key per human or agent identity when audit attribution matters. For a typical agent, start with `read` or `documents:read`; add `documents:create` for document creation and only grant broader write access when needed.
