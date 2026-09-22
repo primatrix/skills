@@ -15,6 +15,7 @@ A Skill is a set of structured instructions, usually defined in a `SKILL.md` fil
 | `exec-remote` | `1.0.0` | 3 skills | Run Python scripts, tests, or benchmarks on remote GPU/TPU clusters via SkyPilot. |
 | `gcloud-support-case` | `1.0.0` | 1 skill | Open, list, and inspect Google Cloud support cases (Cloud TPU / GKE / GCS) via the Cloud Support API v2. |
 | `gke-tpu` | `2.0.0` | 1 skill | Plan nodepool actions and render GKE TPU Job manifests with explicit context/namespace safety. |
+| `jax-ir-validate` | `1.0.0` | 1 skill, 5 standalone scripts | Validate JAX/Pallas source, Jaxpr, StableHLO and Mosaic TPU IR. |
 | `lint-fix` | `1.0.0` | 1 skill | Check and fix lint issues for changed Python files. |
 | `service-integrations` | `1.0.0` | 3 skills | Work with Plane, GitLab, and Outline through credential-safe agent workflows. |
 | `session-recorder` | `1.0.0` | 1 skill | Record complete session content into dated work logs. |
@@ -37,6 +38,7 @@ A Skill is a set of structured instructions, usually defined in a `SKILL.md` fil
 | `exec-remote` | `apply-resource` | Creating, deleting, or listing GKE TPU nodepool resources through xpk. |
 | `gcloud-support-case` | `gcloud-support-case` | Opening or checking a Google Cloud support case when a Cloud TPU, GKE, or GCS production job is failing. |
 | `gke-tpu` | `gke-tpu` | Planning GKE TPU nodepool actions and rendering batch/interactive TPU Job manifests. |
+| `jax-ir-validate` | `jax-ir-validate` | Checking source/IR syntax and supported structure from files or explicit log selections. |
 | `lint-fix` | `lint-fix` | Linting or auto-fixing changed Python files with isort, ruff, black, and codespell. |
 | `service-integrations` | `plane-api` | Reading or managing Plane projects, work items, cycles, modules, pages, members, and workspace settings through configured MCP tools. |
 | `service-integrations` | `gitlab-cli` | Inspecting or managing GitLab projects, merge requests, CI/CD pipelines, jobs, runners, variables, or permissions through glab CLI or the GitLab REST API. |
@@ -84,6 +86,7 @@ Add this repository as a marketplace, then install the plugins you need:
 /plugin install exec-remote@primatrix-skills
 /plugin install gcloud-support-case@primatrix-skills
 /plugin install gke-tpu@primatrix-skills
+/plugin install jax-ir-validate@primatrix-skills
 /plugin install lint-fix@primatrix-skills
 /plugin install session-recorder@primatrix-skills
 /plugin install superpowers@primatrix-skills
@@ -118,6 +121,7 @@ codex plugin add beaver@primatrix-skills
 codex plugin add exec-remote@primatrix-skills
 codex plugin add gcloud-support-case@primatrix-skills
 codex plugin add gke-tpu@primatrix-skills
+codex plugin add jax-ir-validate@primatrix-skills
 codex plugin add lint-fix@primatrix-skills
 codex plugin add session-recorder@primatrix-skills
 codex plugin add superpowers@primatrix-skills
@@ -150,6 +154,7 @@ gemini skills install https://github.com/primatrix/skills.git --path plugins/tpu
 gemini skills install https://github.com/primatrix/skills.git --path plugins/tpu-perf/skills/comm-analysis
 gemini skills install https://github.com/primatrix/skills.git --path plugins/exec-remote/skills/exec-remote
 gemini skills install https://github.com/primatrix/skills.git --path plugins/xprof-cli/skills/xprof-cli
+gemini skills install https://github.com/primatrix/skills.git --path plugins/jax-ir-validate/skills/jax-ir-validate
 ```
 
 Install into the current workspace instead of user scope:

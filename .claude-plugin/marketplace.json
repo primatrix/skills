@@ -114,6 +114,22 @@
       "license": "Apache-2.0",
       "keywords": ["xprof", "xplane", "profiling", "tpu", "jax", "cli"],
       "category": "performance"
+    },
+    {
+      "name": "jax-ir-validate",
+      "source": "./plugins/jax-ir-validate",
+      "description": "Validate JAX/Pallas source, Jaxpr, StableHLO and Mosaic TPU IR with five standalone scripts.",
+      "version": "1.0.0",
+      "license": "Apache-2.0",
+      "keywords": [
+        "jax",
+        "pallas",
+        "jaxpr",
+        "stablehlo",
+        "mosaic",
+        "validation"
+      ],
+      "category": "code-quality"
     }
   ]
 }

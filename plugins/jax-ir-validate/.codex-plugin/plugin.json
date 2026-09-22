@@ -1,0 +1,35 @@
+{
+  "name": "jax-ir-validate",
+  "version": "1.0.0",
+  "description": "Validate JAX/Pallas source, Jaxpr, StableHLO and Mosaic TPU IR with five standalone scripts.",
+  "author": {
+    "name": "Primatrix",
+    "url": "https://github.com/primatrix"
+  },
+  "homepage": "https://github.com/primatrix/skills",
+  "repository": "https://github.com/primatrix/skills",
+  "license": "Apache-2.0",
+  "keywords": [
+    "jax",
+    "pallas",
+    "jaxpr",
+    "stablehlo",
+    "mosaic",
+    "validation"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "JAX IR Validation",
+    "shortDescription": "Validate JAX source and compiler IR from files or logs",
+    "longDescription": "Validate JAX/Pallas source, Jaxpr, StableHLO and Mosaic TPU IR with five standalone scripts.",
+    "developerName": "Primatrix",
+    "category": "Developer Tools",
+    "capabilities": [
+      "Interactive",
+      "Read"
+    ],
+    "defaultPrompt": [
+      "Validate this JAX source or IR and report the checked stages and source locations."
+    ]
+  }
+}

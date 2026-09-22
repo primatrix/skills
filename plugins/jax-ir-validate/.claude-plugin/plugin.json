@@ -1,0 +1,8 @@
+{
+  "name": "jax-ir-validate",
+  "description": "Validate JAX/Pallas source, Jaxpr, StableHLO and Mosaic TPU IR with five standalone scripts.",
+  "version": "1.0.0",
+  "author": {
+    "name": "Primatrix"
+  }
+}
