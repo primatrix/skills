@@ -1,0 +1,5 @@
+{
+  "name": "codex-steer",
+  "description": "Supervise a Codex agent in the local ChatGPT/Codex desktop app: find its session, tail its actions, detect idleness, and steer messages into its running turn (macOS).",
+  "version": "1.0.0"
+}

@@ -12,6 +12,7 @@ A Skill is a set of structured instructions, usually defined in a `SKILL.md` fil
 |--------|---------|----------|-------------|
 | `agent-recap` | `0.1.0` | 1 skill | Mine local Claude/Codex session history and produce daily or weekly recaps. |
 | `beaver` | `3.3.0` | 9 commands, 2 support skills | GitHub-native issue lifecycle and project workflow commands. |
+| `codex-steer` | `1.0.0` | 1 skill, 5 scripts | Monitor a local Codex desktop session and steer messages into its running turn (macOS). |
 | `exec-remote` | `1.0.0` | 3 skills | Run Python scripts, tests, or benchmarks on remote GPU/TPU clusters via SkyPilot. |
 | `gcloud-support-case` | `1.0.0` | 1 skill | Open, list, and inspect Google Cloud support cases (Cloud TPU / GKE / GCS) via the Cloud Support API v2. |
 | `gke-tpu` | `2.0.0` | 1 skill | Plan nodepool actions and render GKE TPU Job manifests with explicit context/namespace safety. |
@@ -33,6 +34,7 @@ A Skill is a set of structured instructions, usually defined in a `SKILL.md` fil
 | `agent-recap` | `agent-recap` | Summarizing recent local agent work into a structured report. |
 | `beaver` | `beaver-engine` | Internal engine for Beaver commands. |
 | `beaver` | `spec-document-reviewer` | Internal reviewer prompt for Beaver design RFCs. |
+| `codex-steer` | `codex-steer` | Monitoring, nudging, or correcting a Codex agent running in the ChatGPT/Codex desktop app. |
 | `exec-remote` | `exec-remote` | Running code, tests, or benchmarks on a provisioned remote GPU/TPU cluster. |
 | `exec-remote` | `deploy-cluster` | Deploying a SkyPilot-managed TPU cluster on GKE. |
 | `exec-remote` | `apply-resource` | Creating, deleting, or listing GKE TPU nodepool resources through xpk. |
@@ -83,6 +85,7 @@ Add this repository as a marketplace, then install the plugins you need:
 
 /plugin install agent-recap@primatrix-skills
 /plugin install beaver@primatrix-skills
+/plugin install codex-steer@primatrix-skills
 /plugin install exec-remote@primatrix-skills
 /plugin install gcloud-support-case@primatrix-skills
 /plugin install gke-tpu@primatrix-skills
@@ -118,6 +121,7 @@ codex plugin list --marketplace primatrix-skills
 
 codex plugin add agent-recap@primatrix-skills
 codex plugin add beaver@primatrix-skills
+codex plugin add codex-steer@primatrix-skills
 codex plugin add exec-remote@primatrix-skills
 codex plugin add gcloud-support-case@primatrix-skills
 codex plugin add gke-tpu@primatrix-skills
