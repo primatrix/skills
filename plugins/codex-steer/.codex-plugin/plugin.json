@@ -1,0 +1,23 @@
+{
+  "name": "codex-steer",
+  "version": "1.0.0",
+  "description": "Supervise a Codex agent in the local ChatGPT/Codex desktop app: find its session, tail its actions, detect idleness, and steer messages into its running turn (macOS).",
+  "author": {
+    "name": "Primatrix",
+    "url": "https://github.com/primatrix"
+  },
+  "homepage": "https://github.com/primatrix/skills",
+  "repository": "https://github.com/primatrix/skills",
+  "license": "Apache-2.0",
+  "keywords": ["codex", "steer", "monitor", "multi-agent", "macos"],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Codex Steer",
+    "shortDescription": "Monitor and steer a Codex desktop session",
+    "longDescription": "Supervise a Codex agent in the local ChatGPT/Codex desktop app: find its session, tail its actions, detect idleness, and steer messages into its running turn (macOS).",
+    "developerName": "Primatrix",
+    "category": "Developer Tools",
+    "capabilities": ["Interactive", "Read"],
+    "defaultPrompt": ["Show what the Codex session is doing and send it the next instruction."]
+  }
+}
