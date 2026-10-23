@@ -23,6 +23,7 @@ A Skill is a set of structured instructions, usually defined in a `SKILL.md` fil
 | `tpu-perf` | `0.3.0` | 4 skills | Systematic TPU pretraining profile analysis: anatomy, communication, compute, and HBM memory. |
 | `xprof-cli` | `1.0.0` | 1 skill | Terminal-first XProf analysis with the official CLI and a portable XSpace PB fallback. |
 | `xprof-profiling-analysis` | `2.0.0` | 1 skill | TPU/XLA profiling methodology plus XProf MCP-oriented analysis workflows. |
+| `product-design-harness` | `1.0.0` | 1 skill | Product judgment across User, Evidence, and Business flows before execution and during the next iteration. |
 
 `tpu-perf` replaces the older `tpu-perf-model` plugin.
 
@@ -64,6 +65,7 @@ A Skill is a set of structured instructions, usually defined in a `SKILL.md` fil
 | `tpu-perf` | `memory-profile` | Analyzing HBM peak occupancy and alive-buffer attribution from profile directories. |
 | `xprof-cli` | `xprof-cli` | Inspecting local XProf captures from the terminal with bounded raw-event, HLO, memory, LLO, and fallback PB analysis. |
 | `xprof-profiling-analysis` | `xprof-profiling-analysis` | Analyzing TPU/GPU profiles with XProf APIs and offline trace methodology. |
+| `product-design-harness` | `product-design-harness` | A product direction, feature, workflow, experiment, launch, feedback signal, automation, or scale decision needs judgment before execution or the next iteration. |
 
 ## Slash Commands
 
@@ -81,6 +83,7 @@ Add this repository as a marketplace, then install the plugins you need:
 ```text
 /plugin marketplace add primatrix/skills
 
+/plugin install product-design-harness@primatrix-skills
 /plugin install agent-recap@primatrix-skills
 /plugin install beaver@primatrix-skills
 /plugin install exec-remote@primatrix-skills
@@ -116,6 +119,7 @@ Codex can consume this repository as a plugin marketplace:
 codex plugin marketplace add primatrix/skills --ref main
 codex plugin list --marketplace primatrix-skills
 
+codex plugin add product-design-harness@primatrix-skills
 codex plugin add agent-recap@primatrix-skills
 codex plugin add beaver@primatrix-skills
 codex plugin add exec-remote@primatrix-skills
@@ -223,6 +227,18 @@ To add or update a plugin:
 5. Register the plugin in `.claude-plugin/marketplace.json`.
 6. Update this README's plugin table, skill inventory, and install commands.
 7. Submit a pull request.
+
+## Product Design Harness source and license
+
+The 91 files under `plugins/product-design-harness/skills/product-design-harness/` are an unchanged copy of `cis2042/ux3-product-design-harness` at commit `48965c6b501f61ebbb8130c9c2e4f9af08922b9f`. They remain under their original MIT License, including `Copyright (c) 2026 Product Design Harness contributors`; the full original notice is retained in that skill directory's `LICENSE` file.
+
+For Section 5 of this repository's Apache License 2.0, we explicitly state otherwise for these identified upstream files: this contribution does not relicense them under Apache 2.0. The new plugin/marketplace metadata and README integration follow this repository's existing Apache 2.0 terms. The MIT license fields describe the bundled upstream skill. Maintainer acceptance of this licensing arrangement is not assumed.
+
+The plugin metadata version 1.0.0 comes from the upstream Claude plugin manifest; the separate root portable AgentPlugins manifest reports 0.2.0. Neither upstream manifest nor the 91 skill files is changed.
+
+Codex CLI 0.163.0 locally installed and removed this plugin using isolated configuration with network and real-home access denied; all 91 installed skill files and the MIT notice matched this candidate. This verifies local package installation, not skill/model execution, Claude compatibility, CI or maintainer acceptance. The original padded refusal case remains unresolved; `ux3-model.svg`, `intersections.svg`, and `product-vs-coding-harness.svg` are missing. Fix proposals https://github.com/cis2042/ux3-product-design-harness/pull/23 and https://github.com/cis2042/ux3-product-design-harness/pull/24 were unmerged at the last verification and are not included. Python and jsonschema are required to run validation helpers. External tools/models require user authorization and may have separate costs. This proposal does not request immediate adoption of the known-defective package or claim safety certification.
+
+Prepared with AI assistance using OpenAI Codex.
 
 ## License
 
